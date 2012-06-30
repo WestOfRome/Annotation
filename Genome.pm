@@ -2470,7 +2470,11 @@ sub quality {
     1. OG1 ohnos are consistent, OG2 has no extra 
     2. OG1 ohnos are consistent, OG2 has extra
     3. OG1 ohnos are not consistent, OG2 has extra 
-    
+
+    We use _dp_align to align sister regions across species
+    and leveage as much information as possible to identify 
+    related otthologs and paralogs. 
+
 =cut 
 
 sub ohnologComparative {
