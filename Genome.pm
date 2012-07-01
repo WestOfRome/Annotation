@@ -2473,7 +2473,7 @@ sub quality {
 
     We use _dp_align to align sister regions across species
     and leveage as much information as possible to identify 
-    related otthologs and paralogs. 
+    related orthologs and paralogs. 
 
 =cut 
 
