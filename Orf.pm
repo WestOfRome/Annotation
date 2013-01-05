@@ -568,15 +568,16 @@ sub gather {
     return \%hash;
 }
 
-=head2 ohnolog(-object => newobj|undef, -warn => )
+=head2 ohnolog(-object => newobj|undef, -score => i, -warn => )
 
     Get/set the genes ohnolog. If one already exists
     it may not be altered directly -- must first unset 
-    by calling with -object => 'undef'. If -object not 
-    provided we just return the existing value. 
+    by calling with -object => 'undef'. If no values are passed 
+    we just return the existing ohnolog. To access the score 
+    use $self->score('ohno');
 
-  NB: It this method utilizes _linked_pair_generic_get_set to 
-    automatically handles reciprocals relationships.
+ NB: This method utilizes _linked_pair_generic_get_set to 
+    automatically handle reciprocals relationships.
 
 =cut 
 
@@ -584,15 +585,25 @@ sub ohnolog {
     my $self = shift;
     my $args = {@_};
     
+    my $attr = 'OHNOLOG';
+
     $args->{'-object'} = $_[0] if ( ! exists $args->{'-object'} && @_ );
+    $args->{'-score'} = 0 unless $args->{'-score'};
+    
+    if ( @_ ) { # we are setting not getting 
+	my $key =  '__'.$attr; # it is a score so gets '__'
+	$self->data( $key => ( ! $args->{'-object'} ? undef : $args->{'-score'}) );
+	if ( my $ohno = $self->ohnolog ) {
+	    $ohno->data( $key => ( ! $args->{'-object'} ? undef : $args->{'-score'}) );
+	}
+    }
     
     return $self->_linked_pair_generic_get_set(
-	'-attribute' => 'OHNOLOG',
+	'-attribute' => $attr,
 	(exists $args->{'-object'} ? ('-object' => $args->{'-object'}) : ()), 
 	(exists $args->{'-warn'} ? ('-warn' => $args->{'-warn'}) : ())
 	);
 }
-
 
 =head2 critique
 
@@ -713,22 +724,64 @@ sub _linked_pair_generic_get_set {
     return $self;
 }
 
-sub _ohnolog_depracated {
-    my $self=shift;
+=head2 _filter_tandems
+
+    Takes an array of ORF objects and returns
+    a set of genes that excludes possible tandem
+    pairs (ie one from each tandem arrasy is chosen).
+
+=cut 
+
+sub _filter_tandems {
+    my $self = shift;
     my $args = {@_};
-    $args->{'-object'} = $_[0] if ( ! exists $args->{'-object'} && $#_ == 0 );
-    my $ohno = $args->{'-object'};
+    
+    $args->{'-distance'} = 20 unless exists  $args->{'-distance'};
+    
+    my $attr = '_filter_temp_var'.int(rand(100));
+    map { $self->throw unless $self->isa(ref($_)) } @{$args->{'-object'}};
+    
+    my %hash;
+    foreach my $o ( $self, @{$args->{'-object'}} ) {
+	push @{$hash{$o->up->id}},$o;
+    }
+    
+    my @uniq;
+    foreach my $chr ( keys %hash ) {
+	push @uniq, $hash{$chr}->[0] and next if $#{$hash{$chr}}==0;
+	
+	my %cl = map { $_ => [ $hash{$chr}->[$_] ] } 0..$#{$hash{$chr}};
+	map { $cl{$_}->[0]->data($attr => $_) } keys %cl;
 
-    if ( $ohno ) {
-        if (! $ohno ) {
-        } else {
-            $self->throw unless $self->isa( ref($ohno) );
-        }
-        $self->data('_OHNOLOG' => $ohno);
-    } 
+	for my $i ( 0..($#{$hash{$chr}}-1) ) {
+	    my $g1 = $hash{$chr}->[$i];
+	    $self->throw unless $g1->data($attr)==$i;
+	    for my $j ( ($i+1)..$#{$hash{$chr}} ) {
+		next if $cl{$i} eq $cl{$j};
+		my $g2 = $hash{$chr}->[$j];
+		
+		if ( $g1->distance(-object => $g2) <= $args->{'-distance'} ) {
+		    my @move = @{$cl{$j}};
+		    foreach my $x ( @move ) { 
+			$cl{ $x->data($attr) } = $cl{$i}; # update %cl so x{i} -> $i
+			push @{ $cl{$i} }, $x;
+		    }
+		}
+	    }
+	}
+	
+	my %uniq;
+	foreach my $array ( grep {!$uniq{$_}++} values %cl) {
+	    my ($best) = sort { $b->score('ygob') <=> $a->score('ygob') } @{$array};
+	    push @uniq, $best;
+	}
+    }
 
-    return $self->data('_OHNOLOG');
+    map { $_->data($attr => 'delete') } ($self,  @{$args->{'-object'}});
+    
+    return @uniq;
 }
+
 
 =head2 sister(-window => 10)
 
@@ -4333,6 +4386,17 @@ sub identify {
     return (($sgd || undef) , ( $ygob|| undef), ( $gene || undef ) );
 }
 
+
+sub _genericlinks {
+    my $self = shift;
+    my ($gene) = grep { /^Y/ } $self->identify;
+    return(
+	'http://www.yeastgenome.org/cgi-bin/locus.fpl?locus='.$gene,
+	'http://wolfe.gen.tcd.ie/cgi/browser/ygob.pl?gene='.$gene,
+	'http://www.yeastgenome.org/cgi-bin/FUNGI/FungiMap?locus='.$gene
+	);
+}
+
 =head2 fex/firstexon 
 
     Return first exon of gene.
@@ -5671,6 +5735,9 @@ sub score {
 	return $self->data('__YGOB');
     } elsif ( $score eq 'pillar' ) {   # confidence for YGOB pillar assignment 
 	return $self->data('_PILLAR'); # also pillarscore(). for now. 
+
+    } elsif ( $score =~ /ohno/i ) {   # confidence for YGOB pillar assignment 
+	return $self->data('_OHNOLOG');  # also pillarscore(). for now. 
 	
     } elsif ( $score eq 'wise') {    # 
 	return $self->data('WISE');

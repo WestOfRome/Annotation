@@ -1572,7 +1572,8 @@ sub dpalign {
     $args->{'-order'} = [ reverse(split/\s+/, (map { s/[\(\)\;\,]+/ /g; $_ } $self->tree)[0] ) ] 
 	unless exists $args->{'-order'};
     $args->{'-order'} = [ map {uc($_)} @{$args->{'-order'}} ];
-    
+    $args->{'-reference'} = 0 unless exists $args->{'-reference'};
+
     # control scoring mechanisms
     $args->{'-match'} = 'local' unless exists $args->{'-match'};
     $args->{'-gap'} = 0 unless exists $args->{'-gap'}; # open + extend 
@@ -1588,18 +1589,20 @@ sub dpalign {
 
     $self->throw("Smith Waterman not implemented!") unless $args->{'-global'};
     $self->throw unless ref($args->{'-hash'}) eq 'HASH'; 
-    print keys %{ $args->{'-hash'} };
-    map { $self->throw($_) unless exists $args->{'-hash'}->{uc($_)} } ($self->organism, $self->bound);
+    #map { print ".$_\t$#{$args->{'-hash'}->{$_}}" } keys %{ $args->{'-hash'} };
+    #map { $self->throw($_) unless exists $args->{'-hash'}->{uc($_)} } ($self->organism, $self->bound);
     #map { return undef if $#{$args->{'-hash'}->{uc($_)}}==-1 }  ($self->organism, $self->bound);
-
+    
     my $fh = STDOUT;
     #######################
 
-    # make some vars 
+    # make some vars. 
+    # using "$ref => $_" below allows us to pass in fake orf arrays to 
+    # align to. used for ohnolog detection 
 
     my %hash=%{$args->{'-hash'}};
     my $ref = shift( @{$args->{'-order'}});     
-    my @ref = map { {uc($_->organism) => $_, REF => $_} } @{ $hash{$ref} };
+    my @ref = map { {$ref => $_, REF => $_} } @{ $hash{$ref} }; # uc($_->organism)
     my @keys = ($ref);
 
     # iterate over the order array 
@@ -1610,7 +1613,7 @@ sub dpalign {
  
 	# establish vars 
 
-	my @fwd = map { {uc($_->organism) => $_, REF => $_} } @{ $hash{$add} };
+	my @fwd = map { {uc($add) => $_, REF => $_} } @{ $hash{$add} }; # uc($_->organism)
 	my @rev = reverse( @fwd );	
 	my %dirs = (
 	    FWD => { ARRAY => \@fwd, MATRIX => undef, SCORE => undef, FACTOR => -.5 },
@@ -1631,7 +1634,7 @@ sub dpalign {
 	    my @add = @{$dirs{$dir}->{ARRAY}};
 	    print $fh undef, undef,(map {substr($_->{REF}->data('SGD'),0,7)} @add) 
 		if $args->{'-verbose'};
-
+	    
 	    # complete matrix collecting scores and traceback 
 	    
 	    my $dp_mat = _init_dp_matrix( \@ref, \@add, $args->{'-global'} );
@@ -1674,7 +1677,7 @@ sub dpalign {
 		
 		if ( $args->{'-verbose'} ) {
 		    foreach my $var ( 'SCORE', ($args->{'-verbose'} >=2 ? 'PATH' : ()) ) {
-			print $fh ($row>0 ? substr($ref[ $row-1 ]->{REF}->data('SGD'),0,7) : $dir), 
+			print $fh $var, ($row>0 ? substr($ref[ $row-1 ]->{REF}->data('SGD'),0,7) : $dir), 
 			(map {$_->{$var}} @{$dp_mat->[$row]});
 		    }
 		}
@@ -1732,6 +1735,10 @@ sub dpalign {
 	for my $i ( 0..$#path ) { ####### NNB WILL NOT WORK FOR TREE-BASED ALIGN #######
 	    $ref[$i]->{$key}=$add[$i]->{$add} if $add[$i]->{$add};  # transfer new species data
 	    my ($long) = sort { $b->length <=> $a->length } grep {$_} values %{$ref[$i]}; 
+	    if ( $args->{'-reference'} ) {
+		my ($ans) = grep { $_->organism eq $args->{'-reference'} } grep {$_} values %{$ref[$i]};
+		$long = $ans if $ans;
+	    }
 	    $ref[$i]->{'REF'} = $long; # define a new 'REF'
 	}
 	print $fh join("\t", map { ( $_ ? $_->{REF}->data('SGD') : $_) } @ref)." *\n" if $args->{'-verbose'};
@@ -1784,21 +1791,21 @@ sub _make_dp_scoring_matrix {
     die unless ref($r1) eq 'ARRAY' && ref($r2) eq 'ARRAY';
     return undef unless $#{$r1}>-1 && $#{$r2}>-1;
     die unless $score && $mm;
-    
+
     my %mat;
     foreach my $i ( map {$_->{REF}} @{$r1} ) {
 	foreach my $j ( map {$_->{REF}} @{$r2} ) {
-	    if ( $i->assign.$j->assign =~ /RNA/ ) {
+	    if ( $i->assign eq 'TRNA' || $j->assign eq 'TRNA' ) {
 		$mat{ $i->name }{ $j->name } = ( $trna && $i->gene eq $j->gene ? $trna : $mm );
-	    } elsif ( $score =~ /local|global/i ) {
+	    } elsif ( $i->coding && $j->coding && $score =~ /local|global/i ) {
 		my $ex = $i->exonerate2(-object => $j, -homolog => undef, -return => 'score', -model => lc($score) );
 		$mat{ $i->name }{ $j->name } = ( $ex > 0 ? $ex : $mm );
 	    } else {
 		$mat{ $i->name }{ $j->name } = 
 		    ( $i->data($score) && $i->data($score) eq $j->data($score) ? 1 : $mm );
+		#print STDOUT $i->name, $j->name, $i->data($score) eq $j->data($score), $mat{ $i->name }{ $j->name };
 	    }
 	    $mat{ $j->name }{ $i->name } = $mat{ $i->name }{ $j->name };
-	    #print $i->name, $j->name, $mat{ $i->name }{ $j->name };
 	}
     }    
 
@@ -2461,6 +2468,52 @@ sub quality {
     return $self;
 }
 
+
+sub ohnologComparative2 {
+    my $self = shift;
+    my $args = {@_};
+
+    $self->throw unless $self->bound;
+    $args->{'-refresh'} = undef unless exists $args->{'-refresh'};
+    $args->{'-orthogroup'} = 1 unless exists $args->{'-orthogroup'};
+    $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
+    
+    my $fh = STDERR;
+    my $count= scalar($self->bound)+1;
+
+    print scalar( grep {$_->ohnolog} $self->orfs);    
+    print scalar( grep {$_->ogid} $self->orfs);
+    #map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
+
+    ################################
+    # prep work 
+    ################################
+
+    # for ohnologs  ...
+    map { $_->ohnologs(-window => 7, -drop => 5, -penalty => 20) } $self->iterate if $args->{'-refresh'};
+    my %og = map { $_->ogid => $_ } grep {$_->ogid} map {$_->stream} $self->stream;  
+
+    # for orthologs ...
+    my %kaks;
+    foreach my $k (qw(KA KS KAKS)) {
+	my ($dn,$dn_sd) = &_calcMeanSD( grep {$_>0 && $_ <10} map {$_->data($k)} $self->orfs);
+	$kaks{$k}{'MEAN'}=$dn;
+	$kaks{$k}{'SD'}=$dn_sd;
+	print $k, $dn,$dn_sd;
+    }
+
+    ################################
+    # 
+    ################################
+
+    open($fho, ">pre.ohnologs");
+    map { print $fho $_->name, $_->ohnolog->name, $_->ygob, $_->sgd, $_->ogid, $_->identify } 
+    grep { $_->ohnolog } $self->orfs;
+    close($fho);
+
+    return $self;
+}
+
 =head2 ohnologComparative
 
     Compare ohnologs across species and leverage 
@@ -2498,7 +2551,7 @@ sub ohnologComparative {
     ################################
 
     # for ohnologs  ...
-    map { $_->ohnologs(-window => 7, -drop => 5, -penalty => 20) } $self->iterate if $args->{'-refresh'};	
+    map { $_->ohnologs(-window => 7, -drop => 5, -penalty => 20) } $self->iterate if $args->{'-refresh'};
     my %og = map { $_->ogid => $_ } grep {$_->ogid} map {$_->stream} $self->stream;  
 
     # for orthologs ...
@@ -2676,39 +2729,243 @@ sub ohnologs {
 
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
     $args->{'-window'} = 7 unless exists $args->{'-window'};
-    
     $args->{'-max'} = sprintf("%d", $args->{'-window'}*2)+1 unless exists $args->{'-max'};
     $args->{'-drop'} = 5 unless exists $args->{'-drop'};
     $args->{'-penalty'} = 20  unless exists $args->{'-penalty'};
 
     #######################################
-    # prep work... 
+    
+    my $attr = '_ohno_temp_var'.int(rand(100));
+    my $ohno = scalar( grep { $_->ohnolog } $self->orfs );
+    #$self->warn("Deleting existing $ohno ohnologs") if $ohno;
+
+    my %hash;
+    foreach my $orf ( grep { #$_->assign =~ /RNA/ || 
+        $_->ygob } map { $_->stream } $self->stream ) {
+        $orf->data($attr => undef);
+        if ( my $oh = $orf->ohnolog ) {
+            $oh->ohnolog(undef);
+            #$orf->ohnolog(undef);
+        }
+        push @{ $hash{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
+    }
+
+    my %count;
+    #######################################
+   
+    foreach my $anc ( grep { $#{$hash{$_}} >= 1 } keys %hash) {
+        next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );
+
+        $count{'0.2copy'}++;
+
+        ###################
+        # build some candidates 
+        my $old;
+        foreach my $cand ( sort {$a->name <=> $b->name} @{$hash{$anc}} ) {
+            # ignore tandems 
+            if ( $old && $old->up == $cand->up ) {
+                my @inter = grep { $_->assign ne 'GAP' }  $old->intervening($cand);
+                #print map {$_->name} @inter;
+                $old=$cand and next if $#inter <= 2;
+            }
+
+            # asses synteny 
+            my $newsyn = $cand->querysynteny(
+                -spanning => 0, 
+                -difference => 10, 
+                -distance => 5,
+                -restrict => ['YGOB'] #, 'KLAC', 'SKLU', 'KWAL']
+                );
+            $cand->data($attr => $newsyn);
+            $old = $cand;
+	    
+            next unless $args->{'-debug'};
+            $cand->oliver(-append => [$newsyn]);
+            foreach my $x ( grep {defined} (reverse($cand->traverse(-direction=>'left', -distance=>6)),   
+					    $cand->traverse(-direction=>'right', -distance=>6) )) {
+		$x->oliver;
+	    }
+            print;
+	}
+        
+        # 
+        
+        my ($one,$two,$other) = map { $_->data($attr => undef); $_ }  sort { 
+            $b->data($attr) <=> $a->data($attr)
+        } grep { $_->data($attr) } @{$hash{$anc}};
+        next unless $one && $two;
+	
+        $count{'1.synteny'}++;
+        
+        # exclude tandems ...
+        
+        next if $one->up->id == $two->up->id && 
+            #( $one->distance(-object => $two) < 50 || 
+            $one->distance(-object => $two, -bases => 1) < 5e4; 
+        #);
+        
+        $count{'2.nontandem'}++;
+        
+        ###################     
+        # cannot use syntey_conserved since it uses exact Anc matches.
+        # instead we will get a minimum delta score. 
+        # this version should reward interleaving more than other arrangements. 
+        
+        my (@one, @two,@other); # all the genes that are on the same anc chr as caller
+        my ($onecount, $twocount, $othercount); # all the genes that are in region (any anc)
+        my ($onetwoscr, $othertwoscr);
+        
+        $one->ygob =~ /(\d+)\.(\d+)/;
+        my ($chr,$pos) = ($1,$2);
+
+        @one =  map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
+        map { $onecount++ if  $_->ygob ; $_ } grep { $_->ygob ne $one->ygob }
+        ( map { $one->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') );
+
+        @two = map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
+        map { $twocount++ if  $_->ygob; $_ } grep { $_->ygob ne $two->ygob }        
+        ( map { $two->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') );
+
+        next unless @one && @two; # cannot make ohnos without synteny 
+        next unless $onecount && $twocount; #uh?
+        $count{'3.syntenydata'}++;
+
+        ###################
+        # exclude cases where the ohnos are fragments at ends of diff contigs.
+        # in this case numbering should follow:  @o_sort $cand @two_sort 
+	
+        my @o_sort = sort {$a <=> $b} @one;
+        my @t_sort = sort {$a <=> $b} @two;
+	if ( ( @o_sort[-1] < $pos && $pos < @t_sort[0] ) || ( @t_sort[-1] < $pos && $pos < @o_sort[0] ) ) {
+            # if they align might be ok..
+            my $align = $one->overlap(-evalue => 1e-5, -object => $two, -compare => 'seq');
+            
+            # it they are clearly internal..
+            my @ol = $one->traverse(-direction => 'left', -distance => 5);
+            my @or = $one->traverse(-direction => 'right', -distance => 5);
+            my @tl = $two->traverse(-direction => 'left', -distance => 5);
+            my @tr = $two->traverse(-direction => 'right', -distance => 5);
+            my $internal=1 if ($#ol >= 2 && $#or >= 2) || ( $#tl >= 2 && $#tr >= 2 ); # only require 1.. 
+            
+            unless ( $align >= 0.5 || $internal ) {
+                $one->output(-fh => $fh,  -append => [$two->name]);
+                $two->output(-fh => $fh, -append => [$one->name]);
+                next;
+            }
+        }
+        $count{'4.nonterminii'}++;
+        
+        ###################
+        # consider the third hit -- this is as close as we get to having something like a 
+        # respecteable means of rejecting a proposed ohno pair. 
+        # propoer stats later... 
+        
+        my ($mat1, $scr);
+        for my $i (0..$#one) { map { $mat1->[$i]->[$_] = abs( $one[$i] - $two[$_] ) }  (0..$#two); } 
+        $onetwoscr += $scr while ( $scr = &_findMatrixMin($mat1) ); # the shorter of one and two determines the number of scrs
+        $onetwoscr += $args->{'-penalty'} * ( $onecount < $twocount ? $onecount-scalar(@one) : $twocount-scalar(@two) );
+        $onetwoscr /= ( $onecount < $twocount ? $onecount : $twocount );
+        
+        if ( $other ) {
+            @other = map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
+            map { $othercount++ if  $_->ygob; $_ } grep { $_->ygob ne $other->ygob } 
+            ( map { $other->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') );
+        } else { $othertwoscr=$args->{'-penalty'}; }
+        
+        if ( @other ) {
+            my ($mat2,$scr);
+            for my $i (0..$#other) { map { $mat2->[$i]->[$_] = abs( $other[$i] - $two[$_] ) }  (0..$#two); } 
+            $othertwoscr += $scr while ( $scr = &_findMatrixMin($mat2) );
+            $othertwoscr += $args->{'-penalty'} * ( $othercount < $twocount ? $othercount-scalar(@other) : $twocount-scalar(@two) );
+            $othertwoscr /= ( $othercount < $twocount ? $othercount : $twocount );
+        } else { $othertwoscr= $args->{'-penalty'}; } 
+
+	    ###################
+        # close it out... apply 2 primary criteria 
+
+        #print $anc, $#one, $#two, $#other, $onetwoscr, $othertwoscr; # ,$onecount,$twocount,$othercount ;
+        next unless $onetwoscr <= $args->{'-max'};
+        $count{'5.score'}++;
+        next unless ($othertwoscr - $onetwoscr) >= $args->{'-drop'};
+        $count{'6.drop'}++;
+
+        $one->ohnolog( $two );
+        #$two->ohnolog( $one );
+    }
+    close $fh;
+
+    map { print $_,$count{$_} } sort keys %count if $args->{'-verbose'};
+
+    map { $_->data($attr => 'delete') } $self->orfs;
+    return $self;
+}
+
+#######################################
+#######################################
+
+sub ohnologs2 {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-debug'} = undef unless exists $args->{'-debug'};
+    $args->{'-window'} = 7 unless exists $args->{'-window'};
+    $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
+
+    $args->{'-synteny'} = 0 unless exists $args->{'-synteny'};
+    $args->{'-homology'} = 'YGOB' unless exists $args->{'-homology'};
+
+    $args->{'-max'} = sprintf("%d", $args->{'-window'}*2)+1 unless exists $args->{'-max'};
+    $args->{'-drop'} = 5 unless exists $args->{'-drop'};
+    $args->{'-penalty'} = 20  unless exists $args->{'-penalty'};
+
+    #######################################
+    # make some vars for the next phase 
+    
+    my $fh = STDOUT;
     my $attr = '_ohno_temp_var'.int(rand(100));
     my $ohno = scalar( grep { $_->ohnolog } $self->orfs );    
-    my %hash;
+  
+    # 
+
+    my $keyX = 'YGOB';    
+    my $key0 = 'ANC';
+    my $key1 = uc($self->organism).'1';
+    my $key2 = uc($self->organism).'2';
+    
+    # 
+    
+    my %matrix = (
+	'OHNO' => 4,
+	'GAP' => 0,
+	'CROSS' => 2,
+	'SAME' => 0
+	);
+    
+    my %anc;
     foreach my $orf ( grep { #$_->assign =~ /RNA/ || 
 	$_->ygob } map { $_->stream } $self->stream ) {
 	$orf->data($attr => undef);
 	if ( my $oh = $orf->ohnolog ) {
 	    $oh->ohnolog(undef);
 	}
-	push @{ $hash{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
+	push @{ $anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
     }
-    #######################################
 
+    #######################################
     # cycle through all Anc families 
 
     my %count;   
-    foreach my $anc ( grep { $#{$hash{$_}} >= 1 } keys %hash) {
+    foreach my $anc ( grep { $#{$anc{$_}} >= 1 } keys %anc) {
 	next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );	
-	$count{'0.2copy'}++;
+	$anc =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+	my ($chr,$pos) = ($1,$2);
 	
 	###################
 	# cycle through homologs and get synteny 
 	###################
 	
 	my $old;
-	foreach my $cand ( sort {$a->name <=> $b->name} @{$hash{$anc}} ) {
+	foreach my $cand ( sort {$a->name <=> $b->name} @{$anc{$anc}} ) {
 	    # randomly choose 1 of 2 tandems 
 	    if ( $old && $old->up == $cand->up ) {
 		my @inter = grep { $_->assign ne 'GAP' }  $old->intervening($cand);
@@ -2728,121 +2985,405 @@ sub ohnologs {
 	
 	######################################	
 	# basic synteny qualification -- we set the bar LOW
+	
+	my ($x, @init) = map { $_->data($attr => undef); $_ }  
+	sort { $b->data($attr) <=> $a->data($attr) } 
+	grep { $_->assign ne 'REPEAT' }
+	grep { $_->data($attr) > $args->{'-synteny'} } @{$anc{$anc}};
+	next unless $x;
+	
+	# _filter_tandems will choose one member from each tandem array.
+	# tandem arrays are defined by number of interventing genes. 
+	# not a good method but performs OK for yeast. 	
+	# 2 x windowsize prevents same genes aligning to each other
+	# in alignment phase.
+	# in scer we miss YBR024W and YBR037C ohnologs. not sure how to recover. 
+	
+	my @cand = $x->_filter_tandems(-object => \@init, -distance => $args->{'-window'}*2);
+	next unless $cand[0] && $cand[1];
+
 	######################################	
-	
-	my ($one,$two,$other) = map { $_->data($attr => undef); $_ }  sort { 
-	    $b->data($attr) <=> $a->data($attr)
-	} grep { $_->data($attr) > 0 } @{$hash{$anc}};
-	next unless $one && $two;
-	$count{'1.synteny'}++;
-	
-	# exclude tandems ...
-	
-	next if $one->up->id == $two->up->id && 
-	    $one->distance(-object => $two, -bases => 1) < 2e4; 	
-	$count{'2.nontandem'}++;
-	
-	######################################	
-	# We now use synteny to ask how well gene pairs fit 
-	# a model of coming from a pair of sister regions. 
-	# We cannot use syntey_conserved since it uses exact 
-	# Anc matches and thus requires duplicates in the region.
 	# We use a metric which rewards interleaving of 
 	# genes on opposite regions (exact matches are also rewarded)
 	# and thus can recognize duplicate origin for segments
 	# that have no remaining duplicates. 
-	######################################	
+	######################################		
+
+	print ">>$anc [$key0, $key1, $key2]" if $args->{'-verbose'};
 	
-	my (@one, @two,@other); # all the genes that are on the same anc chr as caller
-	my ($onecount, $twocount, $othercount); # all the genes that are in region (any anc)
-	
-	$one->ygob =~ /(\d+)\.(\d+)/;
-	my ($chr,$pos) = ($1,$2);
+	my %sisters;
+	CAND: for my $i (0..($#cand-1)) {
+	    my @i_array = $cand[$i]->context(-distance => $args->{'-window'}, -self => 1);
 
-	@one =  map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
-	map { $onecount++ if  $_->ygob ; $_ } grep { $_->ygob ne $one->ygob }
-	( map { $one->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') );
-
-	@two = map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
-	map { $twocount++ if  $_->ygob; $_ } grep { $_->ygob ne $two->ygob } 	    
-	( map { $two->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') );
-
-	next unless @one && @two; # cannot make ohnos without synteny 
-	next unless $onecount && $twocount; #uh?
-	$count{'3.syntenydata'}++;
-
-	######################################
-	# exclude cases where the ohnos are fragments at ends of diff contigs.
-	# in this case numbering should follow:  @o_sort $cand @two_sort 
-	######################################
-
-	my @o_sort = sort {$a <=> $b} @one;
-	my @t_sort = sort {$a <=> $b} @two;
-	
-	if ( ( @o_sort[-1] < $pos && $pos < @t_sort[0] ) || ( @t_sort[-1] < $pos && $pos < @o_sort[0] ) ) {
-	    # if they align might be ok..
-	    my $align = $one->overlap(-evalue => 1e-5, -object => $two, -compare => 'seq');
+	    # define order and valid range. only Ancs in reference are 
+	    # admitted for scoring so we constrain ultimate range/score without 
+	    # without having to edit the actual gene order array i_array. 
 	    
-	    # it they are clearly internal..
-	    my @ol = $one->traverse(-direction => 'left', -distance => 5);
-	    my @or = $one->traverse(-direction => 'right', -distance => 5);
-	    my @tl = $two->traverse(-direction => 'left', -distance => 5);
-	    my @tr = $two->traverse(-direction => 'right', -distance => 5);
-	    my $internal=1 if ($#ol >= 2 && $#or >= 2) || ( $#tl >= 2 && $#tr >= 2 ); # only require 1.. 
+	    my (%hash,$i_rt);	
+	    my @i_sort = sort {$a <=> $b} grep {defined} map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @i_array;
+	    my @i_prune = &_prune_from_ends(\@i_sort, $args->{'-window'}+1);	   
+	    map { $i_rt += ($i_prune[$_]>$i_prune[$_-1] ? 1 : -1) } 1..$#i_prune; # determine order on chr
 	    
-	    unless ( $align >= 0.5 || $internal ) {
-		$one->output(-fh => $fh,  -append => [$two->name]);
-		$two->output(-fh => $fh, -append => [$one->name]);
-		next;
-	    }
-	}
-	$count{'4.nonterminii'}++;
-	
-	######################################
-	# consider the third hit -- this is as close as we get to having something like a 
-	# respecteable means of rejecting a proposed ohno pair. 
-	# proper stats later... 
-	######################################
-	
-	my ($mat1, $scr);
-	my ($onetwoscr, $othertwoscr);
-	for my $i (0..$#one) { map { $mat1->[$i]->[$_] = abs( $one[$i] - $two[$_] ) }  (0..$#two); } 
-	$onetwoscr += $scr while ( $scr = &_findMatrixMin($mat1) ); # the shorter of one and two determines the number of scrs
-	$onetwoscr += $args->{'-penalty'} * ( $onecount < $twocount ? $onecount-scalar(@one) : $twocount-scalar(@two) );
-	$onetwoscr /= ( $onecount < $twocount ? $onecount : $twocount );
-	
-	if ( $other ) {
-	    @other = map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
-	    map { $othercount++ if  $_->ygob; $_ } grep { $_->ygob ne $other->ygob } 
-	    ( map { $other->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') );
-	} else { $othertwoscr=$args->{'-penalty'}; }
-	
-	if ( @other ) {
-	    my ($mat2,$scr);
-	    for my $i (0..$#other) { map { $mat2->[$i]->[$_] = abs( $other[$i] - $two[$_] ) }  (0..$#two); } 
-	    $othertwoscr += $scr while ( $scr = &_findMatrixMin($mat1) );
-	    $othertwoscr += $args->{'-penalty'} * ( $othercount < $twocount ? $othercount-scalar(@other) : $twocount-scalar(@two) );
-	    $othertwoscr /= ( $othercount < $twocount ? $othercount : $twocount );
-	} else { $othertwoscr= $args->{'-penalty'}; } 
+	    # TRACK 1!
+	    $hash{ $key1 } = [ $i_rt > 0 ? @i_array : reverse @i_array ];
+	    
+	    for my $j ( ($i+1)..$#cand) {
+		my @j_array = $cand[$j]->context(-distance => $args->{'-window'}, -self => 1);
+		
+		my $j_rt;
+		my @j_sort = sort {$a <=> $b} grep {defined} map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @j_array;
+		my @j_prune = &_prune_from_ends(\@j_sort, $args->{'-window'}+1);
+		map { $j_rt += ($j_prune[$_]>$j_prune[$_-1] ? 1 : -1) } 1..$#j_prune; # determine order on chr
 
-	###################
-	# close it out... apply 2 primary criteria 
+		# TRACK 2!
+		$hash{ $key2 } = [ $j_rt > 0 ? @j_array : reverse @j_array ];
 
-	#print $anc, $#one, $#two, $#other, $onetwoscr, $othertwoscr, $onecount,$twocount,$othercount if $args->{'-verbose'};
-	next unless $onetwoscr <= $args->{'-max'};
-	$count{'5.score'}++;
-	next unless ($othertwoscr - $onetwoscr) >= $args->{'-drop'};
-	$count{'6.drop'}++;
+		# TRACK 0! #####################
+		# use the min and max indices on the relevant chr to make the 
+		# ancestral gene order. should prune ends...
+		
+		my ($max) = sort {$b <=> $a} ($i_prune[-1],$j_prune[-1]);
+		my ($min) = sort {$a <=> $b} ($i_prune[0],$j_prune[0]);		
 
-	$one->ohnolog( $two ); # we set reciprocals automatically
+		my $genome = $self->clone;
+		$genome->organism( $key0 );
+		my $contig = ref($self->down)->new(SEQUENCE => 1e5 x 'ATGC', ID => 1);
+		$genome->add(-object => $contig);
+		#print $genome->organism, $min, $max;
+		
+		for my $pos ( $min..$max ) {
+		    my $homol = 'Anc_'.$chr.'.'.$pos;
+		    my $orf = ref($cand[$i])
+			->new(
+			START => $pos*10,
+			STOP => ($pos*10)+3,
+			STRAND => 1,
+			UP => undef
+			);
+		    $orf->data( $keyX => $homol );
+		    $contig->add(-object => $orf);
+		    push @{$hash{ $key0 }}, $orf;
+		}
+		$contig->index;
+		
+		################################		
+		# align two regions to the ancestor 
+		
+		my $align = $self->dpalign(
+		    # alignment 
+		    -hash => \%hash, 
+		    -order => [$key0, $key1, $key2 ], #$key0 must be first 
+		    -reference => $key0,
+		    -global => 1,
+		    # scoring 
+		    -match => $keyX,
+		    -mismatch => -1000,
+		    -gap => 0,
+		    -inversion => -1,
+		    -trna => 1,
+		    # 
+		    -verbose => 0
+		    );
+		
+		# we scrub anything that is not relevant to scoring.
+		# they were kept to aid for alignment.
+		
+		my (@clean);
+		foreach my $q ( grep { $_->{$key0} } @{$align} ) {				
+		    foreach my $k ( grep {/\-/} keys %{$q} ) {
+			my ($jnk,$k2) = split/\-/,$k;
+			$q->{$k2}=$q->{$k};
+			delete $q->{$k};
+		    }
+		    #$score{'GAP'}++ unless $q->{$key1} || $q->{$key2};
+		    push @clean, $q; # if $q->{$key1} || $q->{$key2};
+		}
+		
+		my ($ccc,$ddd);
+		my ($q,$qq) = grep { $clean[$_]->{$key1} || $clean[$_]->{$key2} } 0..$#clean;
+		next CAND unless defined $q && defined $qq;
+		until ( $q==0 && ($qq-$q <= $args->{'-window'}) ) {
+		    splice(@clean, 0, ($q+1));
+		    ($q,$qq) = grep { $clean[$_]->{$key1} || $clean[$_]->{$key2} } 0..$#clean;
+		    next CAND unless defined $q && defined $qq;
+		    $self->throw if ++$ccc >= 1e4;
+		}
+		my @rev = reverse @clean;
+		my ($q,$qq) = grep { $rev[$_]->{$key1} || $rev[$_]->{$key2} } 0..$#rev;
+		next CAND unless defined $q && defined $qq;
+		until ( $q==0 && ($qq-$q <= $args->{'-window'}) ) {
+		    splice(@rev, 0, ($q+1));
+		    ($q,$qq) = grep { $rev[$_]->{$key1} || $rev[$_]->{$key2} } 0..$#rev;
+		    next CAND unless defined $q && defined $qq;
+		    $self->throw if ++$ddd >= 1e4;
+		}
+		my @clean = reverse @rev;
+
+		################################		
+		# score the alignment 
+		# the nice way to do this is have a log odds score 
+		# of observing the alignment under two models: 
+		# 1) a wgd occurred
+		# 2) no wgd occurred
+		# the second is kind of tricky for 2 regions: 
+		# 1. there are many different mutational paths. we should weight and sum over. 
+		# we need weights for duplications/deletions of given lengths. 
+		# 2. for insertions the chance of three going in close in the genome 
+		# and in the right order is very small. probs will get tiny fast.
+		# the first is relatively easy. we just count deletions and assume max size. 
+		# (is this the problem that Gavin solved?)
+		#####
+		# ... do we have the right null? 
+		# Given that a wgd occurred, what are odds that this pair of regions, are sisters? 
+		# This is actually closer to comparing the first choice sister region pair
+		# to the second choice sister pair and asking can we infer the right pair with 
+		# confidence. If no second choice, what is the null?
+		# This is exactly what we were testing in old implementation but with 
+		# fairly rough and ready scoring and no real alignmnet step. 
+		# Under this Conception we would not try to score the "no wgd model"
+		# - we can just assume it - and would instead compute all pairs and later 
+		# compare sister_choice_1 to sister_choice_2. 
+		# This sure gets easier if we can ignore the non-wgd model. 
+		# We would score: 
+		# 1) duplicates
+		# 2) order consistent with the anc order [no circularity because YGOB built from other genomes]
+		# 3) lack of gaps relative to anc
+		#####
+		# references... 
+		# my PNAS paper. last SI.  
+		# gavin paper 
+		# felsenstein 
+		#####
+
+		my %score = (
+		    'OHNO' => 0,
+		    'GAP' => 0,
+		    'CROSS' => 0,
+		    'SAME' => 0
+		    );	
+
+		foreach my $k ( 0..$#clean ) {
+		    my ($row,$old) = ($clean[$k], $clean[$k-1]);
+		    #$self->throw unless $row->{$key0}->data( $keyX ) =~ /Anc_\d+\.(\d+)/;
+		    #my $catch = $1;
+		    #$self->throw unless $old->{$key0}->data( $keyX ) =~ /Anc_\d+\.(\d+)/;
+		    #my $delta = abs($1 - $catch);
+		    #my ($o_score, $g_score)=(0,0);    
+		    #$o_score = $matrix{'OHNO'} if (defined $row->{$key1} && defined $row->{$key2} ? 1 : 0);
+		    #$g_score = $matrix{'GAP'}*($delta-1) if 
+		    #(defined $row->{$key1} && defined $old->{$key2} || defined $row->{$key2} && defined $old->{$key1});
+		    #$score += $o_score + $g_score;		    		   
+
+		    if ( $k==0 ) {
+			$score{'OHNO'}++ if $row->{$key1} && $row->{$key2};
+		    } else {
+			if ( $row->{$key1} && $row->{$key2} ) { 			
+			    $score{'OHNO'}++;
+			} elsif ( ($row->{$key1} && $old->{$key1}) || ($row->{$key2} && $old->{$key2}) ) {
+			    $score{'SAME'}++;
+			} elsif ( ($row->{$key1} && $old->{$key2}) || ($row->{$key2} && $old->{$key1}) ) {
+			    $score{'CROSS'}++;
+			} else {}#$self->throw;}
+		    }
+		    
+		    print {$fh} ($k,
+				 (map { "$_:$score{$_}:".$score{$_}*$matrix{$_} } keys %matrix), '}', 
+				 (map { "$_:".($row->{$_} =~ /\:\:/ ? $row->{$_}->data($keyX) : 'NA')} ($key1,$key2) )
+		    ) if $args->{'-verbose'};			
+		}
+		
+		my $score=0;
+		map { $score+=$score{$_}*$matrix{$_} } grep {!/gap/i} keys %matrix; 
+		$sisters{ $i.'.'.$j }={
+		    G1 => $cand[$i],
+		    G2 => $cand[$j],
+		    L1 => scalar(@i_sort),
+		    L2 => scalar(@j_sort),
+		    SCR => $score
+		};
+	    } #j
+	} #i
+	next unless %sisters;
+	
+	########################
+	# how do we do the statistics? 
+	########################
+	# do we need to do 2 tests?
+	# are we better than second best option (ie can be reliably distinguished)?
+	# are we better than null?
+	# how do we exclude cases where the gene truly does not have an ohnolog, 
+	# dut does have a duplicate elsewhere in the genome. 
+	# in these cases there exists a well aligned region that we are not 
+	# considering. how do we compare candidate to regions w/o ohnolog?
+	
+	my ($best, $second) = sort { $sisters{$b}->{SCR} <=> $sisters{$a}->{SCR} } keys %sisters;	
+	my $bar = ($second ? $sisters{$second}->{SCR} : 8);
+	#next unless $sister{$best} > $bar;
+	print 
+	    $anc, $sisters{$best}->{SCR}, $bar, 
+	    $sisters{$best}->{G1}->name, 
+	    $sisters{$best}->{G2}->name if $args->{'-verbose'};
+	$sisters{$best}->{G1}->ohnolog( $sisters{$best}->{G2} ); # we set reciprocals automatically
     }
     close $fh;
-
+    
+    # 
+    
     map { print $_,$count{$_} } sort keys %count if $args->{'-verbose'};
 
     map { $_->data($attr => 'delete') } $self->orfs;
     return $self;
 }
+
+sub _prune_from_ends {
+    my @x = @{shift @_};
+    my $z = shift;
+
+    my $i=0;
+    $i++ until ( $i>=($#x-1) || $x[$i+1]-$x[$i] < $z);
+    my $j=0;
+    $j++ until ( $j>=($#x-1) || $x[$#x-$j]-$x[$#x-$j-1] < $z);
+    
+    #print $#x, $i,  $#x-$i-$j+1, "($j)";
+    return splice(@x, $i, $#x-$i-$j+1)
+}
+
+=head2 report()
+
+    Write various reports.
+
+=cut 
+
+sub report {
+    my $self = shift;
+    my $args = {@_};
+
+    my @species = qw(Scer Spar Smik Skud Sbay);
+
+    #open(my $ty, ">".$TIME."_repeats.fsa"); # fasta repeat files. for BLASTIng.  
+    #open(my $hgt, ">".$TIME."_hgt.tab");    # HGT candidates 
+    #open(my $deep, ">".$TIME."_nosgd.tab"); # no SGD hit. no YGOB hit. interesting? 
+
+    my $ob = $self->ontology;
+    
+    ######################################
+    # tRNAs
+    ######################################
+    
+    my (%trna, %ygob);
+    foreach my $g ( $self->iterate ) {
+	foreach my $c ( $g->stream ) {
+	    foreach my $o ( $c->stream ) {
+		
+		if ( $o->assign =~ /RNA/ && $o->gene =~ /\:/) {
+		    push @{$trna{$o->gene}{$g->organism}}, $o->name;
+
+		} elsif ( $o->assign =~ /REPEAT/ ) {
+		    #print {$ty} $o->sequence(-molecule => 'dna', -format => 'fasta', -decorate => 1) ;
+		    
+		} elsif ( $o->evidence eq 'NCBI' && $o->data('NCBI') <= 1e-5 ) {
+		    #$o->oliver(-fh => $hgt, -append =>[$o->data('NCBI')] );
+
+		} elsif ( $o->assign eq 'REAL' && $o->evalue('ygob') <= 1e-5 ) {
+		    push @{$ygob{$o->ygob}{$g->organism}}, $o;
+		    push @{$names{$o->ygob}{$g->organism}}, ($o->ohnolog ? '*' : undef).$o->name;
+		    
+		} elsif ( $o->assign eq 'REAL' && $o->evidence ne 'YGOB' && 
+			  $o->sgd !~ /^Y[A-P][LR]\d{3}/ && $o->gene !~ /^Y[A-P][LR]\d{3}/ ) {
+		    #$o->oliver(-fh => $deep, -append => [$o->logscore('gene'), $o->gene] );
+		}            
+	    }
+	}
+    }
+    
+    ######################################
+    # tRNAs
+    ######################################
+
+    my $name = $TIME."_tRNA.tab";
+    print STDERR $name;
+    open(my $fh, ">$name" );
+
+    foreach my $tr ( keys %trna ) {
+	print {$fh} ">$tr [".
+	    join("|", ( map { scalar(@{$trna{$tr}{$_}}) || 0 } @species ) )
+	    ."]"; 
+	map { print {$fh} $_, (sort @{$trna{$tr}{$_}}) } @species;
+    }
+    
+    ######################################
+    # YGOB
+    ######################################
+
+    my $name = $TIME."_ygob.tab";
+    print STDERR $name;
+    open(my $fh, ">$name" );
+
+    foreach my $yg ( grep {/\w/} keys %names ) {
+	my @go = @{ $ob->{$yg}->{'P'} };
+	my $go = join(';', @go);
+	print {$fh} ">$yg [".
+	    join("|", ( map { scalar(@{$names{$yg}{$_}}) || 0 } @species ) )
+	    ."] $go"; 
+	map { print {$fh} $_, (sort @{$names{$yg}{$_}}) } @species;
+    }
+
+    ######################################
+    # Ohnologs
+    ######################################
+
+    my $name = $TIME."_ohnologs.tab";
+    print STDERR $name;
+    open(my $fh, ">$name" );
+    print $fh qw(#count SGD YGOB Gene ExonsSGD Exons ExonsDelta Critique SGD);
+
+    foreach my $yg ( keys %ygob ) {	
+	next unless my @x = grep { $_->ohnolog } map { @{$ygob{$yg}{$_}} } @species;
+	
+	my @go = @{ $ob->{$yg}->{'P'} };
+	my $go = join(';', @go);
+	print {$fh} ">$yg [".
+	    join("|", ( map { scalar(@{$ygob{$yg}{$_}}) || 0 } @species ) )
+	    ."] $go"; 
+        
+	foreach my $sp ( @species ) {
+	    print {$fh} $sp, 
+	    map { ($_->ohnolog ? '*' : undef).$_->name.'/'.$_->gene } (sort { $a->up->id <=> $b->up->id } @{$ygob{$yg}{$sp}});
+	}
+    }
+
+    ######################################
+    # INTRONS
+    ######################################
+    
+    my $name = $TIME."_introns.tab";
+    print STDERR $name;
+    open(my $fh, ">$name" );
+    print $fh qw(#count SGD YGOB Gene ExonsSGD Exons ExonsDelta Critique SGD);
+
+    foreach my $o ( grep {$_->orthogroup || $_->_debug} $self->orfs ) {    
+        my @int = grep { $_->data('INTRONS')>0 } ($o,$o->orthogroup);
+        my $sgd = $o->_debug;
+        my $sgd_ex = ($sgd ? $sgd->stream : 1);
+        next unless @int || $sgd_ex>1;
+	
+        my @intx = sort {$a <=> $b} map { $_->stream+0 } ($o,$o->orthogroup);
+        my $m = $intx[ ($#intx%2==0 ? $#intx : ($#intx+1))/2 ];
+        
+	my $exons='NA';
+	if( my $sgdx = $o->_debug ) {
+	    $exons = join('/', (map {$_->length} $sgdx->stream));
+	}
+	
+	
+	print {$fh} ++$icount, ($o->identify), $sgd_ex, $m, ($sgd_ex-$m), sprintf("%.2f",$o->critique), $exons, 
+	( map { join('/', $_->name, (map {$_->length} $_->stream) ) } ($o, $o->orthogroup) ),
+	$o->_genericlinks;
+    }
+    
+    return $self;
+}
+
 
 =head2 merge(-synteny => 2, -distance => 200, -align => .25)
     
@@ -5431,9 +5972,15 @@ sub _valid_file {
 
 sub _findMatrixMin {
     my $m = shift;
+    my $pen = (shift || 20)-1;
+
+    die unless $pen;
+    die unless ref($m) eq 'ARRAY'; 
+    die unless ref($m->[0]) eq 'ARRAY'; 
+
     my $imax = $#{$m};
     my $jmax = $#{ $m->[0] };
-    my ($ix, $jx, $min) = (undef, undef, 1000);
+    my ($ix, $jx, $min) = (undef, undef, 10000);
 
     return undef if $imax == -1 || $jmax == -1;
 
@@ -5451,9 +5998,9 @@ sub _findMatrixMin {
     splice( @{$m}, $ix, 1);
     map { splice( @{$_}, $ij, 1) } @{ $m }; 
     
- #   print 'M', $imax, $jmax, $ix, $jx, $min, $#{$m}, $#{ $m->[0] };
-    
-    $min = 19 if $min > 19;
+    print NOWHERE 'M', $imax, $jmax, $ix, $jx, $min, $#{$m}, $#{ $m->[0] };
+
+    $min = $pen if $min > $pen;
     return( $min+1 );
 }
 
