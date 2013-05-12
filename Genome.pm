@@ -2721,6 +2721,8 @@ sub ohnologComparative {
     pretty well. When ohnologs are pooled via orthogroups the 
     numbers reach 98% agreement with YGOB. 
     
+    -window : defines the region around 
+
 =cut 
 
 sub ohnologs {
@@ -2732,34 +2734,43 @@ sub ohnologs {
     $args->{'-max'} = sprintf("%d", $args->{'-window'}*2)+1 unless exists $args->{'-max'};
     $args->{'-drop'} = 5 unless exists $args->{'-drop'};
     $args->{'-penalty'} = 20  unless exists $args->{'-penalty'};
-
+    
     #######################################
+    # Initialize: 
+    # Remove all pre-existing ohnolog data 
+    # Index protein coding genes by YGOB locus id 
+    #######################################     
     
     my $attr = '_ohno_temp_var'.int(rand(100));
     my $ohno = scalar( grep { $_->ohnolog } $self->orfs );
-    #$self->warn("Deleting existing $ohno ohnologs") if $ohno;
-
+    
     my %hash;
-    foreach my $orf ( grep { #$_->assign =~ /RNA/ || 
-        $_->ygob } map { $_->stream } $self->stream ) {
+    foreach my $orf ( grep { $_->ygob } map { $_->stream } $self->stream ) {
         $orf->data($attr => undef);
         if ( my $oh = $orf->ohnolog ) {
-            $oh->ohnolog(undef);
-            #$orf->ohnolog(undef);
-        }
+            $oh->ohnolog(undef); # undefs both 
+	}
         push @{ $hash{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
     }
-
-    my %count;
+    
     #######################################
-   
-    foreach my $anc ( grep { $#{$hash{$_}} >= 1 } keys %hash) {
-        next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );
+    # Iterate through YGOB families and process each family independently.
+    # We take the YGOB designations on trust. 
+    #######################################
 
+    my $family_c;
+    my %count;   
+    foreach my $anc ( grep { $#{$hash{$_}} >= 1 } keys %hash) {
+        next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );	
         $count{'0.2copy'}++;
 
-        ###################
-        # build some candidates 
+	#######################################
+        # Iterate through familiy members. Nominate candidate ohnologs or quit: 
+	# 1. exclude tandem duplicates / near neighbours 
+	# 2. compute synteny vs pre-WGD ancestor (YGOB) and store
+	# 3. sort by synteny and accept top two as candidate pair
+	#######################################
+	
         my $old;
         foreach my $cand ( sort {$a->name <=> $b->name} @{$hash{$anc}} ) {
             # ignore tandems 
@@ -2779,60 +2790,73 @@ sub ohnologs {
             $cand->data($attr => $newsyn);
             $old = $cand;
 	    
-            next unless $args->{'-debug'};
-            $cand->oliver(-append => [$newsyn]);
-            foreach my $x ( grep {defined} (reverse($cand->traverse(-direction=>'left', -distance=>6)),   
-					    $cand->traverse(-direction=>'right', -distance=>6) )) {
-		$x->oliver;
+	    # output
+            if ($args->{'-debug'}) {
+		$cand->oliver(-append => [$newsyn]);
+		$cand->context();
 	    }
-            print;
 	}
-        
-        # 
-        
+
+	# sort by synteny
+
         my ($one,$two,$other) = map { $_->data($attr => undef); $_ }  sort { 
             $b->data($attr) <=> $a->data($attr)
         } grep { $_->data($attr) } @{$hash{$anc}};
-        next unless $one && $two;
 	
+        next unless $one && $two; # Terminate families that have no candidate pair.
         $count{'1.synteny'}++;
-        
-        # exclude tandems ...
+
+	#######################################
+	# Terminate candidates that fail a more stringent test for local duplication. 
+	#######################################
         
         next if $one->up->id == $two->up->id && 
             #( $one->distance(-object => $two) < 50 || 
             $one->distance(-object => $two, -bases => 1) < 5e4; 
-        #);
-        
+        #);        
         $count{'2.nontandem'}++;
-        
-        ###################     
-        # cannot use syntey_conserved since it uses exact Anc matches.
-        # instead we will get a minimum delta score. 
-        # this version should reward interleaving more than other arrangements. 
-        
-        my (@one, @two,@other); # all the genes that are on the same anc chr as caller
-        my ($onecount, $twocount, $othercount); # all the genes that are in region (any anc)
-        my ($onetwoscr, $othertwoscr);
+
+	#######################################
+        # Collect syntey data for designated candidate pair. 
+	# Collect for 3rd choice also-- a control of sorts.
+	# Data collected are indices of neighbouring gene on the ancestral chr.
+	# Cand1 (Anc_4.7) :  1,4,6,<7>,9,11,15
+	# Cand2 (Anc_4.7) :  2,3,5,<7>,9,10,12
+	# Cand3 (Anc_4.7) :  ,,,<7>,,19,
+	#######################################
+       
         
         $one->ygob =~ /(\d+)\.(\d+)/;
         my ($chr,$pos) = ($1,$2);
-
-        @one =  map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
-        map { $onecount++ if  $_->ygob ; $_ } grep { $_->ygob ne $one->ygob }
+	
+	my $onecount;
+        my @one =  map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
+	map { $onecount++; $_ } grep { $_->ygob ne $one->ygob }
         ( map { $one->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') );
-
-        @two = map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
-        map { $twocount++ if  $_->ygob; $_ } grep { $_->ygob ne $two->ygob }        
+	
+	my $twocount;        
+	my @two = map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
+	map { $twocount++; $_ } grep { $_->ygob ne $two->ygob }        
         ( map { $two->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') );
-
+	
+	my $othercount=0;
+	my @other = map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 	
+	map { $othercount++; $_ } grep { $_->ygob ne $other->ygob }
+	( map { $other->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') ) 
+	    if $other;
+	
         next unless @one && @two; # cannot make ohnos without synteny 
-        next unless $onecount && $twocount; #uh?
+	die unless scalar( grep {defined} @one)>0;
         $count{'3.syntenydata'}++;
 
-        ###################
-        # exclude cases where the ohnos are fragments at ends of diff contigs.
-        # in this case numbering should follow:  @o_sort $cand @two_sort 
+	#######################################
+	# Exclude false positives due to breaking of a contig in the middle of a gene:
+	# Cand1 (Anc_4.7) :  1,4,6,<7>,,,
+	# Cand2 (Anc_4.7) :  ,,,<7>,9,10,12	
+	# We toleate candidates that either :
+	# 1. the genes align well 
+	# 2. are both clearly internal to a contig. 
+	#######################################
 	
         my @o_sort = sort {$a <=> $b} @one;
         my @t_sort = sort {$a <=> $b} @two;
@@ -2854,39 +2878,56 @@ sub ohnologs {
             }
         }
         $count{'4.nonterminii'}++;
-        
-        ###################
-        # consider the third hit -- this is as close as we get to having something like a 
-        # respecteable means of rejecting a proposed ohno pair. 
-        # propoer stats later... 
-        
-        my ($mat1, $scr);
-        for my $i (0..$#one) { map { $mat1->[$i]->[$_] = abs( $one[$i] - $two[$_] ) }  (0..$#two); } 
-        $onetwoscr += $scr while ( $scr = &_findMatrixMin($mat1) ); # the shorter of one and two determines the number of scrs
-        $onetwoscr += $args->{'-penalty'} * ( $onecount < $twocount ? $onecount-scalar(@one) : $twocount-scalar(@two) );
-        $onetwoscr /= ( $onecount < $twocount ? $onecount : $twocount );
-        
-        if ( $other ) {
-            @other = map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } 
-            map { $othercount++ if  $_->ygob; $_ } grep { $_->ygob ne $other->ygob } 
-            ( map { $other->traverse(-direction => $_, -distance => $args->{'-window'}) } ('left','right') );
-        } else { $othertwoscr=$args->{'-penalty'}; }
-        
+
+	#######################################
+	# If there is a third gene in the family - presumptive non-ohnolog - 
+	# we use this to establish a null by comparing delta between second 
+	# candidate gene and the extra gene. 
+	# Otherwise we default to a predefined value.
+	#######################################
+	
+	my ($mat,$scr,$nullstatistic)=(undef,0,$args->{'-penalty'});
+	
         if ( @other ) {
-            my ($mat2,$scr);
-            for my $i (0..$#other) { map { $mat2->[$i]->[$_] = abs( $other[$i] - $two[$_] ) }  (0..$#two); } 
-            $othertwoscr += $scr while ( $scr = &_findMatrixMin($mat2) );
-            $othertwoscr += $args->{'-penalty'} * ( $othercount < $twocount ? $othercount-scalar(@other) : $twocount-scalar(@two) );
-            $othertwoscr /= ( $othercount < $twocount ? $othercount : $twocount );
-        } else { $othertwoscr= $args->{'-penalty'}; } 
+	    $nullstatistic=0;
+            for my $i (0..$#other) { map { $mat->[$i]->[$_] = abs( $other[$i] - $two[$_] ) }  (0..$#two); } 
+            $nullstatistic += $scr while ( $scr = &_findMatrixMin($mat, $args->{'-penalty'}) );
+            $nullstatistic += $args->{'-penalty'} * 
+		( $othercount < $twocount ? $othercount-scalar(@other) : $twocount-scalar(@two) );
+            $nullstatistic /= ( $othercount < $twocount ? $othercount : $twocount );
+        }
+	
+	#######################################
+        # Compute a test statistic and sanity check. 
+	# The test statistic is a function of the extent of interleaving: 
+	# 1. construct a distance matrix for each possible pair of genes
+	# across the two sister regions. D is based on ancestral gene index. 
+	# 2. iteratively choose neighbours to minimize the distance between 
+	# them. constrain to pairs that are consistent with chromosomal order.
+	# 3. Apply a penalty based on the lack of information encoded in the
+	# shorter region. 
+	#######################################
 
-	    ###################
-        # close it out... apply 2 primary criteria 
-
-        #print $anc, $#one, $#two, $#other, $onetwoscr, $othertwoscr; # ,$onecount,$twocount,$othercount ;
-        next unless $onetwoscr <= $args->{'-max'};
+	my ($mat,$scr,$teststatistic)=(undef,0,0);	
+        for my $i (0..$#one) { map { $mat->[$i]->[$_] = abs( $one[$i] - $two[$_] ) }  (0..$#two); } 
+        $teststatistic += $scr while ( $scr = &_findMatrixMin($mat, $args->{'-penalty'}) ); 
+        $teststatistic += $args->{'-penalty'} * 
+	    ( $onecount < $twocount ? $onecount-scalar(@one) : $twocount-scalar(@two) );
+        $teststatistic /= ( $onecount < $twocount ? $onecount : $twocount );
+	
+	# 
+	
+        print ++$family_c, $anc, $#one, $#two, $#other, 
+	sprintf("%.2f", $teststatistic), sprintf("%.2f",$nullstatistic), 
+	$onecount,$twocount,$othercount, $args->{'-penalty'}, $args->{'-max'};
+        next unless $teststatistic <= $args->{'-max'};
         $count{'5.score'}++;
-        next unless ($othertwoscr - $onetwoscr) >= $args->{'-drop'};
+	
+	#######################################
+        # close it out... apply 2 primary criteria 
+	#######################################
+
+        next unless ($nullstatistic - $teststatistic) >= $args->{'-drop'};
         $count{'6.drop'}++;
 
         $one->ohnolog( $two );
@@ -2895,7 +2936,8 @@ sub ohnologs {
     close $fh;
 
     map { print $_,$count{$_} } sort keys %count if $args->{'-verbose'};
-
+    exit;
+    
     map { $_->data($attr => 'delete') } $self->orfs;
     return $self;
 }
@@ -4193,7 +4235,7 @@ sub recover {
     identify it. 
 
     In general, we find a match in the region for small genes. Where the query 
-    is long its tends to be legitametly missing. But may be elsewhere. 
+    is long, it tends to be legitametly missing. But may be elsewhere. 
 
     Runmode 2: 
 
@@ -4999,6 +5041,11 @@ sub kaks {
 
 =head2 atg(-align => 10, -verbose => 1)
 
+    This is a wrapper around two orthogroup methods. 
+    We use alignedStartCodon to test whether we believe we have the correct 
+    start codon. If it returns false, we use atg_og to leverage information 
+    acorss genomes to find a "best consensus" start codon. 
+
 =cut 
 
 sub atg {
@@ -5017,7 +5064,7 @@ sub atg {
 
       map {$_->index; next unless $_->exons(-query => 'first')->length >= $TRIPLET*10 } ($o,$o->orthogroup);
       my $mal= $o->alignedStartCodon();
-
+      
       my ($m,$sd) = _calcMeanSD( map { $_->length } ($o, $o->orthogroup) ); # this is just fluff 
       print ">".(++$count), $o->name, $o->gene, $m, $sd, $mal if $args->{'-verbose'};
 
@@ -5977,7 +6024,7 @@ sub _findMatrixMin {
     die unless $pen;
     die unless ref($m) eq 'ARRAY'; 
     die unless ref($m->[0]) eq 'ARRAY'; 
-
+    
     my $imax = $#{$m};
     my $jmax = $#{ $m->[0] };
     my ($ix, $jx, $min) = (undef, undef, 10000);
@@ -5998,7 +6045,7 @@ sub _findMatrixMin {
     splice( @{$m}, $ix, 1);
     map { splice( @{$_}, $ij, 1) } @{ $m }; 
     
-    print NOWHERE 'M', $imax, $jmax, $ix, $jx, $min, $#{$m}, $#{ $m->[0] };
+    #print {NOWHERE} 'M', $imax, $jmax, $ix, $jx, $min, $#{$m}, $#{ $m->[0] };
 
     $min = $pen if $min > $pen;
     return( $min+1 );

@@ -4680,9 +4680,10 @@ sub _calcMeanSD {
 
 =head2 alignedStartCodon
 
-    Returns true if all genes in OG being with M 
-    and first -align aas align without gaps. 
-
+    Returns true (self) if both conditions hold :
+    1. all genes in OG begin with M 
+    2. first -align AAs align without gaps. 
+    
 =cut 
 
 sub alignedStartCodon {
