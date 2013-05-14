@@ -2700,37 +2700,54 @@ sub ohnologComparative {
 	#map { $_->output(-ohno => 1, -og => 1) } grep {defined} map {$_->ohnolog} map { @{$_} } values %{$ohno};
     }
     
-    print scalar( grep {$_->ogid} $self->orfs);    
-    print scalar( grep {$_->ohnolog} $self->orfs);    
+    #print scalar( grep {$_->ogid} $self->orfs);    
+    #print scalar( grep {$_->ohnolog} $self->orfs);    
     
     open($fho, ">post.ohnologs");
     map { print $fho $_->name, $_->ohnolog->name, $_->ygob, $_->sgd, $_->ogid, $_->identify } 
     grep { $_->ohnolog } $self->orfs;
     close($fho);
+
+    map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;    
     exit;
 
-    #map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;    
     return $self;
 }
 
 =head2 ohnologs(-window => 7, -max => auto|i, -drop => 5, 
     -penalty => 20, -debug => 'Anc')
     
-    Call ohnolog pairs. Not fully parametrized and should really 
-    be comparing to a proper null background model but performs 
-    pretty well. When ohnologs are pooled via orthogroups the 
-    numbers reach 98% agreement with YGOB. 
+    Call ohnolog pairs based on a candidate family based approach. 
+    Multi-gene families are defined based on homology to YGOB Ancestral
+    loci. Within each family genes are ranked based on their synteny
+    to the ancestral gene order and the top two genes considered ohnolog
+    candidates. We compute an "interleaving statistic" for the 2 regions 
+    and compare to a null that is based either on another gene family 
+    member or a predefined value. It is not principled. 
     
-    -window : defines the region around 
+    Performance is pretty good despite lack of overall optimization and 
+    the lack of better internal controls-- only regions with a member of
+    family X are considered. There could be a much more compelling sister 
+    region that simply lacked this one family member i.e.
 
+    The 2 potential improvements are: 
+    1. For each family of interest look at all possible sister regions by
+    collecting regions that have members of genes in any families in 
+    the presumptive ancetral region. These comparisons should be ordered /
+    grouped such that syntenically inconsistent assignments are not made. 
+    2. Start with synteny rather than homology, define sister regions, align
+    and then look for duplicates. 
+    
+    Not fully parametrized.
+    
 =cut 
 
 sub ohnologs {
     my $self = shift;
     my $args = {@_};
-
+    
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
-    $args->{'-window'} = 7 unless exists $args->{'-window'};
+    $args->{'-window'} = 7 unless exists $args->{'-window'};    
     $args->{'-max'} = sprintf("%d", $args->{'-window'}*2)+1 unless exists $args->{'-max'};
     $args->{'-drop'} = 5 unless exists $args->{'-drop'};
     $args->{'-penalty'} = 20  unless exists $args->{'-penalty'};
@@ -2787,6 +2804,7 @@ sub ohnologs {
                 -distance => 5,
                 -restrict => ['YGOB'] #, 'KLAC', 'SKLU', 'KWAL']
                 );
+	    # $cand->data($attr => $cand->hypergob);
             $cand->data($attr => $newsyn);
             $old = $cand;
 	    
@@ -2818,7 +2836,7 @@ sub ohnologs {
 
 	#######################################
         # Collect syntey data for designated candidate pair. 
-	# Collect for 3rd choice also-- a control of sorts.
+	# We collect for 3rd choice also-- a control of sorts.
 	# Data collected are indices of neighbouring gene on the ancestral chr.
 	# Cand1 (Anc_4.7) :  1,4,6,<7>,9,11,15
 	# Cand2 (Anc_4.7) :  2,3,5,<7>,9,10,12
@@ -2886,58 +2904,84 @@ sub ohnologs {
 	# Otherwise we default to a predefined value.
 	#######################################
 	
-	my ($mat,$scr,$nullstatistic)=(undef,0,$args->{'-penalty'});
-	
+	my $nullstatistic=$args->{'-penalty'};	
+
         if ( @other ) {
-	    $nullstatistic=0;
+	    my @null=(0,0);
+	    my ($mat,$scr) = ([], 0);
             for my $i (0..$#other) { map { $mat->[$i]->[$_] = abs( $other[$i] - $two[$_] ) }  (0..$#two); } 
-            $nullstatistic += $scr while ( $scr = &_findMatrixMin($mat, $args->{'-penalty'}) );
-            $nullstatistic += $args->{'-penalty'} * 
+            $null[0] += $scr while ( $scr = &_findMatrixMin($mat, $args->{'-penalty'}) );
+            $null[0] += $args->{'-penalty'} * 
 		( $othercount < $twocount ? $othercount-scalar(@other) : $twocount-scalar(@two) );
-            $nullstatistic /= ( $othercount < $twocount ? $othercount : $twocount );
+            $null[0] /= ( $othercount < $twocount ? $othercount : $twocount );
+
+	    my @rev = reverse(@two);
+	    my ($mat,$scr) = ([], 0);
+            for my $i (0..$#other) { map { $mat->[$i]->[$_] = abs( $other[$i] - $rev[$_] ) }  (0..$#rev); } 
+            $null[1] += $scr while ( $scr = &_findMatrixMin($mat, $args->{'-penalty'}) );
+            $null[1] += $args->{'-penalty'} * 
+		( $othercount < $twocount ? $othercount-scalar(@other) : $twocount-scalar(@two) );
+            $null[1] /= ( $othercount < $twocount ? $othercount : $twocount );
+	    ($nullstatistic) = sort {$a <=> $b} @null;
         }
 	
 	#######################################
         # Compute a test statistic and sanity check. 
-	# The test statistic is a function of the extent of interleaving: 
-	# 1. construct a distance matrix for each possible pair of genes
-	# across the two sister regions. D is based on ancestral gene index. 
-	# 2. iteratively choose neighbours to minimize the distance between 
-	# them. constrain to pairs that are consistent with chromosomal order.
-	# 3. Apply a penalty based on the lack of information encoded in the
-	# shorter region. 
+	# The test statistic is designed to reward interleaving of 
+	# genes on opposite chromosomes. Overall it works but we have 
+	# the following issues: 
+	# 1. we currently are not checking both orientations -- DS: FIXED 
+	# 2. we are not handling micro-inversions -- DS: I am OK with this
+	# 3. we do not reward duplicates (is this true?) -- DS: False. Results min penalty (0). 
+	# 4. we cannot guarantee optimality because we
+	# randomly choose a alignment path when 2 or more gene-gene
+	# relatioships are equivalent. need to do DP to find the
+	# overall best align.
+	# 5. we apply arbitrary post-alignment corrections based
+	# on the number of genes available to align. -- DS: I am OK with this
+	# 6. we do not have a statistical model for success/failure. 
 	#######################################
 
-	my ($mat,$scr,$teststatistic)=(undef,0,0);	
+	my $teststatistic=0;
+
+	my @test=(0,0);
+	my ($mat,$scr) = ([], 0);
         for my $i (0..$#one) { map { $mat->[$i]->[$_] = abs( $one[$i] - $two[$_] ) }  (0..$#two); } 
-        $teststatistic += $scr while ( $scr = &_findMatrixMin($mat, $args->{'-penalty'}) ); 
-        $teststatistic += $args->{'-penalty'} * 
+        $test[0] += $scr while ( $scr = &_findMatrixMin($mat, $args->{'-penalty'}) ); 
+        $test[0] += $args->{'-penalty'} * # applied penalties are based on the shorter array
 	    ( $onecount < $twocount ? $onecount-scalar(@one) : $twocount-scalar(@two) );
-        $teststatistic /= ( $onecount < $twocount ? $onecount : $twocount );
+        $test[0] /= ( $onecount < $twocount ? $onecount : $twocount ); # scale to shorter array
+
+	my @rev = reverse(@two);
+	($mat,$scr) = ([], 0);
+        for my $i (0..$#one) { map { $mat->[$i]->[$_] = abs( $one[$i] - $rev[$_] ) }  (0..$#rev); } 
+        $test[1] += $scr while ( $scr = &_findMatrixMin($mat, $args->{'-penalty'}) ); 
+        $test[1] += $args->{'-penalty'} * # applied penalties are based on the shorter array
+	    ( $onecount < $twocount ? $onecount-scalar(@one) : $twocount-scalar(@two) );
+        $test[1] /= ( $onecount < $twocount ? $onecount : $twocount ); # scale to shorter array
+	($teststatistic) = sort {$a <=> $b} @test;
 	
-	# 
+	# ouptut 
 	
         print ++$family_c, $anc, $#one, $#two, $#other, 
 	sprintf("%.2f", $teststatistic), sprintf("%.2f",$nullstatistic), 
-	$onecount,$twocount,$othercount, $args->{'-penalty'}, $args->{'-max'};
-        next unless $teststatistic <= $args->{'-max'};
-        $count{'5.score'}++;
+	$onecount,$twocount,$othercount, $args->{'-penalty'}, $args->{'-max'} if $args->{'-verbose'}>=2;
 	
 	#######################################
         # close it out... apply 2 primary criteria 
 	#######################################
-
+	
+        next unless $teststatistic <= $args->{'-max'};
+        $count{'5.score'}++;
         next unless ($nullstatistic - $teststatistic) >= $args->{'-drop'};
         $count{'6.drop'}++;
-
+	
         $one->ohnolog( $two );
         #$two->ohnolog( $one );
     }
     close $fh;
-
-    map { print $_,$count{$_} } sort keys %count if $args->{'-verbose'};
-    exit;
     
+    map { print $_,$count{$_} } sort keys %count if $args->{'-verbose'};
     map { $_->data($attr => 'delete') } $self->orfs;
     return $self;
 }
@@ -2945,9 +2989,40 @@ sub ohnologs {
 #######################################
 #######################################
 
+=head2 ohnologs2()
+
+    Method to call ohnolog pairs across the genome. 
+    Related to ohnolog() method but attempts to solve some
+    of the problems inherent in that implementation.
+    Notably: 
+    1. the lack of a true alignment step which could 
+    guarantee sub-optimal scoring of candidate sister regions.
+    2. a proper statistical test to determine whether the 
+    "sister score" is better than null.
+    Currently, only the former has been achieved. 
+
+    In addition, a "gradient model" could be added such that we
+    we initially accept ohnologs / sister regions with very strong 
+    evidence and subsequently only accept pairs/regions consistent 
+    with this. In a fully blown out version we could try for a globally 
+    optimal assignemtn of sister regions. But: 
+    1. requires better stats and thought about ohnologs vs sister regions
+    2. likley to result in only a marginal improvement in results?
+
+    The algorithm proceeds in the following phases: 
+    1. homology based candidate collection 
+    2. datastructure creation 
+    3. chromosome alignment 
+    4. alignment scoring for fit to sister model 
+    5. apply statistics to sister model score
+
+=cut
+
 sub ohnologs2 {
     my $self = shift;
     my $args = {@_};
+    
+    $self->warn("Experimental: Probabilities not yet computed.");
 
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
     $args->{'-window'} = 7 unless exists $args->{'-window'};
@@ -2959,22 +3034,24 @@ sub ohnologs2 {
     $args->{'-max'} = sprintf("%d", $args->{'-window'}*2)+1 unless exists $args->{'-max'};
     $args->{'-drop'} = 5 unless exists $args->{'-drop'};
     $args->{'-penalty'} = 20  unless exists $args->{'-penalty'};
-
+    
     #######################################
     # make some vars for the next phase 
+    #######################################
     
     my $fh = STDOUT;
     my $attr = '_ohno_temp_var'.int(rand(100));
     my $ohno = scalar( grep { $_->ohnolog } $self->orfs );    
   
-    # 
+    # alignment vars. these will be used as hash keys 
+    # for the alignemtn object. 
 
-    my $keyX = 'YGOB';    
+    my $keyX = 'YGOB'; # not used for alignment.    
     my $key0 = 'ANC';
     my $key1 = uc($self->organism).'1';
     my $key2 = uc($self->organism).'2';
     
-    # 
+    # scoring matrix for alignment phase.  
     
     my %matrix = (
 	'OHNO' => 4,
@@ -2982,19 +3059,21 @@ sub ohnologs2 {
 	'CROSS' => 2,
 	'SAME' => 0
 	);
+
+    # 
     
     my %anc;
-    foreach my $orf ( grep { #$_->assign =~ /RNA/ || 
-	$_->ygob } map { $_->stream } $self->stream ) {
+    foreach my $orf ( grep { $_->ygob } map { $_->stream } $self->stream ) {
 	$orf->data($attr => undef);
 	if ( my $oh = $orf->ohnolog ) {
 	    $oh->ohnolog(undef);
 	}
 	push @{ $anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
     }
-
+    
     #######################################
     # cycle through all Anc families 
+    #######################################
 
     my %count;   
     foreach my $anc ( grep { $#{$anc{$_}} >= 1 } keys %anc) {
@@ -3043,7 +3122,7 @@ sub ohnologs2 {
 	
 	my @cand = $x->_filter_tandems(-object => \@init, -distance => $args->{'-window'}*2);
 	next unless $cand[0] && $cand[1];
-
+	
 	######################################	
 	# We use a metric which rewards interleaving of 
 	# genes on opposite regions (exact matches are also rewarded)
@@ -3058,11 +3137,12 @@ sub ohnologs2 {
 	    my @i_array = $cand[$i]->context(-distance => $args->{'-window'}, -self => 1);
 
 	    # define order and valid range. only Ancs in reference are 
-	    # admitted for scoring so we constrain ultimate range/score without 
+	    # admitted for scoring so we constrain ultimate rangescore without 
 	    # without having to edit the actual gene order array i_array. 
 	    
-	    my (%hash,$i_rt);	
-	    my @i_sort = sort {$a <=> $b} grep {defined} map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @i_array;
+	    my (%hash,$i_rt); # i_rt is used to determine orientation 	
+	    my @i_sort = sort {$a <=> $b} grep {defined}
+	    map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @i_array;
 	    my @i_prune = &_prune_from_ends(\@i_sort, $args->{'-window'}+1);	   
 	    map { $i_rt += ($i_prune[$_]>$i_prune[$_-1] ? 1 : -1) } 1..$#i_prune; # determine order on chr
 	    
@@ -3073,20 +3153,21 @@ sub ohnologs2 {
 		my @j_array = $cand[$j]->context(-distance => $args->{'-window'}, -self => 1);
 		
 		my $j_rt;
-		my @j_sort = sort {$a <=> $b} grep {defined} map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @j_array;
+		my @j_sort = sort {$a <=> $b} grep {defined} 
+		map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @j_array;
 		my @j_prune = &_prune_from_ends(\@j_sort, $args->{'-window'}+1);
-		map { $j_rt += ($j_prune[$_]>$j_prune[$_-1] ? 1 : -1) } 1..$#j_prune; # determine order on chr
+		map { $j_rt += ($j_prune[$_]>$j_prune[$_-1] ? 1 : -1) } 1..$#j_prune; # as above 
 
 		# TRACK 2!
 		$hash{ $key2 } = [ $j_rt > 0 ? @j_array : reverse @j_array ];
-
+		
 		# TRACK 0! #####################
 		# use the min and max indices on the relevant chr to make the 
 		# ancestral gene order. should prune ends...
 		
 		my ($max) = sort {$b <=> $a} ($i_prune[-1],$j_prune[-1]);
 		my ($min) = sort {$a <=> $b} ($i_prune[0],$j_prune[0]);		
-
+		
 		my $genome = $self->clone;
 		$genome->organism( $key0 );
 		my $contig = ref($self->down)->new(SEQUENCE => 1e5 x 'ATGC', ID => 1);
@@ -3140,6 +3221,8 @@ sub ohnologs2 {
 		    #$score{'GAP'}++ unless $q->{$key1} || $q->{$key2};
 		    push @clean, $q; # if $q->{$key1} || $q->{$key2};
 		}
+
+		# cannot remember what this does.. 
 		
 		my ($ccc,$ddd);
 		my ($q,$qq) = grep { $clean[$_]->{$key1} || $clean[$_]->{$key2} } 0..$#clean;
@@ -3160,7 +3243,7 @@ sub ohnologs2 {
 		    $self->throw if ++$ddd >= 1e4;
 		}
 		my @clean = reverse @rev;
-
+		
 		################################		
 		# score the alignment 
 		# the nice way to do this is have a log odds score 
@@ -6019,18 +6102,18 @@ sub _valid_file {
 
 sub _findMatrixMin {
     my $m = shift;
-    my $pen = (shift || 20)-1;
+    my $pen = shift()-1;
 
     die unless $pen;
-    die unless ref($m) eq 'ARRAY'; 
-    die unless ref($m->[0]) eq 'ARRAY'; 
+    die unless ref($m) eq 'ARRAY';       # <<<<< TEST / See below
+    die unless ref($m->[0]) eq 'ARRAY';  # <<<<< TEST / See below 
     
     my $imax = $#{$m};
     my $jmax = $#{ $m->[0] };
     my ($ix, $jx, $min) = (undef, undef, 10000);
 
     return undef if $imax == -1 || $jmax == -1;
-
+    
     for my $i (0..$imax) {
 	for my $j (0..$jmax) { 
 	    if ($m->[$i]->[$j] < $min) {
@@ -6042,12 +6125,13 @@ sub _findMatrixMin {
     }
     
     # remove rows and columns 
-    splice( @{$m}, $ix, 1);
-    map { splice( @{$_}, $ij, 1) } @{ $m }; 
-    
-    #print {NOWHERE} 'M', $imax, $jmax, $ix, $jx, $min, $#{$m}, $#{ $m->[0] };
+    # and ensure that 2D matrix is preserved 
 
-    $min = $pen if $min > $pen;
+    splice( @{$m}, $ix, 1);
+    map { splice( @{$_}, $ij, 1) } @{ $m };
+    $m->[0]=[] unless ref($m) eq 'ARRAY' && ref($m->[0]) eq 'ARRAY'; # <<< TEST / See above 
+    
+    $min = $pen if $min > $pen; # limit the min at min (20) 
     return( $min+1 );
 }
 
