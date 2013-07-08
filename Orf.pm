@@ -2668,7 +2668,8 @@ sub homology {
 sub coding {
     my $self=shift;
     return 1 if $self->evidence =~ /HCNF/;
-    return ( $self->assign =~ /FEATURE|GAP|TELOMERE|CENTROMERE|RNA|PSEUDO|REPEAT/ ? 0 : 1);
+    return 1 if $self->ygob eq 'Anc_1.380' && $self->hypergob >=5; # HAP1 exception. this is crazy...
+    return ( $self->assign =~ /FEATURE|GAP|TELOMERE|CENTROMERE|RNA|PSEUDO|REPEAT/ ? 0 : 1); # INTER?
 }
 
 =head2 noncoding
