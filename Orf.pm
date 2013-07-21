@@ -782,8 +782,24 @@ sub _filter_tandems {
     return @uniq;
 }
 
+=head2 alignSisterRegions()
+
+=cut 
+
+sub alignSisterRegions {
+    my $self = shift;
+    my $args = {@_};
+    my $sister = $self->{'-sister'};
+    my $ygob = $self->{'-ancestor'};
+    
+    
+
+    return $align;
+}
 
 =head2 sister(-window => 10)
+
+    Returns a contig (sister region). Not a candidate ohnolog. 
 
     Infer the sister region to the one centered on the calling ORF. 
     Is intended to be quick-and-dirty. Do not use for serious work.

@@ -11,7 +11,8 @@ options(width=200);
 color=c('red','blue');
 ymax.def=0.15
 
-file="ohno2_long-win-12.tab"
+file="ohno2_long-win-10.tab"
+file="ohno2_delta-nu.tab"
 
 ################################################
 # read in algorithm scoring data  
@@ -86,7 +87,7 @@ x$CrossX<-as.numeric(x$CROSS/x$SAME)
 # Define function so we can recycle later 
 ################################################
 
-plot.align.vars <- function (df, features, ymax) {
+plot.align.vars <- function (df, features, ymax, vline) {
 
 	layout(matrix(1:length(features),nrow=2,byrow=T))
 	for (feat in features) {
@@ -117,6 +118,9 @@ plot.align.vars <- function (df, features, ymax) {
 	)
 	mtext(paste(round(sp.coef$estimate,3),round(sp.coef$p.value,12),sep=" / "), side=3, line=-2,col="blue")
 	
+	if (vline) {
+		abline(v=vline,col="green")	
+	}
 	# numbres .. 
 
 	form <- formula( paste(feat,"TrueP", sep=" ~ ") )
@@ -126,6 +130,9 @@ plot.align.vars <- function (df, features, ymax) {
 
 features <- c('Score','SAME', 'CROSS', 'GAP','OHNO','DELTA') # 'CrossX', 'OhnoN',
 plot.align.vars(x, features, ymax.def)
+
+file.eps=paste(file,'eps',sep='.')
+dev.copy2eps(file=file.eps);
 
 ################################################
 # look at data …
@@ -170,23 +177,32 @@ cx <- x[x$TrueP==i,c('OHNO','DELTA')]
 ################################################
 
 ymax=.1
-tests <- c('test1','test2', 'test3', 'test4')
+cutoff.score=2
 
-x$test1 <- x$Score
-x$test2 <- 4*x$OHNO + 4*x$CROSS - x$GAP 
-x$test3 <- x$test2 + x$KC
-x$test4 <- x$test3 - 2*x$OHNO + 2*x$CROSS  
+# tests <- c('test1','test2', 'test3', 'test4')
+#x$test1 <- x$Score
+#x$test3 <- x$test2 + x$KC
+#x$test4 <- x$test3 - 2*x$OHNO + 2*x$CROSS  
+
+test <- c('Score','test', 'OHNO', 'CROSS')
+x$test <- x$OHNO + x$CROSS
 
 print(summary(x$Score))
 print(summary(x$KC))
 
-plot.align.vars(x,tests,ymax)
+plot.align.vars(x,test.x,ymax, cutoff.score)
 
-x$BestGuess <- ifelse(x$test3 <= 15, "Error", "Ohno")
+x$BestGuess <- ifelse(x$test2 >= cutoff.score, "Ohno", "No Oh")
 
 for (feat in tests) {
 	x[[feat]]<-NULL
 }
 
-
+print(file);
 table(x$TrueP,x$BestGuess)
+
+file.pdf=paste(file,'pdf',sep='.')
+if ( file.exists(file.pdf) ) {
+	file.remove(file.pdf)
+}
+dev.copy2pdf(file=file.pdf);

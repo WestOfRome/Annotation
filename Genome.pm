@@ -171,7 +171,7 @@ sub annotate {
 	# LOSS to identify pillars and homologs. 
 	# we just populate the homology arrays. 
 	# update() runs evaluate() by default 
-
+	
 	map { $_->update( -store => 1, -verbose => 2, -exonerate => undef, -hsp => undef ) } $contig->orfs; 
     }
 
@@ -197,7 +197,7 @@ sub annotate {
 	next if $orf->rank < -1;
 	next unless $orf->id >= $args->{'-skip'};
 
-	# this is nasty. but running BLAST/HMMER again is worse. 
+	# this is nasty. but rerunning BLAST/HMMER again is worse. 
 	# correct by implementing lightweight HIT object that permits 
 	# holding adequate hits for inference (20?). 
 
@@ -2098,9 +2098,10 @@ sub subtelomeres {
 
 =head2 _synteny( -nulldist => 2|1, -distance => 20, -limit => 50 )
     
-    Build log-odds scoring table for synteny metric. Consider 
-    +/- distance genes around caller and compute probabilities for
-    homologs that are within limit of caller homolog. Larger 
+    Build log-odds scoring table for synteny metric.
+    
+    Consider +/- distance genes around caller and compute probabilities
+    for homologs that are within limit of caller homolog. Larger 
     treated as non-syntenic. Two alternative randomizations are 
     available: (1) genes singly randomly relocated in genome. This
     approximates mislabelling by BLAST or transposition. The 
@@ -2176,7 +2177,7 @@ sub _synteny {
 	    foreach my $sp ( @{$args->{'-restrict'}} ) {
 		my $val = $mat->[$i]->{$sp}; 
 		# see  _compose_synteny_delta_matrix() for setting of undef 
-		next unless defined $val; # if undef mean we have no homolog. 0 OK (good..)
+		next unless defined $val; # if undef means we have no homolog. 0 OK (good..)
 		$val = $args->{'-limit'} if abs($val) >= $args->{'-limit'}; # deal with infinitiy 
 		$m0->[$i]->{ $sp } = $self->_access_synteny_null_dist('NULL_DIST', $i+$adj, $sp, $val);
 		$m1->[$i]->{ $sp } = $self->_access_synteny_null_dist('SYN_DIST', $i+$adj, $sp, $val);
@@ -3045,20 +3046,27 @@ sub ohnologs {
     Related to ohnolog() method but attempts to solve some
     of the problems inherent in that implementation.
     Notably: 
-    1. the lack of a true alignment step which could 
-    guarantee sub-optimal scoring of candidate sister regions.
+    1. the lack of a true alignment step which lead to  
+    frequent sub-optimal scoring of candidate sister regions.
     2. a proper statistical test to determine whether the 
     "sister score" is better than null.
-    Currently, only the former has been achieved. 
 
-    In addition, a "gradient model" could be added such that we
-    we initially accept ohnologs / sister regions with very strong 
-    evidence and subsequently only accept pairs/regions consistent 
+    This method resolves the former issue by doing needleman-wunsch 
+    alignment at the gene feature level with a scoring matrix 
+    for each region that is based on the protein space HMMER3 scores
+    of the underlying genes. 
+
+    The second issue is now addressed with . 
+    
+    Future improvements include: 
+    A "gradient model" such that ohnologs / sister regions 
+    with very strong scores are initially accepted and we 
+    subsequently only accept pairs/regions consistent 
     with this. In a fully blown out version we could try for a globally 
     optimal assignemtn of sister regions. But: 
     1. requires better stats and thought about ohnologs vs sister regions
-    2. likley to result in only a marginal improvement in results?
-
+    2. likley to result in only a marginal improvement in results
+    
     The algorithm proceeds in the following phases: 
     1. homology based candidate collection 
     2. datastructure creation 
@@ -3075,14 +3083,17 @@ sub ohnologs2 {
     #$self->warn("Experimental: Probabilities not yet computed.");
 
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
-    $args->{'-window'} = 7 unless exists $args->{'-window'};
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
 
+    $args->{'-window'} = 7 unless exists $args->{'-window'};
+    $args->{'-cutoff'} = ($args->{'-window'} <= 7 ? 2 : 3) unless exists $args->{'-cutoff'};
+    
     $args->{'-synteny'} = 0 unless exists $args->{'-synteny'};
     $args->{'-homology'} = 'YGOB' unless exists $args->{'-homology'};
 
     $args->{'-max'} = sprintf("%d", $args->{'-window'}*2)+1 unless exists $args->{'-max'};
-    $args->{'-drop'} = 5 unless exists $args->{'-drop'};
+    # $args->{'-drop'} = 5 unless exists $args->{'-drop'}; # depracated
+    
     $args->{'-penalty'} = 20  unless exists $args->{'-penalty'};
     
     #######################################
@@ -3105,11 +3116,11 @@ sub ohnologs2 {
     # scoring matrix for alignment phase.  
     
     my %matrix = (
-	'OHNO' => 4,  # 1,2,3    ==    1,-,3 
-	'CROSS' => 2, # -,2,-          -,2,-
+	'OHNO' => 1,
+	'CROSS' => 1,
 	'SAME' => 0,
-	'GAP' => -1,
-	'DELTA' => -1,
+	'GAP' => 0,
+	'DELTA' => 0,
 	);
 
     # 
@@ -3195,6 +3206,40 @@ sub ohnologs2 {
 	
 	my @cand = $x->_filter_tandems(-object => \@init, -distance => $args->{'-window'}*2);
 	next unless $cand[0] && $cand[1];
+
+	######################################	
+	# we will need an ancestral gene order to scaffold to align
+	# the two regions. we create now with reference to '-window' 
+	######################################	
+	
+	my ($max_anc) = $anc_index + ( 2*$args->{'-window'} ); 
+	my ($min_anc) = $anc_index - ( 2*$args->{'-window'} ); 
+	$min_anc = 1 unless $min_anc >= 1;
+	$self->throw unless $min_anc <= $max_anc;	      
+
+	# 
+	
+	my $genome = $self->clone;
+	$genome->organism( $key0 );
+	my $contig = ref($self->down)->new(SEQUENCE => 1e5 x 'ATGC', ID => 1);
+	$genome->add(-object => $contig);
+	#print $genome->organism, $min, $anc, $max;
+	
+	my @anc_gene_order;
+	for my $pos ( $min_anc .. $max_anc ) {
+	    my $homol = 'Anc_'.$chr.'.'.$pos;
+	    my $orf = ref($cand[$i])
+		->new(
+		START => $pos*10,
+		STOP => ($pos*10)+3,
+		STRAND => 1,
+		UP => undef
+		);
+	    $orf->data( $keyX => $homol );
+	    $orf->data( 'ANC_POS' => $pos );
+	    $contig->add(-object => $orf);
+	    push @anc_gene_order, $orf;
+	}
 	
 	######################################	
 	# We use a metric which rewards interleaving of 
@@ -3230,50 +3275,16 @@ sub ohnologs2 {
 	      map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @j_array;
 	      my @j_prune = &_prune_from_ends(\@j_sort, $args->{'-penalty'});
 	      map { $j_rt += ($j_prune[$_]>$j_prune[$_-1] ? 1 : -1) } 1..$#j_prune; # as above 
-	
+
+	      ################################	
 	      # Alignment data structure
 	      
 	      my %hash = (
-		  $key1  => [ $i_rt > 0 ? @i_array : reverse @i_array ],
-		  $key2  => [ $j_rt > 0 ? @j_array : reverse @j_array ]
+		  $key0 => [ @anc_gene_order ],
+		  $key1 => [ $i_rt > 0 ? @i_array : reverse @i_array ],
+		  $key2 => [ $j_rt > 0 ? @j_array : reverse @j_array ]
 		  );
 
-	      my ($max_anc) = $anc_index + ( 2*$args->{'-window'} ); 
-	      my ($min_anc) = $anc_index - ( 2*$args->{'-window'} ); 
-	      $min_anc = 1 unless $min_anc >= 1;
-	      #my ($max_collect) = sort {$b <=> $a} ($i_prune[-1],$j_prune[-1]);
-	      #my ($min_collect) = sort {$a <=> $b} ($i_prune[0],$j_prune[0]);
-	      #my $min = ( $min_collect < $min_anc ? $min_anc : $min_collect );
-	      #my $max = ( $max_collect < $max_anc ? $max_collect : $max_collect );	      
-	      # print $min, $min_anc, $min_collect, $max, $max_anc, $max_collect;
-	      my $min=$min_anc;
-	      my $max=$max_anc;
-	      $self->throw unless $min <= $max;	      
-
-	      # 
-	      
-	      my $genome = $self->clone;
-	      $genome->organism( $key0 );
-	      my $contig = ref($self->down)->new(SEQUENCE => 1e5 x 'ATGC', ID => 1);
-	      $genome->add(-object => $contig);
-	      #print $genome->organism, $min, $anc, $max;
-	      
-	      for my $pos ( $min..$max ) {
-		  my $homol = 'Anc_'.$chr.'.'.$pos;
-		  my $orf = ref($cand[$i])
-		      ->new(
-		      START => $pos*10,
-		      STOP => ($pos*10)+3,
-		      STRAND => 1,
-		      UP => undef
-		      );
-		  $orf->data( $keyX => $homol );
-		  $orf->data( 'ANC_POS' => $pos );
-		  $contig->add(-object => $orf);
-		  push @{$hash{ $key0 }}, $orf;
-	      }
-	      
-	      ################################		
 	      # align two regions to the ancestor 
 	      
 	      my $align = $self->dpalign(
@@ -3392,12 +3403,6 @@ sub ohnologs2 {
 		  $score{'KC'}++;
 		  my $delta = abs( $old->{$key0}->data('ANC_POS') - $row->{$key0}->data('ANC_POS'))-1;  
 		  my $pen = ($delta >= $args->{'-penalty'} ? 0 : $args->{'-penalty'} - $delta );
-
-		  #print 
-		   #   $old->{$key0}->name, $row->{$key0}->name, $key0, 
-		    #  $old->{$key0}->data('ANC_POS'), $row->{$key0}->data('ANC_POS'), 
-		     # $delta, $pen,$score{'DELTA'};
-
 		  $score{'DELTA'} += $pen;
 		  push @{$score{'ARRAY'}}, $pen;
 		  $oldk=$k;
@@ -3421,9 +3426,9 @@ sub ohnologs2 {
 	      print ++$counter, $anc, 
 	      $cand[$i]->name, int($cand[$i]->hypergob), 
 	      $cand[$j]->name, int($cand[$j]->hypergob), '|',
-	      (map { "$score{$_}" } grep {!/array/i} sort keys %score_def),
-	      $score,'|',
-	      scalar(@clean),scalar(@i_array), scalar(@j_array); #, '|', $score{'SAME'}, $score;
+	      (map { "$score{$_}" } grep {!/array/i} sort keys %score_def),$score,'|',
+	      scalar(@clean),scalar(@i_array), scalar(@j_array)
+		  if $args->{'-verbose'} >=1; #, '|', $score{'SAME'}, $score;
 	      
 	      # print an alignment 
 	      
@@ -3432,8 +3437,18 @@ sub ohnologs2 {
 	  } #j
       } #i
 	
+	#######################################
+	# make some vars for the next phase 
+	#######################################
+	
 	next unless %sisters;
 	my ($best, $second) = sort { $sisters{$b}->{SCR} <=> $sisters{$a}->{SCR} } keys %sisters;
+	next unless $sisters{$best}->{SCR} >= $args->{'-cutoff'};
+	
+	if ( $args->{'-replicates'} ) {
+	    
+	}
+
 	$sisters{$best}->{G1}->ohnolog( $sisters{$best}->{G2} ); # we set reciprocals automatically
     }
     
