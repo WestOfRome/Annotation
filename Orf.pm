@@ -789,12 +789,271 @@ sub _filter_tandems {
 sub alignSisterRegions {
     my $self = shift;
     my $args = {@_};
-    my $sister = $self->{'-sister'};
-    my $ygob = $self->{'-ancestor'};
-    
-    
+    my $sister = $args->{'-sister'};
+    my $anc = $args->{'-ancestor'};
 
-    return $align;
+    ######################################	
+    # check arguments 
+    ######################################	
+    
+    $args->{'-window'} = 7 unless exists $args->{'-window'};
+    $args->{'-homology'} = 'YGOB' unless exists $args->{'-homology'};
+    $args->{'-clean'} = 1 unless exists $args->{'-clean'};
+    $args->{'-score'} = 1 unless exists $args->{'-score'};
+    
+    ######################################	
+    # prepare variables 
+    ######################################	
+
+    $anc =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+    my ($chr,$anc_index) = ($1,$2);
+    my $key0 = 'ANC';  # used multiple places. 
+    
+    ######################################	
+    # we will need an ancestral gene order to scaffold to align
+    # the two regions. we create now with reference to '-window' 
+    ######################################	
+    
+    my ($max_anc) = $anc_index + ( 2*$args->{'-window'} ); 
+    my ($min_anc) = $anc_index - ( 2*$args->{'-window'} ); 
+    $min_anc = 1 unless $min_anc >= 1;
+    $self->throw unless $min_anc <= $max_anc;	      
+    
+    # 
+    
+    my $genome = $self->up->up->clone;
+    $genome->organism( $key0 );
+    my $contig = ref($self->up)->new(SEQUENCE => 1e5 x 'ATGC', ID => 1);
+    $genome->add(-object => $contig);
+    #print $genome->organism, $min, $anc, $max;
+    
+    my @anc_gene_order;
+    for my $pos ( $min_anc .. $max_anc ) {
+	my $homol = 'Anc_'.$chr.'.'.$pos;
+	my $orf = ref($self)
+	    ->new(
+	    START => $pos*10,
+	    STOP => ($pos*10)+3,
+	    STRAND => 1,
+	    UP => undef
+	    );
+	$orf->data(  $args->{'-homology'} => $homol );
+	$orf->data( 'ANC_POS' => $pos );
+	$contig->add(-object => $orf);
+	push @anc_gene_order, $orf;
+    }
+
+    # build our data structure 
+    
+    my %hash = ( $key0 => \@anc_gene_order );
+    my @keys = ( $key0 );
+    
+    ######################################	
+    # we will need an ancestral gene order to scaffold to align
+    # the two regions. we create now with reference to '-window' 
+    ######################################	
+
+    # define order and valid range. only Ancs in reference are 
+    # admitted for scoring so we constrain ultimate range without 
+    # without having to edit the actual gene order array i_array. 
+    
+    my @genes=($self,$sister);
+
+    for my $i (0..1) {
+	my @i_array = $genes[$i]->context(-distance => $args->{'-window'}, -self => 1);
+	my $i_rt; # i_rt is used to determine orientation 	
+	my @i_sort =  grep {defined} # sort {$a <=> $b}
+	map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @i_array;    
+	my @i_prune = &_prune_from_ends(\@i_sort, $args->{'-penalty'});
+	map { $i_rt += ($i_prune[$_]>$i_prune[$_-1] ? 1 : -1) } 1..$#i_prune; # determine order on chr
+
+	my $key = uc($genes[$i]->organism).($i+1);
+	$hash{ $key } = [ $i_rt > 0 ? @i_array : reverse @i_array ];
+	push @keys, $key;
+    }
+
+    # align two regions to the ancestor 
+    
+    my $align = $self->dpalign(
+	# alignment 
+	-hash => \%hash, 
+	-order => [ @keys ], #$key0 must be first 
+	-reference => $key0,
+	-global => 1,
+	# scoring 
+	-match =>  $args->{'-homology'} ,
+	-mismatch => -1e6,
+	-gap => 0,
+	-inversion => -100,
+	-trna => 100,
+	# 
+	-verbose => undef
+	);
+    
+    return ($align,undef) if 
+	$args->{'-clean'}==0 && $args->{'-score'}==0;
+    
+    ######################################	
+    # trim back to only regions in YGOB ancestor 
+    ######################################	
+    
+    my (@clean);
+    if ( $args->{'-clean'} ) {
+	foreach my $q ( grep { $_->{$key0} } @{$align} ) {	
+	    foreach my $k ( grep {/\-/} keys %{$q} ) {
+		my ($jnk,$k2) = split/\-/,$k;
+		$q->{$k2}=$q->{$k};
+		delete $q->{$k};
+	    }		  
+	    push @clean, $q;
+	}    
+	shift(@clean) until ( ! @clean || $clean[0]->{$keys[0]} || $clean[0]->{$keys[1]} );
+	pop(@clean) until ( ! @clean || $clean[-1]->{$keys[0]} || $clean[-1]->{$keys[1]} );
+    } else { @clean = @{$align}; } 
+    return undef unless @clean;
+    
+    &_print_align( [keys %hash], \@clean, 2 ) if $args->{'-verbose'};
+    
+    return (\@clean,undef) unless $args->{'-score'};
+    
+    ######################################	
+    # trim back to only regions in YGOB ancestor 
+    ######################################	
+    
+    my ($score,$hash) = 
+	$self->_scoreSisterAlignment(-align => \@clean, @_);
+    
+    return (\@clean,$score,$hash);
+}
+
+sub _scoreSisterAlignment {
+    my $self = shift @_;
+    my $args = {@_};
+    my $align = $args->{'-align'};
+
+    # check arguments 
+    
+    $self->throw unless ref($align) eq 'ARRAY';
+    $self->throw unless ref($align->[0]) eq 'HASH';
+    
+    $args->{'-penalty'} = 20  unless exists $args->{'-penalty'};
+
+    my $key0 = 'ANC';
+    
+    # scoring matrix for alignment phase.  
+    # >>>> should be possible to pass in a matrix. <<<<<
+    
+    my %matrix = (
+	'OHNO' => 1,
+	'CROSS' => 1,
+	'SAME' => 0,
+	'GAP' => 0,
+	'DELTA' => 0,
+	'KC' => 0
+	);
+
+    # 
+    
+    my %score = (
+	'OHNO' => -1,
+	'KC' => 0,
+	'GAP' => 0,
+	'CROSS' => 0,
+	'SAME' => 0,
+	'DELTA' => 0,
+	'ARRAY' => []
+	);
+
+    #######################################
+    # count relationships in alignment that can later be scored.
+    #######################################
+
+    my @clean = @{$align};
+    my ($key1,$key2) = grep {!/$key0/} keys %{ $clean[0] };
+    
+    my $oldk;
+    foreach my $k ( 0..$#clean ) {
+	my ($row,$old) = ($clean[$k], $clean[$oldk]);
+	
+	# first 2 are locus specific 
+	# second 2 involve interleaving and intra locus scoring 
+	
+	if (! $row->{$key1} && ! $row->{$key2}) { 
+	    $score{'GAP'}++;
+	    next;
+	} elsif ( $row->{$key1} && $row->{$key2} ) { 
+	    $score{'OHNO'}++;
+	    next;
+	} elsif ( ($row->{$key1} && $old->{$key1}) || ($row->{$key2} && $old->{$key2}) ) {
+	    $score{'SAME'}++;
+	} elsif ( ($row->{$key1} && $old->{$key2}) || ($row->{$key2} && $old->{$key1}) ) {
+	    $score{'CROSS'}++;
+	} else {} # this is possible at the start of an alignment. 
+	
+	$oldk=$k; # only assigned of single-copy 
+    }
+    
+    ################################################
+    # distance approach.
+    # This is similar to the old ohnologs() method. 
+    ################################################	      
+
+    my $oldk=0;
+    foreach my $k ( 1..$#clean ) {
+	my ($row,$old) = ($clean[$k], $clean[$oldk]);
+	next unless ($row->{$key1} || $row->{$key2});
+	$oldk=$k and next unless ($old->{$key1} || $old->{$key2} );
+	# 
+	$score{'KC'}++;
+	my $delta = abs( $old->{$key0}->data('ANC_POS') - $row->{$key0}->data('ANC_POS'))-1;  
+	my $pen = ($delta >= $args->{'-penalty'} ? 0 : $args->{'-penalty'} - $delta );
+	$score{'DELTA'} += $pen;
+	push @{$score{'ARRAY'}}, $pen;
+	$oldk=$k;
+    }
+    
+    ################################################    
+    # finalize scoring and create datastructure 
+    
+    my $score=0;
+    map { $score+=$score{$_}*$matrix{$_} } grep {!/delta|array/i} keys %matrix; 
+    
+    return (wantarray ? ($score, \%score) : $score);
+}
+
+sub dpalign {
+    my $self = shift;
+    $self->up->up->dpalign( @_ );
+}
+
+sub _print_align {
+    my @keys = @{shift @_};
+    my @clean = @{shift @_};
+    my $lim = shift @_ || 0;
+    
+    foreach my $key (@keys) {
+	my @print = ( 
+	    scalar(@clean) >= $lim
+	    ? (map { ($_->{$key} ? "X" : ".") } @clean)
+	    : (map {s/Anc_//; $_} map { ($_->{$key} ? $_->{$key}->ygob : " . ") } @clean)
+	    );
+	print '>'.$key, join( (scalar(@clean) >= $lim ? "" : "\t"), @print);
+    }
+    
+    return 1;
+}
+
+sub _prune_from_ends {
+    my @x = @{shift @_};
+    my $z = shift;
+
+    my $i=0;
+    $i++ until ( $i>=($#x-1) || $x[$i+1]-$x[$i] < $z);
+    my $j=0;
+    $j++ until ( $j>=($#x-1) || $x[$#x-$j]-$x[$#x-$j-1] < $z);
+    
+    #print $#x, $i,  $#x-$i-$j+1, "($j)";
+    return splice(@x, $i, $#x-$i-$j+1)
 }
 
 =head2 sister(-window => 10)
