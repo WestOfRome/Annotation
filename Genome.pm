@@ -3087,7 +3087,10 @@ sub ohnologs2 {
 
     $args->{'-synteny'} = 0 unless exists $args->{'-synteny'};
     $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
-    #$args->{'-cutoff'} = ($args->{'-window'} <= 7 ? 2 : 3) unless exists $args->{'-cutoff'};
+ 
+    $args->{'-cutoff'} = ($args->{'-window'} <= 7 ? 2 : 3) unless exists $args->{'-cutoff'};  
+    $args->{'-significance'} = 0.05 unless exists $args->{'-significance'};
+    $args->{'-replicates'} = 20 unless exists $args->{'-replicates'};
     
     #######################################
     # make some vars for the next phase 
@@ -3096,37 +3099,45 @@ sub ohnologs2 {
     my $fh = STDOUT;
     my $attr = '_ohno_temp_var'.int(rand(100));
     my $ohno = scalar( grep { $_->ohnolog } $self->orfs );    
+    my $data_key = 'OHNO';
+    my ($counter, $count_x, $count_y)=(0,0,0);
 
     #######################################
     # prep work 
     #######################################
       
-    unless ( $args->{'-verbose'} < 0 ) {
+    if ( $args->{'-verbose'} == 2 ) {
 	print 
 	    qw(#Family AncLocus Ohno1 Synteny1 Ohno2 Synteny2 |), 
 	    (grep {!/array/i} sort keys %score_def),
 	    qw(Score | Align_Len Track1_Len Track2_Len); 
     }
     
-    # 
-    
+    # create indexes
+    # %anc stores all orfs with same anc homology 
+    # %index provides a unique numeric id access to orfs in genome
+
     my %anc;
+    my %index;
+    my $index;
     foreach my $orf ( grep { $_->ygob } map { $_->stream } $self->stream ) {
 	$orf->data($attr => undef);
 	if ( my $oh = $orf->ohnolog ) {
 	    $oh->ohnolog(undef);
 	}
 	push @{ $anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
+	$index{ ++$index }=$orf;
     }
     
     #######################################
     # cycle through all Anc families 
     #######################################
 
+    my $time=time;
     my %count;   
     foreach my $anc ( grep { $#{$anc{$_}} >= 1 } keys %anc) {
 	next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );	
-	print ">$anc" if $args->{'-verbose'};
+	#print "\n".('#' x 60)."\n".">$anc" unless $args->{'-verbose'} == -1;
 	
 	###################
 	# cycle through homologs and get synteny 
@@ -3179,6 +3190,8 @@ sub ohnologs2 {
 		  $cand[$i]->alignSisterRegions(
 		      -sister => $cand[$i+1],
 		      -ancestor => $anc,
+		      -window => $args->{'-window'},
+		      -clean => 1,
 		      -score => 1
 		  );
 	      
@@ -3191,15 +3204,15 @@ sub ohnologs2 {
 	      
 	      # output 
 	     
-	      if ($args->{'-verbose'} >=1) {
+	      if ($args->{'-verbose'} >=2) {
 		  print ++$counter, $anc, 
 		  $cand[$i]->name, int($cand[$i]->hypergob), 
 		  $cand[$j]->name, int($cand[$j]->hypergob), '|',
 		  (map { "$hash->{$_}" } grep {!/array/i} sort keys %{$hash}),$score;
 	      }
-	      if ($args->{'-verbose'} >=2) {
-		  &_print_align( [qw(SCER1 ANC SCER2)], $align, $args->{'-verbose'} ) and print "\n";
-	      } 	      
+	      if ($args->{'-verbose'} >=3) {
+		  &_print_align($align, $args->{'-verbose'} );
+	      }
 	  } #j
       } #i
 	
@@ -3209,23 +3222,94 @@ sub ohnologs2 {
 	
 	next unless %sisters;
 	my ($best, $second) = sort { $sisters{$b}->{SCR} <=> $sisters{$a}->{SCR} } keys %sisters;
-	next unless $sisters{$best}->{SCR} >= $args->{'-cutoff'};
+	my $g1 =  $sisters{$best}->{G1};
+	my $g2 =  $sisters{$best}->{G2};
+
+	# get randomization based p-values 
 	
-	print $sisters{$best}->{G1}->name, $sisters{$best}->{G2}->name, $sisters{$best}->{SCR};
+	my ($pval,$percentile)=('NA','NA');
 	if ( $args->{'-replicates'} ) {
-	    
-	}
+	    my @scores;
+	    for my $rep ( 1..$args->{'-replicates'} ) {		
+		my $sample = int(rand($index))+1;
+		my $dummy = $index{$sample};
+		until ( ($dummy->distance(-object => $g1) > $args->{'-window'}*5) && 
+			($dummy->distance(-object => $g2) > $args->{'-window'}*5) ) {
+		    $sample = int(rand($index))+1;
+		    $dummy = $index{$sample};
+		}
+		#$dummy->output;
+		my $store = $dummy->_data;		
+		$dummy->_data( $g2->_data );
+		
+		my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
+		    $g1->alignSisterRegions(
+			-sister => $dummy,
+			-ancestor => $anc,
+			-window => $args->{'-window'},
+			-clean => 1,
+			-score => 1
+		    );
+		#print $score , " ( $sisters{$best}->{SCR} ) ";
+		#&_print_align($align);
+		push @scores, $score;
+		$dummy->_data( $store );		
+	    }
+	    $percentile = &_percentile($sisters{$best}->{SCR}, \@scores);
+	    $pval = ( $percentile==100 ? 1/$args->{'-replicates'} : sprintf("%.3f",(100-$percentile)/100) );	    
+	} 
 	
-	$sisters{$best}->{G1}->ohnolog( $sisters{$best}->{G2} ); # we set reciprocals automatically
+	# store the evidence even if we do not designate an ohnolog 
+	# actual ohnologs are stored on $self->{OHNOLOG}
+	# hope this doesn't break evidence routines ... 
+	foreach my $o ($g1,$g2) {
+	    $o->accept(
+		$data_key, 		    
+		{
+		    HIT => ( $o eq $g1 ? $g2 : $g1 ), 
+		    EVALUE => $pval, 
+		    SCORE => $sisters{$best}->{SCR}
+		}
+		);
+	}
+
+	# output 
+
+	if ( $args->{'-verbose'} ) {
+	    print ++$count_x, $anc, 
+	    $g1->name, int($g1->hypergob), 
+	    $g2->name, int($g2->hypergob), 
+	    $sisters{$best}->{SCR}, $percentile, $pval;	    
+	}
+
+	# apply cutoff 
+
+	if ( $args->{'-replicates'} ) { next unless $pval <= $args->{'-significance'}; }
+	else { next unless $sisters{$best}->{SCR} >= $args->{'-cutoff'}; }
+	
+	$g1->ohnolog( $g2 ); # we set reciprocals automatically	    
+	print {STDERR} $anc, $count_x, ++$count_y, (time-$time).'s',
+	$g1->name, $g2->name, $sisters{$best}->{SCR},$args->{'-replicates'},$percentile, $pval;
+	$time=time; 
     }
     
-    map { print $_,$count{$_} } sort keys %count if $args->{'-verbose'};
     map { $_->data($attr => 'delete') } $self->orfs;
     return $self;
 }
 
+sub _percentile {
+    my $scr = shift;
+    my $rands = shift;
+    
+    my @sort = sort {$a <=> $b} @{$rands};
+    
+    pop(@sort) until (! @sort || $scr > $sort[$#sort]);
+    
+    return ( scalar(@sort)/scalar(@{$rands})*100 );
+}
+
 sub _print_align {
-    my @keys = @{shift @_};
+    my @keys = qw(SCER1 ANC SCER2); # @{shift @_};
     my @clean = @{shift @_};
     my $lim = shift @_ || 0;
     
@@ -3237,6 +3321,7 @@ sub _print_align {
 	    );
 	print '>'.$key, join( (scalar(@clean) >= $lim ? "" : "\t"), @print);
     }
+    print "\n";
     
     return 1;
 }

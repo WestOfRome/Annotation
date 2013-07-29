@@ -574,7 +574,7 @@ sub gather {
     it may not be altered directly -- must first unset 
     by calling with -object => 'undef'. If no values are passed 
     we just return the existing ohnolog. To access the score 
-    use $self->score('ohno');
+    use $self->score('ohnolog');
 
  NB: This method utilizes _linked_pair_generic_get_set to 
     automatically handle reciprocals relationships.
@@ -588,13 +588,17 @@ sub ohnolog {
     my $attr = 'OHNOLOG';
 
     $args->{'-object'} = $_[0] if ( ! exists $args->{'-object'} && @_ );
-    $args->{'-score'} = 0 unless $args->{'-score'};
+    #$args->{'-score'} = 0 unless $args->{'-score'};
     
-    if ( @_ ) { # we are setting not getting 
-	my $key =  '__'.$attr; # it is a score so gets '__'
-	$self->data( $key => ( ! $args->{'-object'} ? undef : $args->{'-score'}) );
-	if ( my $ohno = $self->ohnolog ) {
+    if ( $args->{'-score'} ) {
+	$self->throw('Depracated: Use $orf->accept(ohno) to store evidence.');
+	
+	if ( @_ ) { # we are setting not getting 
+	    my $key =  '__'.$attr; # it is a score so gets '__'
+	    $self->data( $key => ( ! $args->{'-object'} ? undef : $args->{'-score'}) );
+	    if ( my $ohno = $self->ohnolog ) {
 	    $ohno->data( $key => ( ! $args->{'-object'} ? undef : $args->{'-score'}) );
+	    }
 	}
     }
     
@@ -5938,7 +5942,8 @@ sub accept {
     $catstar =~ s/\*$//;
     
     $self->throw unless $cat && 
-	($catstar eq 'GENE' || exists $EVIDENCE{$catstar} || exists $HOMOLOGY{$catstar});
+	($catstar eq 'GENE' || $catstar eq 'OHNO' || # will OHNO break something?
+	 exists $EVIDENCE{$catstar} || exists $HOMOLOGY{$catstar});
     $self->throw unless $hit && ref($hit) eq 'HASH';
     $self->throw unless (exists  $hit->{HIT} && exists $hit->{EVALUE} && exists $hit->{SCORE});
     
@@ -6013,8 +6018,10 @@ sub score {
     } elsif ( $score eq 'pillar' ) {   # confidence for YGOB pillar assignment 
 	return $self->data('_PILLAR'); # also pillarscore(). for now. 
 
-    } elsif ( $score =~ /ohno/i ) {   # confidence for YGOB pillar assignment 
-	return $self->data('_OHNOLOG');  # also pillarscore(). for now. 
+    } elsif ( $score =~ /ohno$/i ) {   # ohnolog scoring algorithm ohnolog2()
+	return $self->data('__OHNO');  
+    } elsif ( $score =~ /ohno/i ) {   # changed in ohnologs2()
+	$self->throw("Depracated: Use 'ohno' not 'ohnolog'.");
 	
     } elsif ( $score eq 'wise') {    # 
 	return $self->data('WISE');
