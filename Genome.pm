@@ -2523,23 +2523,19 @@ sub ohnologComparative2 {
     my $args = {@_};
 
     $self->throw unless $self->bound;
-    $args->{'-refresh'} = undef unless exists $args->{'-refresh'};
     $args->{'-orthogroup'} = 1 unless exists $args->{'-orthogroup'};
     $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
     
     my $fh = STDERR;
     my $count= scalar($self->bound)+1;
 
-    print scalar( grep {$_->ohnolog} $self->orfs);    
-    print scalar( grep {$_->ogid} $self->orfs);
-    #map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
+    map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
 
     ################################
     # prep work 
     ################################
 
-    # for ohnologs  ...
-    map { $_->ohnologs(-window => 7, -drop => 5, -penalty => 20) } $self->iterate if $args->{'-refresh'};
+    # create an index 
     my %og = map { $_->ogid => $_ } grep {$_->ogid} map {$_->stream} $self->stream;  
 
     # for orthologs ...
@@ -2551,14 +2547,34 @@ sub ohnologComparative2 {
 	print $k, $dn,$dn_sd;
     }
 
-    ################################
-    # 
-    ################################
+    # go through each orthogroup and see where we can "fill"
+    # an OG with ohnologs using info borrowed from others. 
 
-    open($fho, ">pre.ohnologs");
-    map { print $fho $_->name, $_->ohnolog->name, $_->ygob, $_->sgd, $_->ogid, $_->identify } 
-    grep { $_->ohnolog } $self->orfs;
-    close($fho);
+    my %uniq;
+    foreach my $o ( grep { !++$uniq{$_->ogid}} sort {$b->length <=> $a->length} 
+		    grep {$_->orthogroup} map {$_->stream} $self->stream ) {
+
+	my $speciesHash = map { $_->organism => [$_] } $o->_orthogroup;
+	my $ohno = $o->_ohnolog_consistency;
+	# -1  => [z,x] // z,x have no ohnologs 
+	# 0   => [w]   // w has an ohnolog but it is not in an OG 
+	# 123 => [d,w] // d and w are have ohnologs in the OG 123
+
+	# special case 1 : Total consistency.
+	next if scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0; # perfect ohno or perfect singleton
+
+	# lets get the other ortho groups 
+	my ($ogid, @other) = sort { $#{$ohno->{$b}} <=> $#{$ohno->{$a}} } grep {$_>0} keys %{$ohno};	
+	next unless ! $args->{'-debug'} || $ogid == $args->{'-debug'};
+
+	# 
+
+	next if @other;
+
+	foreach ( $self->bound ) {
+	}
+
+    }
 
     return $self;
 }
@@ -2584,23 +2600,18 @@ sub ohnologComparative {
     my $args = {@_};
 
     $self->throw unless $self->bound;
-    $args->{'-refresh'} = undef unless exists $args->{'-refresh'};
     $args->{'-orthogroup'} = 1 unless exists $args->{'-orthogroup'};
     $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
     
     my $fh = STDERR;
     my $count= scalar($self->bound)+1;
 
-    print scalar( grep {$_->ohnolog} $self->orfs);    
-    print scalar( grep {$_->ogid} $self->orfs);
     #map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
 
     ################################
     # prep work 
     ################################
 
-    # for ohnologs  ...
-    map { $_->ohnologs(-window => 7, -drop => 5, -penalty => 20) } $self->iterate if $args->{'-refresh'};
     my %og = map { $_->ogid => $_ } grep {$_->ogid} map {$_->stream} $self->stream;  
 
     # for orthologs ...
@@ -2626,18 +2637,19 @@ sub ohnologComparative {
     # go through each orthogroup and see where we can "fill"
     # an OG with ohnologs using info borrowed from others. 
 
-    my %seen;
-    foreach my $o ( sort {$b->length <=> $a->length} grep {$_->orthogroup} map {$_->stream} $self->stream ) {
-	next if exists $seen{$o->ogid};
-	$seen{$o->ogid}=1;
+    my %uniq;
+    foreach my $o ( grep { !++$uniq{$_->ogid}} sort {$b->length <=> $a->length} 
+		    grep {$_->orthogroup} map {$_->stream} $self->stream ) {
+
 	my $ohno = $o->_ohnolog_consistency;	
-	
-	################################
-	# Special Case 1
-	# Total consistency -- nothing to do
-	################################	
-	
-	next if scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0; # perfect ohno or singleton
+	# -1  => [z,x] // z,x have no ohnologs 
+	# 0   => [w]   // w has an ohnolog but it is not in an OG 
+	# 123 => [d,w] // d and w are have ohnologs in the OG 123
+
+	# special case 1 : Total consistency.
+	next if scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0; # perfect ohno or perfect singleton
+
+	# lets get the other ortho groups 
 	my ($ogid, @other) = sort { $#{$ohno->{$b}} <=> $#{$ohno->{$a}} } grep {$_>0} keys %{$ohno};	
 	next unless ! $args->{'-debug'} || $ogid == $args->{'-debug'};
 

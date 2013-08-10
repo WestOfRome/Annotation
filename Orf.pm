@@ -1233,7 +1233,7 @@ sub sameframe {
     
     -1 => no ohnolog 
     0 => ohnolog not in any OG
-    >=1 => ohnolog in specified OG
+    >=1 => ohnolog in specified OG (key is OGID)
 
 =cut 
 
