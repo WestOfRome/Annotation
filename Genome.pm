@@ -2517,6 +2517,14 @@ sub quality {
     return $self;
 }
 
+=head2 ohnologComparative2()
+
+    Method to compare ohnolog assignments across
+    species in a bound genome object and reconcile
+    differences. In the ideal case this means adding
+    more ohnologs. 
+
+=cut 
 
 sub ohnologComparative2 {
     my $self = shift;
@@ -2526,17 +2534,15 @@ sub ohnologComparative2 {
     $args->{'-orthogroup'} = 1 unless exists $args->{'-orthogroup'};
     $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
     
-    my $fh = STDERR;
-    my $count= scalar($self->bound)+1;
+    my $fherr = STDERR;
+    my $fh = STDOUT;
+    my $species_count= scalar($self->bound)+1;
+
+    ################################
+    # random output -- legacy 
+    ################################
 
     map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
-
-    ################################
-    # prep work 
-    ################################
-
-    # create an index 
-    my %og = map { $_->ogid => $_ } grep {$_->ogid} map {$_->stream} $self->stream;  
 
     # for orthologs ...
     my %kaks;
@@ -2547,34 +2553,92 @@ sub ohnologComparative2 {
 	print $k, $dn,$dn_sd;
     }
 
-    # go through each orthogroup and see where we can "fill"
-    # an OG with ohnologs using info borrowed from others. 
+    ################################
+    # prep work 
+    ################################
 
-    my %uniq;
-    foreach my $o ( grep { !++$uniq{$_->ogid}} sort {$b->length <=> $a->length} 
-		    grep {$_->orthogroup} map {$_->stream} $self->stream ) {
+    # create an index of ortho groups 
+    # my %og = map { $_->ogid => $_ } grep {$_->ogid} map {$_->stream} $self->stream;  
 
-	my $speciesHash = map { $_->organism => [$_] } $o->_orthogroup;
-	my $ohno = $o->_ohnolog_consistency;
-	# -1  => [z,x] // z,x have no ohnologs 
-	# 0   => [w]   // w has an ohnolog but it is not in an OG 
-	# 123 => [d,w] // d and w are have ohnologs in the OG 123
+    # create an index of anc loci => [ [scer1,scer2],[spar1,],[smik1,smik2],[],[] ... ]
+    
+    my (%anc,%seen);
+    foreach my $o ( grep {$_->ygob} map {$_->orfs} $self->iterate ) {	
+	next if $seen{$o->organism.$o->_internal_id};
+	push @{ $anc{ $o->ygob } }, [$o, $o->ohnolog];
+	map { $seen{$_->organism.$_->_internal_id}++ } grep {defined} ($o, $o->ohnolog);	
+    }
+    undef %seen;
+    
+    if ( $args->{'-verbose'} >= 2 ) {
+	my %count;
+	foreach my $anc (keys %anc) {
+	    $count{ scalar( @{$anc{$anc}} ) }++;
+	}
+	map { print $_,$count{$_} } sort {$a <=> $b} keys %count;
+    }
+    
+    ################################
+    # iterate through each Anc and 
+    # look at ohno profile across species 
+    ################################
+    
+    foreach my $anc ( keys %anc ) {
+	# ignore ANCs with 0 ohnologs 
+	next unless scalar( grep {$_->[1]} @{$anc{$anc}} ); 
+	# ignore ANCs with exactly 5 singletons or 5 ohnologs 
+	if ( scalar( @{$anc{$anc}} ) == $species_count ) {
+	    if ( my ($o) = grep {$_->orthogroup} grep {defined} map { @{$_} } @{$anc{$anc}} ) {
+		my $ohno = $o->_ohnolog_consistency;
+		# -1  => [z,x] // z,x have no ohnologs 
+		# 0   => [w]   // w has an ohnolog but it is not in an OG 
+		# 123 => [d,w] // d and w are have ohnologs in the OG 123
+		next if scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0; # perfect ohno or singleton
+	    }
+	}
+	# 366 ancs for stricto ... 
 
-	# special case 1 : Total consistency.
-	next if scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0; # perfect ohno or perfect singleton
-
-	# lets get the other ortho groups 
-	my ($ogid, @other) = sort { $#{$ohno->{$b}} <=> $#{$ohno->{$a}} } grep {$_>0} keys %{$ohno};	
-	next unless ! $args->{'-debug'} || $ogid == $args->{'-debug'};
-
-	# 
-
-	next if @other;
-
-	foreach ( $self->bound ) {
+	my @orfs = sort {$a->ogid <=> $b->ogid} grep {defined} map { @{$_} } @{$anc{$anc}};
+	
+	# we have 2 relationships that we can use to put things in their right place 
+	# 1. synteny relationships 
+	# 2. orthogroup relationships 
+	# we develop all the pairwise synt values. 
+	
+	if ( $args->{'-verbose'} >=1 ) {
+	    print {$fh} "\n>$anc", scalar(@{$anc{$anc}}), scalar(@orfs);
+	    print {$fh} ((undef) x 3), ( map {$_->shortname} @orfs );
 	}
 
-    }
+	my %synt;
+	for my $i ( 0..($#orfs-1) ) {
+	    my @row = ('-') x ($i+1);
+	    for my $j ( $i+1 .. $#orfs ) {
+		#next if $orfs[$i]->organism eq $orfs[$j]->organism;
+		my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
+		    $orfs[$i]->alignSisterRegions(
+			-sister => $orfs[$j],
+			-ancestor => $anc,
+			-clean => 1,
+			-score => 1,
+			-verbose => 0
+		    );
+		#print $orfs[$i]->name, $orfs[$j]->name, $score;		
+		$synt{ $i }{ $j } = $score;
+		push @row, $score;
+	    }
+
+	    if ( $args->{'-verbose'} >=1 ) {
+		print {$fh} 
+		($orfs[$i]->shortname, $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
+		print {$fh} 
+		($orfs[$#orfs]->shortname, $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
+		 '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
+	    }
+	} # orf
+    } # anc
+    
+    exit;
 
     return $self;
 }

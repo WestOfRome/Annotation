@@ -786,8 +786,18 @@ sub _filter_tandems {
     return @uniq;
 }
 
-=head2 alignSisterRegions()
+=head2 alignSisterRegions(-sister => , -ancestor => , 
+    -homology => 'YGOB', -window => 7, -clean => 1, -score => 1)
+    
+    Perform a gene-level alignment of two genes ([self],[sister]) 
+    by anchoring on [ancestor] and using a window of [window] genes, 
 
+    We return an alignment (array of hashes), score and scoring hash.
+
+    dpalign() does the heavy lifting to create the alignment once the 
+    datastructures have been created to represent the two regions 
+    and the ancestral chromosome. 
+    
 =cut 
 
 sub alignSisterRegions {
@@ -5460,6 +5470,23 @@ sub name {
     my $organism = $self->up->up->organism;
     return($organism."_".$contig.".".$self->id);
 }
+
+=head2 shortname
+    
+    Orf name that fits within one tab : ChrSpOrf
+    Alias 'sn' also works. 
+    
+=cut 
+
+sub shortname {
+    my $self = shift;
+    $self->throw($self->debug) unless $self->up;
+    my $contig = $self->up->id;
+    my $organism = substr($self->organism,1,1);
+    return($contig.$organism.$self->id);
+}
+
+sub sn { return $_[0]->shortname; }
 
 sub oliver { my $self = shift; $self->output(@_, -oliver=>1); }
 
