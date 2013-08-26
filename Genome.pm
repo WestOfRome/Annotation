@@ -2533,6 +2533,7 @@ sub ohnologComparative2 {
     $self->throw unless $self->bound;
     $args->{'-orthogroup'} = 1 unless exists $args->{'-orthogroup'};
     $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
+    $args->{'-debug'} = undef unless exists $args->{'-debug'};
     
     my $fherr = STDERR;
     my $fh = STDOUT;
@@ -2584,27 +2585,39 @@ sub ohnologComparative2 {
     ################################
     
     foreach my $anc ( keys %anc ) {
-	# ignore ANCs with 0 ohnologs 
-	next unless scalar( grep {$_->[1]} @{$anc{$anc}} ); 
-	# ignore ANCs with exactly 5 singletons or 5 ohnologs 
-	if ( scalar( @{$anc{$anc}} ) == $species_count ) {
-	    if ( my ($o) = grep {$_->orthogroup} grep {defined} map { @{$_} } @{$anc{$anc}} ) {
-		my $ohno = $o->_ohnolog_consistency;
-		# -1  => [z,x] // z,x have no ohnologs 
-		# 0   => [w]   // w has an ohnolog but it is not in an OG 
-		# 123 => [d,w] // d and w are have ohnologs in the OG 123
-		next if scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0; # perfect ohno or singleton
-	    }
-	}
-	# 366 ancs for stricto ... 
+	next unless (! defined $args->{'-debug'}) || ($anc eq $args->{'-debug'});
+	next unless scalar( grep {$_->[1]} @{$anc{$anc}} ); # ignore ANCs with 0 ohnologs 
 
 	my @orfs = sort {$a->ogid <=> $b->ogid} grep {defined} map { @{$_} } @{$anc{$anc}};
-	
+
+	# remove any perfect cases-- all ohnos and orthos agree
+
+	my %o = map {$_->ogid => $_} grep {$_->orthogroup} @orfs;	
+	foreach my $og ( keys %o ) {
+	    my $ohno = $o{$og}->_ohnolog_consistency;
+	    # -1  => [z,x] // z,x have no ohnologs 
+	    # 0   => [w]   // w has an ohnolog but it is not in an OG 
+	    # 123 => [d,w] // d and w are have ohnologs in the OG 123
+	    if ( scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0 ) {
+		for (my $i=$#orfs; $i >= 0; $i--) {		    
+		    splice(@orfs, $i, 1) if $orfs[$i]->ogid==$og; # || $orfs[$j]->ogid==$og2;
+		}
+	    }
+	}
+	next if scalar(@orfs) < $species_count;
+	print ++$xx, scalar( grep {defined} map { @{$_} } @{$anc{$anc}} ), scalar( @orfs );
+	#next unless scalar(@orfs)==2*$species_count;
+
+	########################################################
 	# we have 2 relationships that we can use to put things in their right place 
 	# 1. synteny relationships 
 	# 2. orthogroup relationships 
-	# we develop all the pairwise synt values. 
-	
+	########################################################
+
+	#####
+	# 1. create a synteny matrix 
+	#####
+
 	if ( $args->{'-verbose'} >=1 ) {
 	    print {$fh} "\n>$anc", scalar(@{$anc{$anc}}), scalar(@orfs);
 	    print {$fh} ((undef) x 3), ( map {$_->shortname} @orfs );
@@ -2630,12 +2643,19 @@ sub ohnologComparative2 {
 
 	    if ( $args->{'-verbose'} >=1 ) {
 		print {$fh} 
-		($orfs[$i]->shortname, $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
+		($orfs[$i]->sn, $orfs[$i]->hypergob, $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
 		print {$fh} 
-		($orfs[$#orfs]->shortname, $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
+		($orfs[$#orfs]->sn, $orfs[$#orfs]->hypergob, $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
 		 '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
 	    }
 	} # orf
+
+	#####
+	# 2. create a synteny matrix 	
+	#####
+
+	
+
     } # anc
     
     exit;
