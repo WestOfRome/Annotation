@@ -3581,8 +3581,8 @@ sub _logdropbig {
 =cut
 
 sub querysynteny { my $self = shift; return $self->synteny(@_)+0 } # depracated :: check all uses and wantarray returns 
-sub hypergob { my $self = shift; return sprintf("%.3f",$self->synteny( -hypergeometric => 1, -restrict => ['YGOB'], -distance => 7 )); }
-sub loss { my $self = shift; return $self->synteny( -logodds => 1, -distance => 3 ); } 
+sub hypergob { my $self = shift; return sprintf("%.2f",$self->synteny( -hypergeometric => 1, -restrict => ['YGOB'], -distance => 7 )); }
+sub loss { my $self = shift; return sprintf("%.2f",$self->synteny( -logodds => 1, -distance => 3 )); } 
 
 sub synteny {
     my $self = shift;

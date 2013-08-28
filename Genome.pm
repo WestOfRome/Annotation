@@ -2620,7 +2620,7 @@ sub ohnologComparative2 {
 
 	if ( $args->{'-verbose'} >=1 ) {
 	    print {$fh} "\n>$anc", scalar(@{$anc{$anc}}), scalar(@orfs);
-	    print {$fh} ((undef) x 3), ( map {$_->shortname} @orfs );
+	    print {$fh} (qw(Gene HYPERG LOSS OGID),undef, ( map {$_->shortname} @orfs ));
 	}
 
 	my %synt;
@@ -2643,18 +2643,27 @@ sub ohnologComparative2 {
 
 	    if ( $args->{'-verbose'} >=1 ) {
 		print {$fh} 
-		($orfs[$i]->sn, $orfs[$i]->hypergob, $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
+		($orfs[$i]->sn, $orfs[$i]->hypergob,  $orfs[$i]->loss,
+		 $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
 		print {$fh} 
-		($orfs[$#orfs]->sn, $orfs[$#orfs]->hypergob, $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
+		($orfs[$#orfs]->sn, $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss, 
+		 $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
 		 '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
 	    }
 	} # orf
 
 	#####
-	# 2. create a synteny matrix 	
+	# 2. create an ortholog matrix 	
 	#####
-
 	
+	# scheme: 
+	# go through species in order of ohnolog quality
+	# as we add a new species, check the following: 
+	# 1. test both relationships to the existing sister regions
+	# 2. are we conflicting with ortholog assignments 
+	# 3. are there better ohnologs in same species; 
+	# 4. if no ohnologs, how can we find
+ 
 
     } # anc
     
