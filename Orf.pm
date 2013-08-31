@@ -4382,6 +4382,12 @@ sub pillar {
     Value is in LOSS units and significance therefore depends on the number 
     of species considered. 50 is a relatively safe cutoff. 
 
+  NBB: This is not conventionally consistetn with other 
+    evidence / score systems. Currently accessed through 
+    $o->score('evidence') and calling __EVIDENCE.
+    By convention we are storing the P-/E-values on _EVIDENCE 
+    and the score on __EVIDENCE. Need to unify all evidence. 
+
 =cut 
 
 sub pillarscore { my $self = shift; return $self->data( '_PILLAR' ); } 
@@ -5711,7 +5717,7 @@ sub _define_orthogroup {
     
     ################
     # optional compute Ka/Ks 
-
+    
     if ( $args->{'-kaks'} && $self->assign !~ /RNA/ ) {
 	$self->kaks;
     }
@@ -5756,6 +5762,7 @@ sub _set_ogid {
     $self->{OGID} = shift;
     return $self->{OGID};
 }
+
 
 =head2 structure_conserved
 
