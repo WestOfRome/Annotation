@@ -2605,8 +2605,34 @@ sub ohnologComparative2 {
 	    }
 	}
 	next if scalar(@orfs) < $species_count;
-	print ++$xx, scalar( grep {defined} map { @{$_} } @{$anc{$anc}} ), scalar( @orfs );
+	#print ++$xx, scalar( grep {defined} map { @{$_} } @{$anc{$anc}} ), scalar( @orfs );
 	#next unless scalar(@orfs)==2*$species_count;
+
+	# lets do some validation 
+	# do we ahve all the relevant genes for this family ? 
+	# should we be doing this before prevoius step? 
+
+	# Anc_5.396 / Anc_5.202
+	
+	my $ogIndex = $self->_orthogroup_index();
+	my %orfs = map { $_->name => 1 } @orfs;
+	foreach my $o (@orfs) {
+	    if ( $o->ohnolog ) {
+		$self->throw unless exists $orfs{ $o->ohnolog->name };
+	    }
+	    if ( $o->ogid ) {
+		foreach my $p ( @{ $ogIndex->{$o->ogid} }) {
+		    #$self->throw 
+		    print $anc, 
+		    $o->name, $o->ygob, $o->ogid, 
+		    $p->name, $p->ygob, $p->ogid, 
+		    $o->data('KAKS'), $o->data('SOWH') 
+			unless exists $orfs{ $p->name };
+		}
+	    }
+	}
+	print ">";
+	next;
 
 	########################################################
 	# we have 2 relationships that we can use to put things in their right place 
@@ -2663,13 +2689,24 @@ sub ohnologComparative2 {
 	# 2. are we conflicting with ortholog assignments 
 	# 3. are there better ohnologs in same species; 
 	# 4. if no ohnologs, how can we find
- 
+
 
     } # anc
     
     exit;
 
     return $self;
+}
+
+=head2
+=cut 
+
+sub _orthogroup_index {
+    my $self = shift;
+    
+    my %index = map { $_->ogid => [$_->_orthogroup] } grep { $_->ogid } $self->orfs;
+    
+    return \%index;
 }
 
 =head2 ohnologComparative
