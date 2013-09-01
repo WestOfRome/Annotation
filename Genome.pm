@@ -2626,39 +2626,10 @@ sub ohnologComparative2 {
 	# 1. create a synteny matrix 
 	#####
 
-	if ( $args->{'-verbose'} >=1 ) {
-	    print {$fh} "\n>$anc", scalar(@{$anc{$anc}}), scalar(@orfs);
-	    print {$fh} (qw(Gene HYPERG LOSS OGID),undef, ( map {$_->shortname} @orfs ));
-	}
-
-	my %synt;
-	for my $i ( 0..($#orfs-1) ) {
-	    my @row = ('-') x ($i+1);
-	    for my $j ( $i+1 .. $#orfs ) {
-		#next if $orfs[$i]->organism eq $orfs[$j]->organism;
-		my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
-		    $orfs[$i]->alignSisterRegions(
-			-sister => $orfs[$j],
-			-ancestor => $anc,
-			-clean => 1,
-			-score => 1,
-			-verbose => 0
-		    );
-		#print $orfs[$i]->name, $orfs[$j]->name, $score;		
-		$synt{ $i }{ $j } = $score;
-		push @row, $score;
-	    }
-
-	    if ( $args->{'-verbose'} >=1 ) {
-		print {$fh} 
-		($orfs[$i]->sn, $orfs[$i]->hypergob,  $orfs[$i]->loss,
-		 $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
-		print {$fh} 
-		($orfs[$#orfs]->sn, $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss, 
-		 $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
-		 '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
-	    }
-	} # orf
+	my %syn = $self->sisterSyntenyMatrix(
+	    -orfs => @orfs,
+	    -ancestor => $anc
+	    );
 
 	#####
 	# 2. create an ortholog matrix 	
@@ -2680,14 +2651,76 @@ sub ohnologComparative2 {
     return $self;
 }
 
-=head2
+=head2 sisterSyntenyMatrix(-orfs => [], -ancestor => 'Anc_1.23')
+
+    Create a matrix of sysnteny scores between all pairs of 
+    genes using alignSisterRegions. Alignments are built around
+    -ancestor. 
+    
+    With -verbose will ouptut to screen. 
+
+=cut 
+
+sub sisterSyntenyMatrix {
+    my $self = shift;
+    my $args = {@_};
+
+    $self->throw unless defined $args->{'-ancestor'} && $args->{'-ancestor'} =~ /^Anc_/;
+    $self->throw unless defined $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;
+
+    my @orfs= @{$args->{'-orfs'}};
+    
+    if ( $args->{'-verbose'} >=1 ) {
+	print {$fh} "\n>$anc", scalar(@orfs);
+	print {$fh} (qw(Gene HYPERG LOSS OGID),undef, ( map {$_->shortname} @orfs ));
+    }
+    
+    my %synt;
+    for my $i ( 0..($#orfs-1) ) {
+	my @row = ('-') x ($i+1);
+	for my $j ( $i+1 .. $#orfs ) {
+	    #next if $orfs[$i]->organism eq $orfs[$j]->organism;
+	    my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
+		$orfs[$i]->alignSisterRegions(
+		    -sister => $orfs[$j],
+		    -ancestor => $args->{'-ancestor'},
+		    -clean => 1,
+		    -score => 1,
+		    -verbose => 0
+		);
+	    #print $orfs[$i]->name, $orfs[$j]->name, $score;		
+	    $synt{ $i }{ $j } = $score;
+	    push @row, $score;
+	}
+	
+	if ( $args->{'-verbose'} >=1 ) {
+	    print {$fh} 
+	    ($orfs[$i]->sn, $orfs[$i]->hypergob,  $orfs[$i]->loss,
+	     $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
+	    print {$fh} 
+	    ($orfs[$#orfs]->sn, $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss, 
+	     $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
+	     '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
+	}
+    } # orf
+    
+    return \%synt;
+}
+
+=head2 _orthogroup_index 
+
+    Create a hash indexed by OGID that gives access to all 
+    OG members: 123 => [o1,o2,..]
+
+    Intended for internal use. 
+
 =cut 
 
 sub _orthogroup_index {
     my $self = shift;
     
     my %index = map { $_->ogid => [$_->_orthogroup] } grep { $_->ogid } $self->orfs;
-    
+
     return \%index;
 }
 
@@ -5290,10 +5323,7 @@ sub families {
     #########################################
 
     my @orfs =  grep {$_->ygob} map {$_->orfs} $self->iterate;
-    my %og;
-    foreach my $o ( $self->orfs ) {
-	map  { $og{$_->name} = $o } $o->_orthogroup;
-    }
+    my %og = $self->_orthogroup_index; # 123 => [o1, o2,o3..]
 
     #########################################
     # build %family hash from @orfs
@@ -5382,6 +5412,17 @@ sub families {
 		} else {
 		    $o->data('YGOB' => $old ); # revert
 		}		
+	    }
+	}
+
+	if ( $changes == 0) {
+	    foreach my $anc ( keys %mixedup ) {
+		foreach my $x ( $anc, (keys %{$mixedup{$anc}})[0] ) {
+		    my $res = $self->sisterSyntenyMatrix(
+			-orfs => @{$family{$x}},
+			-ancestor => $x
+			);
+		}
 	    }
 	}
     }
