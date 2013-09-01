@@ -2665,15 +2665,32 @@ sub sisterSyntenyMatrix {
     my $self = shift;
     my $args = {@_};
 
+    ########################################
+    # teast args 
+    ########################################
+
     $self->throw unless defined $args->{'-ancestor'} && $args->{'-ancestor'} =~ /^Anc_/;
     $self->throw unless defined $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;
 
-    my @orfs= @{$args->{'-orfs'}};
-    
+    ########################################
+    # prep vars 
+    ########################################
+
+    my $fh = STDOUT;
+    my @orfs= @{$args->{'-orfs'}};    
+
+    ########################################
+    # print pretty .. 
+    ########################################
+
     if ( $args->{'-verbose'} >=1 ) {
-	print {$fh} "\n>$anc", scalar(@orfs);
+	print {$fh} "\n>".$args->{'-ancestor'}, scalar(@orfs);
 	print {$fh} (qw(Gene HYPERG LOSS OGID),undef, ( map {$_->shortname} @orfs ));
     }
+
+    ########################################
+    # iterate over all Orf pairs and compute 
+    ########################################
     
     my %synt;
     for my $i ( 0..($#orfs-1) ) {
@@ -2692,6 +2709,10 @@ sub sisterSyntenyMatrix {
 	    $synt{ $i }{ $j } = $score;
 	    push @row, $score;
 	}
+	
+	########################################
+	# print pretty 
+	########################################
 	
 	if ( $args->{'-verbose'} >=1 ) {
 	    print {$fh} 
@@ -5323,7 +5344,7 @@ sub families {
     #########################################
 
     my @orfs =  grep {$_->ygob} map {$_->orfs} $self->iterate;
-    my %og = $self->_orthogroup_index; # 123 => [o1, o2,o3..]
+    my $ogIndex = $self->_orthogroup_index; # 123 => [o1, o2,o3..]
 
     #########################################
     # build %family hash from @orfs
@@ -5340,18 +5361,18 @@ sub families {
 	# we pull in orthologs and orthogroups as we go. 
 	# in next step we will deal with polygamous relationships
 	# -- genes that have been placed in >1 group 
-
+	
         undef %family;
 	undef %index;
 	foreach my $o ( @orfs ) {
 	    next unless $o->evalue('ygob') <= $args->{'-evalue'} || 
 		$o->hypergob >= $args->{'-synteny_min'}; # hypergob right given evalue('ygob')
-	    foreach my $x ( grep { defined } ($o, $o->ohnolog, $o->orthogroup)) {
-		$index{$x->name}{$o->ygob}++;	    
+	    foreach my $x ( grep { defined } ($o, $o->ohnolog, @{$ogIndex->{$o->ogid}})) { # %og for non-ref species 
+		$index{$x->name}{$o->ygob}++;
 		push @{ $family{$o->ygob} }, $x;
 	    }
 	}
-	
+
 	if ( $args->{'-verbose'} ) {
 	    print 
 		scalar( keys %index), 
@@ -5361,8 +5382,8 @@ sub families {
 	
 	# These data are actually pretty amazing. 
 	# It could have been a real mess. For SSS: 
-	# Genes included         24174	
-	# Genes in >1 "family"   37	
+	# Genes included         24364	
+	# Genes in >1 "family"   110	
 	# On inspection pretty much all of the problems are 
 	# ABC transporters that have saturated HMMER3 (-450 log score) 
 	# and are thus forcing random distribution to two alternative 
@@ -5375,8 +5396,8 @@ sub families {
 	
 	my %mixedup;
 	foreach my $o ( sort {$b->hypergob <=> $a->hypergob} grep { scalar(keys %{$index{$_->name}})>1 } @orfs ) {
-	    $o->output(-quality => 1, -recurse => 0) if $args->{'-verbose'};
-	    $self->throw if scalar(keys %{$index{$o->name}}) > 2; # someone else can fix this
+	    $o->output(-qc => 1, -append => [(scalar(keys %{$index{$o->name}}) > 2 ? '***' : '')]) 
+		if $args->{'-verbose'};
 	    my @fams = sort {$a cmp $b} keys %{$index{$o->name}};
 	    push @{ $mixedup{ $fams[0] }{ $fams[1] }}, $o;
 	}
@@ -5417,10 +5438,13 @@ sub families {
 
 	if ( $changes == 0) {
 	    foreach my $anc ( keys %mixedup ) {
-		foreach my $x ( $anc, (keys %{$mixedup{$anc}})[0] ) {
+		my ($other) = keys %{$mixedup{$anc}};
+		print {STDOUT} "\n>$anc / $other : ", map {$_->name} @{ $mixedup{$anc}{$other} };
+		foreach my $x ( $anc, $other ) {
 		    my $res = $self->sisterSyntenyMatrix(
-			-orfs => @{$family{$x}},
-			-ancestor => $x
+			-orfs => $family{$x},
+			-ancestor => $x,
+			-verbose => 1
 			);
 		}
 	    }
