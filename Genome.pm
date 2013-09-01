@@ -5281,84 +5281,114 @@ sub families {
     $self->throw("Comparative context only.") unless $self->bound;
 
     $args->{'-group_by'} = 'ohno' unless exists $args->{'-group_by'};
-    $args->{'-evalue_max'} = 1 unless exists  $args->{'-evalue_max'};
-    $args->{'-synteny_min'} = 1 unless exists  $args->{'-synteny_min'};
+    $args->{'-evalue_max'} = 1 unless exists $args->{'-evalue_max'};
+    $args->{'-synteny_min'} = 1 unless exists $args->{'-synteny_min'};
+    $args->{'-threshold'} = 5 unless exists $args->{'-threshold'};
     
     #########################################
-    # find all relevant genes 
+    # prep work 
     #########################################
 
     my @orfs =  grep {$_->ygob} map {$_->orfs} $self->iterate;
+    my %og;
+    foreach my $o ( $self->orfs ) {
+	map  { $og{$_->name} = $o } $o->_orthogroup;
+    }
 
-    # greedy building of all possible families. 
-    # we pull in orthologs and orthogroups as we go. 
-    # in next step we will deal with polygamous relationships
-    # -- genes that have been placed in >1 group 
+    #########################################
+    # build %family hash from @orfs
+    #########################################
 
+    # iterate on this next section --
+    # we reprocess families as long as some genes are members of >1 family 
+    
     my %family;
-    foreach my $o ( @orfs ) {
-	next unless $o->evalue('ygob') <= $args->{'-evalue'} || 
-	    $o->hypergob >= $args->{'-synteny_min'}; # hypergob right given evalue('ygob')
-	foreach my $x ( grep { defined } ($o, $o->ohnolog, $o->orthogroup)) {
-	    $index{$x->name}{$o->ygob}++;	    
-	    push @{ $family{$o->ygob} }, $x;
+    my $changes=1000;
+    until ( $changes == 0 ) {
+
+	# greedy building of all possible families. 
+	# we pull in orthologs and orthogroups as we go. 
+	# in next step we will deal with polygamous relationships
+	# -- genes that have been placed in >1 group 
+
+        undef %family;
+	undef %index;
+	foreach my $o ( @orfs ) {
+	    next unless $o->evalue('ygob') <= $args->{'-evalue'} || 
+		$o->hypergob >= $args->{'-synteny_min'}; # hypergob right given evalue('ygob')
+	    foreach my $x ( grep { defined } ($o, $o->ohnolog, $o->orthogroup)) {
+		$index{$x->name}{$o->ygob}++;	    
+		push @{ $family{$o->ygob} }, $x;
+	    }
+	}
+	
+	if ( $args->{'-verbose'} ) {
+	    print 
+		scalar( keys %index), 
+		scalar( grep { scalar(keys %{$_})>1 } values %index),
+		scalar( map { keys %{$_} } values %index);
+	}
+	
+	# These data are actually pretty amazing. 
+	# It could have been a real mess. For SSS: 
+	# Genes included         24174	
+	# Genes in >1 "family"   37	
+	# On inspection pretty much all of the problems are 
+	# ABC transporters that have saturated HMMER3 (-450 log score) 
+	# and are thus forcing random distribution to two alternative 
+	# Ancestral loci. Two cases do not fit this profile: 
+	# Skud_4.187	YDL079C / Spar_10.74	YJL159W
+	
+	# >> identify all orfs that are in >1 family
+	# and use this info to construct a matrix of families that are 
+	# linked to each other.  
+	
+	my %mixedup;
+	foreach my $o ( sort {$b->hypergob <=> $a->hypergob} grep { scalar(keys %{$index{$_->name}})>1 } @orfs ) {
+	    $o->output(-quality => 1, -recurse => 0) if $args->{'-verbose'};
+	    $self->throw if scalar(keys %{$index{$o->name}}) > 2; # someone else can fix this
+	    my @fams = sort {$a cmp $b} keys %{$index{$o->name}};
+	    push @{ $mixedup{ $fams[0] }{ $fams[1] }}, $o;
+	}
+	
+	# go through each family pair in turn and determine why they are tangled up. 
+	# There are two scenarios: 
+	# 1. As described above, a gene has simply been mislabelled and has the 
+	# the wrong anc. It is itself in the wrong anc family. 
+	# 2. The gene is correctly labelled but due to a relationship with 
+	# a mislabelled gene it is being pulled into another family (ohno, orthgroup).
+	# The fixes are different. 
+	# 1. Fix labelling. 
+	# 2. Hopefully do nothing (problem will be resolved be altering label of a
+	# related gene) but potentially need to break and OG or Ohno pair. 
+	
+	$changes=0;
+	foreach my $anc ( keys %mixedup ) {
+	    my ($other) = keys %{$mixedup{$anc}};
+	    if ( $args->{'-verbose'} ) {
+		print ">>>".$anc, scalar(keys %{$mixedup{$anc}}), 
+		$other, scalar(@{$mixedup{$anc}{$other}});
+	    }
+	    foreach my $o ( @{$mixedup{$anc}{$other}} ) {
+		my $old_syn = $o->hypergob;
+		my $old = $o->data('YGOB'); 
+		my $new = ( $o->ygob eq $anc ? $other : $anc );
+		$o->data('YGOB' => $new );	
+
+		if ( $o->hypergob - $old_syn > $args->{'-threshold'} ) {
+		    ++$changes;
+		    print $changes, $o->name, $old, $old_syn, $new, $o->hypergob
+			if $args->{'-verbose'};
+		} else {
+		    $o->data('YGOB' => $old ); # revert
+		}		
+	    }
 	}
     }
-
-    if ( $args->{'-verbose'} ) {
-	print 
-	    scalar( keys %index), 
-	    scalar( grep { scalar(keys %{$_})>1 } values %index),
-	    scalar( map { keys %{$_} } values %index);
-    }
     
-    #########################################
-    # validate 
-    #########################################
     
-    # These data are actually pretty amazing. 
-    # It could have been a real mess. For SSS: 
-    # Genes included         24174	
-    # Genes in >1 "family"   37	
-    # On inspection pretty much all of the problems are 
-    # ABC transporters that have saturated HMMER3 (-450 log score) 
-    # and are thus forcing random distribution to two alternative 
-    # Ancestral loci. Two cases do not fit this profile: 
-    # Skud_4.187	YDL079C / Spar_10.74	YJL159W
-
-    # 1. identify all orfs that are in >1 family
-    # and use this info to construct a matrix of families that are 
-    # linked to each other.  
-
-    my %mixedup;
-    foreach my $o ( grep { scalar(keys %{$index{$_->name}})>1 } @orfs ) {
-	$o->output(-quality => 1, -recurse => 0) if $args->{'-verbose'};
-	$self->throw if scalar(keys %{$index{$o->name}}) > 2; # someone else can fix this
-	my @fams = sort {$a cmp $b} keys %{$index{$o->name}};
-	push @{ $mixedup{ $fams[0] }{ $fams[1] }}, $o;
-    }
     
-    # go through each family pair in turn and determine why they are tangled up. 
-    # There are two scenarios: 
-    # 1. As described above, a gene has simply been mislabelled and has the 
-    # the wrong anc. It is itself in the wrong anc family. 
-    # 2. The gene is correctly labelled but due to a relationship with 
-    # a mislabelled gene it is being pulled into another family (ohno, orthgroup).
-    # The fixes are different. 
-    # 1. Fix labelling. 
-    # 2. Hopefully do nothing (problem will be resolved be altering label of a
-    # related gene) but potentially need to break and OG or Ohno pair. 
-    
-    foreach my $anc ( keys %mixedup ) {
-	my ($other) = keys %{$mixedup{$anc}};
-	print $anc, scalar(keys %{$mixedup{$anc}}), $other, scalar(@{$mixedup{$anc}{$other}});
 
-	foreach my $o ( @{$mixedup{$anc}{$other}} ) {
-	    my $mem = $o->
-	}
-
-    }
-    
     exit;
 
 	my %store;
