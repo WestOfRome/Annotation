@@ -1672,7 +1672,6 @@ sub show {
     return $self;
 }
 
-
 =head2 glyph(-print => KEY, -tag => undef)
 
     Draft version. Prints basic info and the chose data('KEY').
@@ -5540,6 +5539,7 @@ sub output {
     $args->{'-all'} = undef unless exists $args->{'-all'};
     $args->{'-oliver'} = undef unless exists $args->{'-oliver'};
     $args->{'-simple'} = undef unless exists $args->{'-simple'};
+    $args->{'-quality'} = undef unless exists $args->{'-quality'};
     # string formatting 
     $args->{'-substr'} = 50 unless exists $args->{'-substr'};
     $args->{'-string'} = undef unless exists $args->{'-string'};
@@ -5553,6 +5553,11 @@ sub output {
     # recurse to exons etc
     $args->{'-recurse'} = 1 unless exists $args->{'-recurse'};
     $args->{'-recurse'} = undef if $args->{'-oliver'};
+
+    if ( $args->{'-quality'} || $args->{'-qc'} ) {
+	$args->{'-quality'}=1;
+	$args->{'-recurse'}=undef;
+    }
 
     #########################################
     # preparation 
