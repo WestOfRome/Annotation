@@ -3887,7 +3887,7 @@ sub _compose_synteny_delta_matrix {
 
 =head2 synteny_conserved(-object => $orf, -homology =>'YGOB', 
     -genome => 4703, -distance => 10) 
-
+    
     Returns -log10(Phyper) for the number of conserved neighbours
     between caller and object. Uses specified # of genes up- and 
     down-stream and assumes a genome size of -genome. 
@@ -3973,6 +3973,24 @@ sub synteny_conserved {
     return ( -1*(log($dhyper)/log(10)) );
 }
 
+
+=head2 quality
+
+    Return orthogroup quality metrics (Z-scores) 
+    by calling genome method and comaring caller
+    to genomewide statistics. 
+
+    Returns:
+    Total, %ID, SyntenyConservation, LengthConsistency
+    
+=cut 
+
+sub quality {
+    my $self = shift;
+    return undef unless $self->orthogroup;
+    my $G = $self->up->up;    
+    return $G->quality(-object => $self); # Ugly! 
+}
 
 =head2 direction( -object => 'left' )
     
@@ -4402,6 +4420,8 @@ sub pillarscore { my $self = shift; return $self->data( '_PILLAR' ); }
     If the caller requests an array we also return the number
     of genes on the chr, the mean index on the chr and the sd.
 
+    Values are stored as ORG_CHR .
+
 =cut 
 
 sub chromosome {
@@ -4654,7 +4674,7 @@ sub _loss {
 =head2 identify 
     
     Return the most common SGD (based on gene not SGD attribute) 
-    and YGOB hits for an orthogroup. Former may be tRNA. 
+    and YGOB hits for an *orthogroup*. Former may be tRNA. 
     
     (SGD,YGOB,GENE) = $self->identify
 
@@ -4701,6 +4721,14 @@ sub _genericlinks {
 
 sub firstexon { return $_[0]->exons(-query => 'first'); }
 sub fex { return $_[0]->firstexon; } 
+
+=head2 dump
+
+    Override method for parent dump().
+    Print all values on on %{DATA}.
+
+=cut 
+sub dump { return $_[0]->output(-dump => 1); }
 
 =head2 atg( -safe => 1, -mode => 'FIRST|last' )
 
@@ -5526,7 +5554,9 @@ sub output {
     $args->{'-recurse'} = 1 unless exists $args->{'-recurse'};
     $args->{'-recurse'} = undef if $args->{'-oliver'};
 
-    # 
+    #########################################
+    # preparation 
+    #########################################
 
     my $neighbour = 
 	join('/', map {$_->gene if defined }		
@@ -5534,14 +5564,29 @@ sub output {
 	       ($self->neighbour(-direction => 'right', -orthogroup=>0, -variant => 0) || undef) )
 	);
 
-    # standard tabbed form or short version 
+    #########################################
+    # create output value array 
+    #########################################
     
     my @r;
     if ( $args->{'-simple'} ) {
 	@r=( $self->name,$self->start,$self->stop,$self->strand,$self->assign,$self->gene);
+	
+    } elsif ( $args->{'-quality'} ) {
+	
+	@r=(
+	    $self->name, $self->gene, $self->logscore('gene'),
+	    $self->ygob, $self->logscore('ygob'),
+	    $self->sgd, $self->logscore('sgd'),
+	    $self->loss, $self->hypergob, $self->pillarscore,
+	    ($self->ohnolog ? ($self->ohnolog->sn, $self->score('ohno')) : (undef,undef)),
+	    $self->ogid, $self->quality()
+	    );
+	
     } elsif ( $args->{'-dump'} ) {
 	$self->oliver;
 	map { print "$_\t".$self->data($_) } sort keys %{ $self->_data };
+
     } elsif ( $args->{'-oliver'} ) {	
 	@r = ( 
 	    $self->name, $self->gene, ($self->score('global') || 0), #$self->data('__GENE'),
@@ -5581,34 +5626,40 @@ sub output {
 	    $self->data('HSP'), $self->data('HOMOLOG')
 	    );
     }
-    
+  
+    #########################################
     # fries with that? 
+    #########################################
     
     push @r, ($self->ohnolog ? $self->ohnolog->name : undef)
 	if $args->{'-ohnolog'};
-    
     #push @r, substr($self->description, 0, $args->{'-substr'}) 
     #if $self->description;
-
     push @r, $self->_creator if $args->{'-creator'};
-
-    push @r, substr(join("; ",  grep {defined} $self->ontology($args->{'-ontology'})), 0 , $args->{'-substr'}) 
+    push @r, substr(
+	join("; ", grep {defined} $self->ontology($args->{'-ontology'})), 0 , $args->{'-substr'}) 
 	if $args->{'-ontology'};
-    
+
+    #########################################    
     # 
+    #########################################
 
     push @r, @{$args->{'-append'}} if $args->{'-append'};
     unshift @r, @{$args->{'-prepend'}} if $args->{'-prepend'};
     unshift @r, ($self->ogid || 'NA') if $args->{'-og'};
     unshift @r, $self->_internal_id if $args->{'-internal'};
 
+    #########################################
+    # pritn array / return as string 
+    #########################################
+
     # temp: force columsn to line up 
-
     return join("\t", @r) if $args->{'-string'};
-    
-    # do the deed
-
     print $fh @r;
+
+    #########################################
+    # recursion 
+    #########################################
 
     delete $args->{'-append'};
     delete $args->{'-prepend'};
