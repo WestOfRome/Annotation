@@ -2330,7 +2330,7 @@ sub _access_synteny_null_dist {
     each of 3 criteria. 
 
     With no arguments compares all OGs to the existing null distribution. 
-
+    
     -object : compute quality of specified OG 
     -nulldist : build the null distribution based on -nulldist OGs. 
     -equalize : weight the 3 quality metrics equally
@@ -2545,52 +2545,33 @@ sub ohnologComparative2 {
 
     map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
 
-    # for orthologs ...
-    my %kaks;
-    foreach my $k (qw(KA KS KAKS)) {
-	my ($dn,$dn_sd) = &_calcMeanSD( grep {$_>0 && $_ <10} map {$_->data($k)} $self->orfs);
-	$kaks{$k}{'MEAN'}=$dn;
-	$kaks{$k}{'SD'}=$dn_sd;
-	print $k, $dn,$dn_sd;
-    }
-
     ################################
     # prep work 
     ################################
 
-    # create an index of ortho groups 
-    # my %og = map { $_->ogid => $_ } grep {$_->ogid} map {$_->stream} $self->stream;  
-
-    # create an index of anc loci => [ [scer1,scer2],[spar1,],[smik1,smik2],[],[] ... ]
+    my %anc = $self->families(
+	#-synteny_min => 1,
+	#-evalue_max => 10,
+	-group_by => 'ohno',
+	-verbose => 1
+	);
     
-    my (%anc,%seen);
-    foreach my $o ( grep {$_->ygob} map {$_->orfs} $self->iterate ) {	
-	next if $seen{$o->organism.$o->_internal_id};
-	push @{ $anc{ $o->ygob } }, [$o, $o->ohnolog];
-	map { $seen{$_->organism.$_->_internal_id}++ } grep {defined} ($o, $o->ohnolog);	
-    }
-    undef %seen;
-    
-    if ( $args->{'-verbose'} >= 2 ) {
-	my %count;
-	foreach my $anc (keys %anc) {
-	    $count{ scalar( @{$anc{$anc}} ) }++;
-	}
-	map { print $_,$count{$_} } sort {$a <=> $b} keys %count;
-    }
-    
+    exit;
+   
     ################################
     # iterate through each Anc and 
     # look at ohno profile across species 
     ################################
     
-    foreach my $anc ( keys %anc ) {
+    ANC: foreach my $anc ( keys %anc ) {
 	next unless (! defined $args->{'-debug'}) || ($anc eq $args->{'-debug'});
 	next unless scalar( grep {$_->[1]} @{$anc{$anc}} ); # ignore ANCs with 0 ohnologs 
 
 	my @orfs = sort {$a->ogid <=> $b->ogid} grep {defined} map { @{$_} } @{$anc{$anc}};
 
+	########################################################
 	# remove any perfect cases-- all ohnos and orthos agree
+	########################################################
 
 	my %o = map {$_->ogid => $_} grep {$_->orthogroup} @orfs;	
 	foreach my $og ( keys %o ) {
@@ -2607,11 +2588,11 @@ sub ohnologComparative2 {
 	next if scalar(@orfs) < $species_count;
 	#print ++$xx, scalar( grep {defined} map { @{$_} } @{$anc{$anc}} ), scalar( @orfs );
 	#next unless scalar(@orfs)==2*$species_count;
-
-	# lets do some validation 
-	# do we ahve all the relevant genes for this family ? 
-	# should we be doing this before prevoius step? 
-
+	
+	########################################################
+	# basic validation-- do we have all the info we need to improve ohnos?
+	########################################################
+	
 	# Anc_5.396 / Anc_5.202
 	
 	my $ogIndex = $self->_orthogroup_index();
@@ -2628,10 +2609,11 @@ sub ohnologComparative2 {
 		    $p->name, $p->ygob, $p->ogid, 
 		    $o->data('KAKS'), $o->data('SOWH') 
 			unless exists $orfs{ $p->name };
+		    next ANC;
 		}
 	    }
 	}
-	print ">";
+
 	next;
 
 	########################################################
@@ -5265,6 +5247,189 @@ sub atg {
 sub orfs {
     my $self = shift;
     return map { $_->orfs(@_) } $self->stream;
+}
+
+=head2 families(-group_by => 'ohno|ortho|species')
+
+    Build families (focused on YGOB ancestral loci)
+    across all species. There are multiple different
+    return formats based on '-group_by' function. Foreach  
+    family we return all relevant genes across all 
+    species as an array of arrays:
+
+    family1 = (
+    [Ohno1-1,Ohno1-2], [Ohno2-1,Ohno2-2] ...[OhnoN-1,OhnoN-2]
+    OR 
+    [OG1-1, OG1-2, OG1-3, OG1-4, OG1-5], [OG2-1..OG-5], ... []
+    OR 
+    [Scer1, Scer2, .. ScerN], [Spar1..Spar2],... []
+    );
+
+   %ret = ( 
+    Anc_1 => \@family,
+    Anc_2 => \@family,
+    ...
+    Anc_3 => \@family,
+  );
+
+=cut 
+
+sub families {
+    my $self = shift;        
+    my $args = {@_};
+
+    $self->throw("Comparative context only.") unless $self->bound;
+
+    $args->{'-group_by'} = 'ohno' unless exists $args->{'-group_by'};
+    $args->{'-evalue_max'} = 1 unless exists  $args->{'-evalue_max'};
+    $args->{'-synteny_min'} = 1 unless exists  $args->{'-synteny_min'};
+    
+    #########################################
+    # find all relevant genes 
+    #########################################
+
+    my @orfs =  grep {$_->ygob} map {$_->orfs} $self->iterate;
+
+    # greedy building of all possible families. 
+    # we pull in orthologs and orthogroups as we go. 
+    # in next step we will deal with polygamous relationships
+    # -- genes that have been placed in >1 group 
+
+    my %family;
+    foreach my $o ( @orfs ) {
+	next unless $o->evalue('ygob') <= $args->{'-evalue'} || 
+	    $o->hypergob >= $args->{'-synteny_min'}; # hypergob right given evalue('ygob')
+	foreach my $x ( grep { defined } ($o, $o->ohnolog, $o->orthogroup)) {
+	    $index{$x->name}{$o->ygob}++;	    
+	    push @{ $family{$o->ygob} }, $x;
+	}
+    }
+
+    if ( $args->{'-verbose'} ) {
+	print 
+	    scalar( keys %index), 
+	    scalar( grep { scalar(keys %{$_})>1 } values %index),
+	    scalar( map { keys %{$_} } values %index);
+    }
+    
+    #########################################
+    # validate 
+    #########################################
+    
+    # These data are actually pretty amazing. 
+    # It could have been a real mess. For SSS: 
+    # Genes included         24174	
+    # Genes in >1 "family"   37	
+    # On inspection pretty much all of the problems are 
+    # ABC transporters that have saturated HMMER3 (-450 log score) 
+    # and are thus forcing random distribution to two alternative 
+    # Ancestral loci. Two cases do not fit this profile: 
+    # Skud_4.187	YDL079C / Spar_10.74	YJL159W
+
+    # 1. identify all orfs that are in >1 family
+    # and use this info to construct a matrix of families that are 
+    # linked to each other.  
+
+    my %mixedup;
+    foreach my $o ( grep { scalar(keys %{$index{$_->name}})>1 } @orfs ) {
+	$o->output(-quality => 1, -recurse => 0) if $args->{'-verbose'};
+	$self->throw if scalar(keys %{$index{$o->name}}) > 2; # someone else can fix this
+	my @fams = sort {$a cmp $b} keys %{$index{$o->name}};
+	push @{ $mixedup{ $fams[0] }{ $fams[1] }}, $o;
+    }
+    
+    # go through each family pair in turn and determine why they are tangled up. 
+    # There are two scenarios: 
+    # 1. As described above, a gene has simply been mislabelled and has the 
+    # the wrong anc. It is itself in the wrong anc family. 
+    # 2. The gene is correctly labelled but due to a relationship with 
+    # a mislabelled gene it is being pulled into another family (ohno, orthgroup).
+    # The fixes are different. 
+    # 1. Fix labelling. 
+    # 2. Hopefully do nothing (problem will be resolved be altering label of a
+    # related gene) but potentially need to break and OG or Ohno pair. 
+    
+    foreach my $anc ( keys %mixedup ) {
+	my ($other) = keys %{$mixedup{$anc}};
+	print $anc, scalar(keys %{$mixedup{$anc}}), $other, scalar(@{$mixedup{$anc}{$other}});
+
+	foreach my $o ( @{$mixedup{$anc}{$other}} ) {
+	    my $mem = $o->
+	}
+
+    }
+    
+    exit;
+
+	my %store;
+	foreach my $anc (@fams) {
+	    foreach my $hom ( qw(SGD YGOB) ) {
+		my @syn = map { 
+		    $o->synteny_conserved(-object => $_, -homology => $hom) } 
+		grep {$_ ne $o} @{$family{$anc}};
+		my ($m,$sd,$n,$max,$min) = ( @syn ? &_calcMeanSD(@syn) : 0);
+		print $anc, $hom, $m, $max;
+		$store{$anc}=$m;
+	    }
+	}
+	
+	my ($best) = sort {$store{$b} <=> $store{$a}} %store;
+	my $result = ( $best ne $o->ygob ? $best : 'NoChange' );
+
+	$o->show;
+	print;
+
+	next;
+
+    exit;
+
+
+    # Data to leverage : 
+    # 0. Phylogenetic consistency // data('SOWH') // seems not to be stored ...
+    # 1. Orthogroup quality scores (from quality() ) // need to run $g->quality(o)
+    # 2. YGOB pillar mapping quality // data('_PILLAR') [Delta(LOSS)]
+    # 3. Ohno quality scores // data('_OHNO') [alignedSisterScore]
+
+    #########################################
+    # group as requested 
+    #########################################
+
+    my (%anc,%seen);
+    if ( ! defined $args->{'-group_by'} ) {
+	
+    } elsif (  $args->{'-group_by'} eq 'ohno' ) { 
+	foreach my $o ( grep {$_->ygob} map {$_->orfs} $self->iterate ) {	
+	    next if $seen{$o->organism.$o->_internal_id};
+	    push @{ $anc{ $o->ygob } }, [$o, $o->ohnolog];
+	    map { $seen{$_->organism.$_->_internal_id}++ } grep {defined} ($o, $o->ohnolog);	
+	}
+    } elsif (  $args->{'-group_by'} eq 'ortho' ) {
+    } elsif (  $args->{'-group_by'} eq 'species' ) {
+    } else { $self->throw; }     
+    undef %seen;
+    
+    if ( $args->{'-verbose'} ) {
+	my %count;
+	foreach my $anc (keys %anc) {
+	    $count{ scalar( @{$anc{$anc}} ) }++;
+	}
+	map { print $_,$count{$_} } sort {$a <=> $b} keys %count;
+    }
+    
+    return \%anc;
+}
+
+sub kaksQC {
+    my $self  = shift;
+    # for orthologs ...
+    my %kaks;
+    foreach my $k (qw(KA KS KAKS)) {
+	my ($dn,$dn_sd) = &_calcMeanSD( grep {$_>0 && $_ <10} map {$_->data($k)} $self->orfs);
+	$kaks{$k}{'MEAN'}=$dn;
+	$kaks{$k}{'SD'}=$dn_sd;
+	print $k, $dn,$dn_sd;
+    }
+    return \%kaks;
 }
 
 #########################################
