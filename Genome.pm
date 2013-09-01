@@ -2731,7 +2731,7 @@ sub sisterSyntenyMatrix {
 =head2 _orthogroup_index 
 
     Create a hash indexed by OGID that gives access to all 
-    OG members: 123 => [o1,o2,..]
+    OG members across all genomes: 123 => [o1,o2,..]
 
     Intended for internal use. 
 
@@ -2743,6 +2743,64 @@ sub _orthogroup_index {
     my %index = map { $_->ogid => [$_->_orthogroup] } grep { $_->ogid } $self->orfs;
 
     return \%index;
+}
+
+=head2 group(-orfs => [], -by => 'ygob|ogid|??' )
+
+    Return a ref to a hash of arrays organized *by* param. 
+    e.g. $family->{'Anc_1.23'}=[] OR $family->{'123'}=[]
+
+    NB: As we traverse orfs we pull in all OGs and ohnologs 
+    as we go. It is therefore a greedy defintion of family membership.
+
+    In wantarray context we return a 2nd hash ref that defines 
+    every family an Orf has been placed in: 
+    $index->{'OrfName'}{'Anc_1.23'} = 1
+    
+=cut
+
+sub group {
+    my $self = shift;
+    my $args = {@_};
+
+    ########################################
+    # teast args 
+    ########################################
+
+    $self->throw unless defined $args->{'-by'};
+    $self->throw unless defined $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;    
+
+    ########################################
+    # prep vars 
+    ########################################
+
+    my $method = $args->{'-by'};
+    my @orfs = @{$args->{'-orfs'}};
+    $self->throw unless $orfs[0]->can( $method ); # I think this is always true. change. 
+
+    my $ogIndex = $self->_orthogroup_index; # 123 => [o1, o2,o3..]
+
+    ########################################
+    # the work ... 
+    ########################################
+
+    my %index;
+    my %family;
+    foreach my $o ( @orfs ) { # %ogIndex for non-ref species 
+	foreach my $x ( grep { defined } ($o, $o->ohnolog, @{$ogIndex->{$o->ogid}})) { 
+	    $index{$x->name}{$o->ygob}++;
+	    push @{ $family{ $o->$method } }, $x;
+	}
+    }
+
+    if ( $args->{'-verbose'} ) {
+	print 
+	    scalar( keys %index), 
+	    scalar( grep { scalar(keys %{$_})>1 } values %index),
+	    scalar( map { keys %{$_} } values %index);
+    }
+    
+    return( wantarray ? (\%family,\%index) : \%family);
 }
 
 =head2 ohnologComparative
@@ -5337,122 +5395,96 @@ sub families {
     $args->{'-group_by'} = 'ohno' unless exists $args->{'-group_by'};
     $args->{'-evalue_max'} = 1 unless exists $args->{'-evalue_max'};
     $args->{'-synteny_min'} = 1 unless exists $args->{'-synteny_min'};
-    $args->{'-threshold'} = 5 unless exists $args->{'-threshold'};
+    $args->{'-threshold'} = 10 unless exists $args->{'-threshold'};
+    $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
     
     #########################################
     # prep work 
     #########################################
 
-    my @orfs =  grep {$_->ygob} map {$_->orfs} $self->iterate;
+    my @all = grep {$_->ygob} map {$_->orfs} $self->iterate;
+    my @orfs = grep { $_->evalue('ygob') <= $args->{'-evalue'} || $_->hypergob >= $args->{'-synteny_min'} } @all;
     my $ogIndex = $self->_orthogroup_index; # 123 => [o1, o2,o3..]
-
-    #########################################
-    # build %family hash from @orfs
-    #########################################
-
-    # iterate on this next section --
-    # we reprocess families as long as some genes are members of >1 family 
     
-    my %family;
-    my $changes=1000;
-    until ( $changes == 0 ) {
+    #########################################
+    # build %family hash from @orfs -- in multiple stages. 
+    #########################################
 
-	# greedy building of all possible families. 
-	# we pull in orthologs and orthogroups as we go. 
-	# in next step we will deal with polygamous relationships
-	# -- genes that have been placed in >1 group 
-	
-        undef %family;
-	undef %index;
-	foreach my $o ( @orfs ) {
-	    next unless $o->evalue('ygob') <= $args->{'-evalue'} || 
-		$o->hypergob >= $args->{'-synteny_min'}; # hypergob right given evalue('ygob')
-	    foreach my $x ( grep { defined } ($o, $o->ohnolog, @{$ogIndex->{$o->ogid}})) { # %og for non-ref species 
-		$index{$x->name}{$o->ygob}++;
-		push @{ $family{$o->ygob} }, $x;
-	    }
-	}
-
-	if ( $args->{'-verbose'} ) {
-	    print 
-		scalar( keys %index), 
-		scalar( grep { scalar(keys %{$_})>1 } values %index),
-		scalar( map { keys %{$_} } values %index);
-	}
-	
-	# These data are actually pretty amazing. 
-	# It could have been a real mess. For SSS: 
-	# Genes included         24364	
-	# Genes in >1 "family"   110	
-	# On inspection pretty much all of the problems are 
-	# ABC transporters that have saturated HMMER3 (-450 log score) 
-	# and are thus forcing random distribution to two alternative 
-	# Ancestral loci. Two cases do not fit this profile: 
-	# Skud_4.187	YDL079C / Spar_10.74	YJL159W
-	
-	# >> identify all orfs that are in >1 family
-	# and use this info to construct a matrix of families that are 
-	# linked to each other.  
-	
-	my %mixedup;
-	foreach my $o ( sort {$b->hypergob <=> $a->hypergob} grep { scalar(keys %{$index{$_->name}})>1 } @orfs ) {
-	    $o->output(-qc => 1, -append => [(scalar(keys %{$index{$o->name}}) > 2 ? '***' : '')]) 
-		if $args->{'-verbose'};
-	    my @fams = sort {$a cmp $b} keys %{$index{$o->name}};
-	    push @{ $mixedup{ $fams[0] }{ $fams[1] }}, $o;
+    # Greedily construct families. group() pulls in OGs/Ohnos etc.
+    # Polygamous relationships? Genes in >1 families. 
+    
+    my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'ygob', -verbose => 1);
+    
+    # These data are actually pretty amazing. 
+    # Genes included         24364	
+    # Genes in >1 "family"   110	
+    # Pretty much all are ABC transporters that have saturated HMMER3 (-450 log score). 
+    
+    # Identify all orfs that are in >1 family. Construct matricx of linked families. 
+    
+    my %mixedup;
+    foreach my $o ( sort {$b->hypergob <=> $a->hypergob} grep { scalar(keys %{$index->{$_->name}})>1 } @orfs ) {
+	$o->output(-qc => 1, -append => [(scalar(keys %{$index->{$o->name}}) > 2 ? '***' : '')]) 
+	    if $args->{'-verbose'} >= 2;
+	my @fams = sort {$a cmp $b} keys %{$index->{$o->name}};
+	push @{ $mixedup{ $fams[0] }{ $fams[1] }}, $o;
+    }
+    
+    # Foreach family pair distinguish two scenarios : 
+    # 1. A gene has been mislabeled due to saturation. See above.
+    # 2. Bound together for some other reason: OG/ohno error? 
+    
+    my $changes;
+    foreach my $anc ( keys %mixedup ) {
+	my ($other) = keys %{$mixedup{$anc}};
+	if ( $args->{'-verbose'} >= 3 ) {
+	    print ">>>".$anc, scalar(keys %{$mixedup{$anc}}), 
+	    $other, scalar(@{$mixedup{$anc}{$other}});
 	}
 	
-	# go through each family pair in turn and determine why they are tangled up. 
-	# There are two scenarios: 
-	# 1. As described above, a gene has simply been mislabelled and has the 
-	# the wrong anc. It is itself in the wrong anc family. 
-	# 2. The gene is correctly labelled but due to a relationship with 
-	# a mislabelled gene it is being pulled into another family (ohno, orthgroup).
-	# The fixes are different. 
-	# 1. Fix labelling. 
-	# 2. Hopefully do nothing (problem will be resolved be altering label of a
-	# related gene) but potentially need to break and OG or Ohno pair. 
+	# here we fix the labelling if three criteria are met: 
+	# 1. E-value saturation 
+	# 2. VERY strong synteny signal 
+	# 3. ???? Should we check to see if this gene already exists ?
+	# perhaps a crosswalk function ? 
 	
-	$changes=0;
-	foreach my $anc ( keys %mixedup ) {
-	    my ($other) = keys %{$mixedup{$anc}};
-	    if ( $args->{'-verbose'} ) {
-		print ">>>".$anc, scalar(keys %{$mixedup{$anc}}), 
-		$other, scalar(@{$mixedup{$anc}{$other}});
-	    }
-	    foreach my $o ( @{$mixedup{$anc}{$other}} ) {
-		my $old_syn = $o->hypergob;
-		my $old = $o->data('YGOB'); 
-		my $new = ( $o->ygob eq $anc ? $other : $anc );
-		$o->data('YGOB' => $new );	
-
-		if ( $o->hypergob - $old_syn > $args->{'-threshold'} ) {
-		    ++$changes;
-		    print $changes, $o->name, $old, $old_syn, $new, $o->hypergob
-			if $args->{'-verbose'};
-		} else {
-		    $o->data('YGOB' => $old ); # revert
-		}		
-	    }
-	}
-
-	if ( $changes == 0) {
-	    foreach my $anc ( keys %mixedup ) {
-		my ($other) = keys %{$mixedup{$anc}};
-		print {STDOUT} "\n>$anc / $other : ", map {$_->name} @{ $mixedup{$anc}{$other} };
-		foreach my $x ( $anc, $other ) {
-		    my $res = $self->sisterSyntenyMatrix(
-			-orfs => $family{$x},
-			-ancestor => $x,
-			-verbose => 1
-			);
-		}
-	    }
+	foreach my $o ( @{$mixedup{$anc}{$other}} ) {
+	    my $old_syn = $o->hypergob;
+	    my $old = $o->data('YGOB'); 
+	    my $new = ( $o->ygob eq $anc ? $other : $anc );
+	    $o->data('YGOB' => $new );	
+	    
+	    if ( ($o->evalue('ygob')*1 == 0) && # saturation 
+		 (($o->hypergob - $old_syn) > $args->{'-threshold'}) ) {
+		$changes++;
+		print $changes, $o->name, $old, $old_syn, $new, $o->hypergob
+		    if $args->{'-verbose'} >= 3;
+	    } else {
+		$o->data('YGOB' => $old ); # revert
+	    }		
 	}
     }
     
+    ### OK. remaing issues are not due to evalue saturation. 
+    # rebuild families. what is up with them ? 
     
-    
+    my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'ygob', -verbose => 1);	
+    exit;
+
+    if ( $changes == 0) {
+	foreach my $anc ( keys %mixedup ) {
+	    my ($other) = keys %{$mixedup{$anc}};
+	    print {STDOUT} ("\n>$anc / $other : ", (map {$_->name} @{ $mixedup{$anc}{$other} })) 
+		if $args->{'-verbose'} >=3;
+	    foreach my $x ( $anc, $other ) {
+		my $res = $self->sisterSyntenyMatrix(
+		    -orfs => $family{$x},
+		    -ancestor => $x,
+		    -verbose => ($args->{'-verbose'}-1)
+		    );
+	    }
+	}
+    }
 
     exit;
 
