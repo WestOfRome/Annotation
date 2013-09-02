@@ -1,0 +1,17 @@
+Things that should be done: 
+
+1. Unify interfaces e.g. pillarscore is not consistnet with other score() functions. 
+
+2. Create unit and use case tests. 
+
+3. Document 
+
+4. Refactor as needed: 
+   - Bound genome object 
+   - Orthogroup object 
+   - non-coding object 
+
+5. Provide scripts to pull all needed data from YGOB
+
+6. Provide API access to YGOB-HMM library 
+
