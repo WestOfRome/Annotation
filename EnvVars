@@ -1,0 +1,10 @@
+base=/Users/devin/Desktop/Dropbox/Annotation/
+export YGOB_AA_DB=$base/db/aa4.fsa
+export YGOB_DNA_DB=$base/db/nt4.fsa
+export YGOB_ORTHO_DB=$base/db/Pillars.tab 
+export YGOB_GO_DB=$base/go/GeneOntologyForYGOB_23-9-9.sto
+export ANNA_CODE_LIB=$base/lib/
+export ANNA_HMMER2_LIB=$base/hmm/
+export ANNA_TY_DB=$base/db/ty.fsa
+export ANNA_LTR_DB=$base/db/ltr.fsa
+
