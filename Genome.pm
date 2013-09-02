@@ -5600,6 +5600,8 @@ sub families {
 	$clusters{$new_cluster_id} = \@uniq;
     }
 
+    map { print $_,$clusters{$_} } grep {!/Anc/} keys %clusters; 
+
     ####    
     # 2. Gather ORFs and Ancs
     ####
