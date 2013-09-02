@@ -2562,6 +2562,12 @@ sub ohnologComparative2 {
     # iterate through each Anc and 
     # look at ohno profile across species 
     ################################
+
+    # Data to leverage : 
+    # 0. Phylogenetic consistency // data('SOWH') // seems not to be stored ...
+    # 1. Orthogroup quality scores (from quality() ) // need to run $g->quality(o)
+    # 2. YGOB pillar mapping quality // data('_PILLAR') [Delta(LOSS)]
+    # 3. Ohno quality scores // data('_OHNO') [alignedSisterScore]
     
     ANC: foreach my $anc ( keys %anc ) {
 	next unless (! defined $args->{'-debug'}) || ($anc eq $args->{'-debug'});
@@ -2651,7 +2657,8 @@ sub ohnologComparative2 {
     return $self;
 }
 
-=head2 sisterSyntenyMatrix(-orfs => [], -ancestor => 'Anc_1.23')
+=head2 syntenyMatrix(-orfs => [], -ancestor => 'Anc_1.23', 
+    -verbose => 0)
 
     Create a matrix of sysnteny scores between all pairs of 
     genes using alignSisterRegions. Alignments are built around
@@ -2661,15 +2668,23 @@ sub ohnologComparative2 {
 
 =cut 
 
-sub sisterSyntenyMatrix {
+sub syntenyMatrix {
     my $self = shift;
     my $args = {@_};
 
+    # ortholog / conserved => synteny_conserved 
+    # paralog / sister => alignSisterRegions
+
+    $args->{'-mode'} = 'o' unless exists $args->{'-mode'};
+    $args->{'-mode'} = 'ortho' if  $args->{'-mode'} =~ /^[o|c]/i;
+    $args->{'-mode'} = 'para' if  $args->{'-mode'} =~ /^[p|s]/i;
+    
     ########################################
     # teast args 
     ########################################
 
-    $self->throw unless defined $args->{'-ancestor'} && $args->{'-ancestor'} =~ /^Anc_/;
+    $self->throw unless $args->{'-mode'} =~ /^o/i || 
+	(defined $args->{'-ancestor'} && $args->{'-ancestor'} =~ /^Anc_/);
     $self->throw unless defined $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;
 
     ########################################
@@ -2677,7 +2692,7 @@ sub sisterSyntenyMatrix {
     ########################################
 
     my $fh = STDOUT;
-    my @orfs= @{$args->{'-orfs'}};    
+    my @orfs= sort { $b->ogid <=> $a->ogid } @{$args->{'-orfs'}};    
 
     ########################################
     # print pretty .. 
@@ -2685,7 +2700,7 @@ sub sisterSyntenyMatrix {
 
     if ( $args->{'-verbose'} >=1 ) {
 	print {$fh} "\n>".$args->{'-ancestor'}, scalar(@orfs);
-	print {$fh} (qw(Gene HYPERG LOSS OGID),undef, ( map {$_->shortname} @orfs ));
+	print {$fh} (qw(Gene Anc Evalue HYPERG LOSS OGID),undef, ( map {$_->shortname} @orfs ));
     }
 
     ########################################
@@ -2697,17 +2712,27 @@ sub sisterSyntenyMatrix {
 	my @row = ('-') x ($i+1);
 	for my $j ( $i+1 .. $#orfs ) {
 	    #next if $orfs[$i]->organism eq $orfs[$j]->organism;
-	    my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
-		$orfs[$i]->alignSisterRegions(
-		    -sister => $orfs[$j],
-		    -ancestor => $args->{'-ancestor'},
-		    -clean => 1,
-		    -score => 1,
-		    -verbose => 0
-		);
+
+	    my ($align,$score,$hash);
+	    if ( $args->{'-mode'} =~ /^p/i ) {
+	        ($align,$score,$hash) = # either an alignment (array of hashes) or hash
+		    $orfs[$i]->alignSisterRegions(
+			-sister => $orfs[$j],
+			-ancestor => $args->{'-ancestor'},
+			-clean => 1,
+			-score => 1,
+			-verbose => 0
+		    );
+	    } elsif ( $args->{'-mode'} =~ /^o/i ) {
+		$score = 
+		    $orfs[$i]->synteny_conserved(
+			-object => $orfs[$j]
+		    );
+	    } else {$self->throw;}
+	    
 	    #print $orfs[$i]->name, $orfs[$j]->name, $score;		
 	    $synt{ $i }{ $j } = $score;
-	    push @row, $score;
+	    push @row, ( $args->{'-ascii'} ?  &_hypergob_ascii_visual($score) : $score);
 	}
 	
 	########################################
@@ -2716,16 +2741,35 @@ sub sisterSyntenyMatrix {
 	
 	if ( $args->{'-verbose'} >=1 ) {
 	    print {$fh} 
-	    ($orfs[$i]->sn, $orfs[$i]->hypergob,  $orfs[$i]->loss,
+	    ($orfs[$i]->sn, 
+	     (map {/(\d+\.\d+)/; $1} $orfs[$i]->family), $orfs[$i]->logscore('ygob'), 
+	     $orfs[$i]->hypergob,  $orfs[$i]->loss,
 	     $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
 	    print {$fh} 
-	    ($orfs[$#orfs]->sn, $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss, 
+	    ($orfs[$#orfs]->sn, 
+	     (map {/(\d+\.\d+)/; $1} $orfs[$#orfs]->family), $orfs[$#orfs]->logscore('ygob'), 
+	     $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss, 
 	     $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
 	     '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
 	}
     } # orf
     
     return \%synt;
+}
+
+sub _hypergob_ascii_visual {
+    my $x = shift;
+    return undef unless $x > 0 && $x <= 1000;
+
+    if ( $x < 1 ) {
+	return '';
+    } elsif ( $x < 5 ) {
+	return '.';
+    } elsif ($x < 10) {
+	return '*';
+    } elsif ( $x < 20 ) {
+	return '**';
+    } else { return '<<*>>'; }
 }
 
 =head2 _orthogroup_index 
@@ -2787,12 +2831,20 @@ sub group {
     my %index;
     my %family;
     foreach my $o ( @orfs ) { # %ogIndex for non-ref species 
-	foreach my $x ( grep { defined } ($o, $o->ohnolog, @{$ogIndex->{$o->ogid}})) { 
-	    $index{$x->name}{$o->ygob}++;
-	    push @{ $family{ $o->$method } }, $x;
+
+	my @set = (
+	    $o,
+	    ($args->{'-basic'} ? () : $o->ohnolog),
+	    ($args->{'-basic'} ? () : @{$ogIndex->{$o->ogid}})
+	    );
+
+	foreach my $x ( grep { defined } @set) { 
+	    push @{ $family{ $o->$method } }, $x unless 
+		defined $index{$x->name}{ $o->$method };
+	    $index{$x->name}{ $o->$method }++;
 	}
     }
-
+    
     if ( $args->{'-verbose'} ) {
 	print 
 	    scalar( keys %index), 
@@ -2801,6 +2853,27 @@ sub group {
     }
     
     return( wantarray ? (\%family,\%index) : \%family);
+}
+
+=head2 shape(-orfs => [], -group_by => )
+=cut 
+
+sub shape { 
+    my $self=shift; 
+
+   my (%anc,%seen);
+    if ( ! defined $args->{'-group_by'} ) {
+	
+    } elsif (  $args->{'-group_by'} eq 'ohno' ) { 
+	foreach my $o ( grep {$_->ygob} map {$_->orfs} $self->iterate ) {	
+	    next if $seen{$o->organism.$o->_internal_id};
+	    push @{ $anc{ $o->ygob } }, [$o, $o->ohnolog];
+	    map { $seen{$_->organism.$_->_internal_id}++ } grep {defined} ($o, $o->ohnolog);	
+	}
+    } elsif (  $args->{'-group_by'} eq 'ortho' ) {
+    } elsif (  $args->{'-group_by'} eq 'species' ) {
+    } else { $self->throw; }  
+
 }
 
 =head2 ohnologComparative
@@ -5393,47 +5466,58 @@ sub families {
     $self->throw("Comparative context only.") unless $self->bound;
 
     $args->{'-group_by'} = 'ohno' unless exists $args->{'-group_by'};
-    $args->{'-evalue_max'} = 1 unless exists $args->{'-evalue_max'};
-    $args->{'-synteny_min'} = 1 unless exists $args->{'-synteny_min'};
+    # 
     $args->{'-threshold'} = 10 unless exists $args->{'-threshold'};
+    $args->{'-overwrite'} = undef unless exists $args->{'-overwrite'};
+    # 
+    $args->{'-evalue_max'} = 10 unless exists $args->{'-evalue_max'};
+    $args->{'-synteny_min'} = 0.5 unless exists $args->{'-synteny_min'};
+    # 
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
-    
+
     #########################################
     # prep work 
     #########################################
-
-    my @all = grep {$_->ygob} map {$_->orfs} $self->iterate;
-    my @orfs = grep { $_->evalue('ygob') <= $args->{'-evalue'} || $_->hypergob >= $args->{'-synteny_min'} } @all;
-    my $ogIndex = $self->_orthogroup_index; # 123 => [o1, o2,o3..]
     
+    # get all orfs, select only those that are interesting 
+    # initialize the family param on each orf 
+    
+    my @all = map { $_->family(-set => undef); $_ } grep {$_->ygob} map {$_->orfs} $self->iterate;
+    my @orfs =  map { $_->family(-set => $_->ygob); $_ } # we set to default value 
+    grep { $_->evalue('ygob') <= $args->{'-evalue'} || $_->hypergob >= $args->{'-synteny_min'} } @all;
+ 
     #########################################
     # build %family hash from @orfs -- in multiple stages. 
     #########################################
 
     # Greedily construct families. group() pulls in OGs/Ohnos etc.
-    # Polygamous relationships? Genes in >1 families. 
+    # Identify all orfs that are in >1 family. Construct matricx of linked families. 
     
-    my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'ygob', -verbose => 1);
+    my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'family', -verbose => 1);        
     
     # These data are actually pretty amazing. 
     # Genes included         24364	
     # Genes in >1 "family"   110	
     # Pretty much all are ABC transporters that have saturated HMMER3 (-450 log score). 
-    
-    # Identify all orfs that are in >1 family. Construct matricx of linked families. 
-    
+    # there is only 1 cases where we have 3 families entangled : Anc_8.517 / YPL058C.
+    # It is a single orthogroup.
+
     my %mixedup;
-    foreach my $o ( sort {$b->hypergob <=> $a->hypergob} grep { scalar(keys %{$index->{$_->name}})>1 } @orfs ) {
-	$o->output(-qc => 1, -append => [(scalar(keys %{$index->{$o->name}}) > 2 ? '***' : '')]) 
-	    if $args->{'-verbose'} >= 2;
-	my @fams = sort {$a cmp $b} keys %{$index->{$o->name}};
-	push @{ $mixedup{ $fams[0] }{ $fams[1] }}, $o;
+    foreach my $fam ( keys %{$family} ) {
+	foreach my $o ( @{ $family->{$fam} } ) {
+	    if ( scalar(keys %{$index->{$o->name}}) == 2 ) { # let's ignore higher order mess ... 
+		$o->output(-qc => 1, -append => [(scalar(keys %{$index->{$o->name}}) > 2 ? '***' : '')]) 
+		    if $args->{'-verbose'} >= 2;
+		my @fams = sort {$a cmp $b} keys %{$index->{$o->name}};
+		push @{ $mixedup{ $fams[0] }{ $fams[1] }}, $o;
+	    }
+	}
     }
-    
-    # Foreach family pair distinguish two scenarios : 
-    # 1. A gene has been mislabeled due to saturation. See above.
-    # 2. Bound together for some other reason: OG/ohno error? 
-    
+
+    ########################################### 
+    # 1. Fix genes mislabeled due to E-value saturation.
+    ########################################### 
+
     my $changes;
     foreach my $anc ( keys %mixedup ) {
 	my ($other) = keys %{$mixedup{$anc}};
@@ -5445,94 +5529,186 @@ sub families {
 	# here we fix the labelling if three criteria are met: 
 	# 1. E-value saturation 
 	# 2. VERY strong synteny signal 
-	# 3. ???? Should we check to see if this gene already exists ?
-	# perhaps a crosswalk function ? 
+	# 3. ???? 
+	# Do we need a crosswalk function across OGID, Pillar, family etc.
 	
 	foreach my $o ( @{$mixedup{$anc}{$other}} ) {
 	    my $old_syn = $o->hypergob;
 	    my $old = $o->data('YGOB'); 
 	    my $new = ( $o->ygob eq $anc ? $other : $anc );
-	    $o->data('YGOB' => $new );	
-	    
+	    $o->data('YGOB' => $new );
+
 	    if ( ($o->evalue('ygob')*1 == 0) && # saturation 
 		 (($o->hypergob - $old_syn) > $args->{'-threshold'}) ) {
-		$changes++;
-		print $changes, $o->name, $old, $old_syn, $new, $o->hypergob
-		    if $args->{'-verbose'} >= 3;
+		$o->family(-set => undef); # prep 
+		$o->family(-set => $new);  # choose family
+		$o->data('YGOB' => $old ) unless $args->{'-overwrite'}==1; # edit the unerlying data('ygob')
+		print $o->name, $old, $old_syn, $new, $o->hypergob, $o->family if $args->{'-verbose'} >= 3;
 	    } else {
 		$o->data('YGOB' => $old ); # revert
 	    }		
 	}
     }
-    
-    ### OK. remaing issues are not due to evalue saturation. 
-    # rebuild families. what is up with them ? 
-    
-    my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'ygob', -verbose => 1);	
-    exit;
+        
+    ########################################### 
+    # 2. Test for possible OG/Ohno error
+    # Seems not to be the problem. Synteny signal to noise. 
+    ########################################### 
 
-    if ( $changes == 0) {
-	foreach my $anc ( keys %mixedup ) {
-	    my ($other) = keys %{$mixedup{$anc}};
-	    print {STDOUT} ("\n>$anc / $other : ", (map {$_->name} @{ $mixedup{$anc}{$other} })) 
-		if $args->{'-verbose'} >=3;
-	    foreach my $x ( $anc, $other ) {
-		my $res = $self->sisterSyntenyMatrix(
-		    -orfs => $family{$x},
-		    -ancestor => $x,
-		    -verbose => ($args->{'-verbose'}-1)
-		    );
+    # rebuild hashes 
+
+    my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'family', -verbose => 1);	
+
+    # this is pretty interesting again. 
+    # genes     >1 fam  Sum(GenesXfams)
+    # 24364	110	24479 <-- start 
+    # 24364	45	24414 <-- now 
+    # the 45 genes are linking together 9 pairs of families. 
+    # in each case an entire OG is in both fams. 
+    
+    # On inspection, the OGs themselves are fairly rock solid. 
+    # The issue is still with the YGOB label and E-value saturation. 
+    # We are going to try correct labels again but this time leveraging 
+    # all genes in an OG. 
+
+    # next few steps are a bit weird ... but here we go : 
+    # A. single linkage clustering to get all the relevant genes in one place
+    # B. we then gather all the possible Anc loci in the cluster 
+    # C. for each OG, we test all possible Anc labels and apply the one that works best. 
+
+    ####
+    # A. single-linkage clustering 
+    ####
+    
+    my $new_custer_id;
+    my %clusters; # different structure than above  
+    foreach my $o ( sort {$b->hypergob <=> $a->hypergob} 
+		    grep { scalar(keys %{$index->{$_->name}}) >=2 }		    
+		    map { @{$_} } values %{$family} ) {
+	$o->output(-qc => 1, -prepend => ['N='.scalar(keys %{$index->{$o->name}})]) 
+	    if $args->{'-verbose'} >= 2; # || scalar(keys %{$index->{$o->name}}) > 2;        
+	
+        $new_cluster_id++; # create a new cluster 
+	push @{ $clusters{ $new_cluster_id } }, keys %{$index->{$o->name}}; # load all families for this gene
+	foreach my $fam ( grep { exists $clusters{$_} } @{ $clusters{ $new_cluster_id } } ) { # cluster already exists 
+	    my $old_cluster_id = $clusters{$fam};
+	    push  @{$clusters{$new_cluster_id}}, @{$clusters{$old_cluster_id}}; # move off all families
+	    delete $clusters{$old_cluster_id}; # destroy old cluster 
+	}
+	map { $clusters{$_} = $new_cluster_id } @{$clusters{$new_cluster_id}}; # every fam points to cluster
+	my @uniq = keys  %{{ map { $_ => 1 } @{$clusters{$new_cluster_id}} }} ; # ensure uniqueness 
+	$clusters{$new_cluster_id} = \@uniq;
+    }
+
+    ####    
+    # 2. Gather ORFs and Ancs
+    ####
+
+    foreach my $id ( grep {!/Anc/} keys %clusters )  {
+
+	# Get all Orfs assocaited with the cluster 
+	# Get all the Ancs associated with the cluster 
+	my @set;
+	foreach my $x ( @{$clusters{$id}} ) {
+	    push @set, grep { $_->family eq $x } map { @{$_} } values %{$family};
+	}
+	my @uniq_anc = keys %{{ map {$_ => 1} map { ($_->family,$_->ygob) } @set }};
+	
+	# Pretty print .. 
+	# syntenyMatrix is pretty amazing for visualization 
+
+	if ( $args->{'-verbose'} >= 2 )  {
+	    print {STDOUT} ">$id", @{$clusters{$id}},"\n",
+	    (map {$_->sn} @set),"\n",
+	    (map {$_->ygob =~ /(\d+\.\d+)/; $1} @set),"\n",
+	    (map {$_->logscore('ygob')} @set),"\n",
+	    (map {$_->hypergob} @set),"\n",
+	    (map {$_->ogid} @set);	    
+	    $self->syntenyMatrix(
+		-orfs => \@set,
+		-mode => 'ortho',
+		-verbose => 1,
+		-ascii => 1
+		);
+	}
+	
+	####
+	# 3. Iterate and test Ancs
+	####
+	
+	my $group = $self->group(-orfs => \@set, -by => 'ogid', -basic => 1);
+
+	foreach my $og ( keys %{$group} ) { # Orthogropus 
+
+	    # calculate the synetny scores 
+
+	    my %score;
+	    foreach my $anc ( @uniq_anc ) {
+		foreach my $o (  @{ $group->{$og} } ) { 
+		    my $store = $o->ygob;
+		    $o->data('YGOB' => $anc);
+		    $score{$anc}{'HYPER'}+=$o->hypergob;
+		    $score{$anc}{'LOSS'}+=$o->loss;
+		    $o->data('YGOB' => $store);
+		}
+	    }
+
+	    # sort to get the best scoring Anc genes 
+
+	    my ($hyper,$h2) = sort { $score{$b}{'HYPER'} <=> $score{$a}{'HYPER'} } keys %score;
+	    my ($loss,$l2) = sort { $score{$b}{'LOSS'} <=> $score{$a}{'LOSS'} } keys %score;
+	    my $delta = $score{$hyper}{'HYPER'} - $score{$h2}{'HYPER'};
+	    
+	    # Decide whether or not to update 'family'
+
+	    if ( scalar(@{$group->{$og}}) <= scalar($self->bound)+1 ) {		
+		my $new;
+		if ( $delta/ scalar(@{$group->{$og}}) > 2 ) { # 2 is made up 
+		    $new = $hyper;
+		} else {
+		    my %count;
+		    map { $count{$_->family}++ } @{$group->{$og}};
+		    ($new) = sort {$count{$b} <=> $count{$a}} keys %count; 
+		}
+		map { $_->family(-set => $new) } map { $_->family(-set => undef); $_ }  @{$group->{$og}};		
+		
+		# Is there another orthogroup to get ? 
+		
+		my ($ref) = grep { $_->organism eq $self->organism } @{$group->{$og}};
+		if ( $ref && ! $ref->ogid ) {
+		    my @other = grep {$_ ne $ref} @{$group->{$og}};
+		    if ( scalar(@other) == scalar($self->bound) ) { 
+			$ref->_define_orthogroup( 
+			    -object => \@other,
+			    -kaks => 0,
+			    -sowh => 0,
+			    -verbose => 1
+			    );
+		    }
+		}
+	    } else {
+		# I think I letting one get away here.
+		# Anc_5.396 / Anc_5.395 -- HXTs
+	    }
+	}
+    }
+    
+    my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'family', -verbose => 1);
+    foreach my $fam ( keys %{$family} ) {
+	foreach my $o ( @{ $family->{$fam} } ) {
+	    if ( scalar(keys %{$index->{$o->name}}) > 1 ) { 
+		$o->output(-qc => 1, -prepend => [$fam]);
 	    }
 	}
     }
 
     exit;
 
-	my %store;
-	foreach my $anc (@fams) {
-	    foreach my $hom ( qw(SGD YGOB) ) {
-		my @syn = map { 
-		    $o->synteny_conserved(-object => $_, -homology => $hom) } 
-		grep {$_ ne $o} @{$family{$anc}};
-		my ($m,$sd,$n,$max,$min) = ( @syn ? &_calcMeanSD(@syn) : 0);
-		print $anc, $hom, $m, $max;
-		$store{$anc}=$m;
-	    }
-	}
-	
-	my ($best) = sort {$store{$b} <=> $store{$a}} %store;
-	my $result = ( $best ne $o->ygob ? $best : 'NoChange' );
-
-	$o->show;
-	print;
-
-	next;
-
-    exit;
-
-
-    # Data to leverage : 
-    # 0. Phylogenetic consistency // data('SOWH') // seems not to be stored ...
-    # 1. Orthogroup quality scores (from quality() ) // need to run $g->quality(o)
-    # 2. YGOB pillar mapping quality // data('_PILLAR') [Delta(LOSS)]
-    # 3. Ohno quality scores // data('_OHNO') [alignedSisterScore]
-
     #########################################
     # group as requested 
     #########################################
 
-    my (%anc,%seen);
-    if ( ! defined $args->{'-group_by'} ) {
-	
-    } elsif (  $args->{'-group_by'} eq 'ohno' ) { 
-	foreach my $o ( grep {$_->ygob} map {$_->orfs} $self->iterate ) {	
-	    next if $seen{$o->organism.$o->_internal_id};
-	    push @{ $anc{ $o->ygob } }, [$o, $o->ohnolog];
-	    map { $seen{$_->organism.$_->_internal_id}++ } grep {defined} ($o, $o->ohnolog);	
-	}
-    } elsif (  $args->{'-group_by'} eq 'ortho' ) {
-    } elsif (  $args->{'-group_by'} eq 'species' ) {
-    } else { $self->throw; }     
+    
     undef %seen;
     
     if ( $args->{'-verbose'} ) {

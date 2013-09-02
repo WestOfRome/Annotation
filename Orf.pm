@@ -34,6 +34,7 @@ my %AUTOMETH = (
     EVIDENCE => {req => 0, def => 'NONE'},
 
     OGID => {req => 0, def => undef},
+    FAMILY => {req => 0, def => undef},
     OHNOLOG => {req => 0, def => undef},
     DESCRIPTION => {req => 0, def => undef}, # this is set ONLY by impute()
     
@@ -3969,7 +3970,7 @@ sub synteny_conserved {
 	$count{ $ori }{NUMER}  # drawn white balls 
 	);
     
-    return ( -1*(log($dhyper)/log(10)) );
+    return sprintf("%.1f", -1*(log($dhyper)/log(10)) );
 }
 
 
@@ -5520,6 +5521,26 @@ sub shortname {
 }
 
 sub sn { return $_[0]->shortname; }
+
+=head2 family(-set => 'new|undef')
+
+    Get/set family param. 
+    
+=cut 
+
+sub family {
+    my $self = shift;
+    my $args = {@_};
+    
+    $self->throw unless (! @_) || exists $args->{'-set'};
+    if ( exists $args->{'-set'} ) {
+	$self->throw unless ! defined $args->{'-set'} || $args->{'-set'} =~ /^Anc_/;
+	$self->throw("Must unset first.") if $args->{'-set'} && $self->family;
+	$self->{'FAMILY'} = $args->{'-set'};
+    }
+    
+    return $self->{'FAMILY'};
+}
 
 sub oliver { my $self = shift; $self->output(@_, -oliver=>1); }
 
