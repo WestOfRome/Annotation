@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8">
         <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
-        <title>Yeast Genome Annotation and Manipulation Software</title>
+        <title>Your New Jekyll Site</title>
         <meta name="viewport" content="width=device-width">
 
         <!-- syntax highlighting CSS -->
@@ -22,26 +22,14 @@
               <a class="extra" href="/">home</a>
             </div>
 
-                <h3>Overview</h3>
-
-<p>This is a documentation stub for the &quot;Annotation&quot; set of tools for managing and working with yeast genomes. The software is geared towards working with multiple closely related yeast species in a strong orthology framework. The software makes extensive use of synteny, the YGOB database and works best for more complete genomes.</p>
-
-<h3>Sections</h3>
-
-<ul>
-<li>Model design </li>
-<li>Unique methods </li>
-<li>Ancestral gene order assumptions </li>
-<li>Pure Perl (almost) </li>
-</ul>
-
-<h3>Known issues and opportunities for improvement</h3>
-
-<ul>
-<li>Refactoring needed for Hit objects </li>
-<li>Documentation </li>
-</ul>
-
+                <div id="home">
+  <h1>Blog Posts</h1>
+  <ul class="posts">
+    
+      <li><span>02 Sep 2013</span> &raquo; <a href="/jekyll/update/2013/09/02/welcome-to-jekyll.html">Welcome to Jekyll!</a></li>
+    
+  </ul>
+</div>
 
             <div class="footer">
               <div class="contact">
