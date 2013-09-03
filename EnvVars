@@ -1,4 +1,6 @@
-base=/Users/devin/Desktop/Dropbox/Annotation/
+#!/bin/bash 
+
+base=`pwd`
 export YGOB_AA_DB=$base/db/aa4.fsa
 export YGOB_DNA_DB=$base/db/nt4.fsa
 export YGOB_ORTHO_DB=$base/db/Pillars.tab 
