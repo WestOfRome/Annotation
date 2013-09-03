@@ -5522,6 +5522,17 @@ sub shortname {
 
 sub sn { return $_[0]->shortname; }
 
+=head2 unique
+
+    Return a unique stable id.
+
+=cut
+
+sub unique {
+    my $self = shift;
+    return $self->organism.'+'.$self->_internal_id;
+}
+
 =head2 family(-set => 'new|undef')
 
     Get/set family param. 
@@ -5533,9 +5544,11 @@ sub family {
     my $args = {@_};
     
     $self->throw unless (! @_) || exists $args->{'-set'};
+    
     if ( exists $args->{'-set'} ) {
-	$self->throw unless ! defined $args->{'-set'} || $args->{'-set'} =~ /^Anc_/;
-	$self->throw("Must unset first.") if $args->{'-set'} && $self->family;
+	$self->throw($args->{'-set'}) unless 
+	    (! defined $args->{'-set'}) || ($args->{'-set'} =~ /^Anc_/);
+	$self->throw("Must unset first.") if defined $args->{'-set'} && $self->family;
 	$self->{'FAMILY'} = $args->{'-set'};
     }
     

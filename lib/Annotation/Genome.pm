@@ -2678,7 +2678,8 @@ sub syntenyMatrix {
     $args->{'-mode'} = 'o' unless exists $args->{'-mode'};
     $args->{'-mode'} = 'ortho' if  $args->{'-mode'} =~ /^[o|c]/i;
     $args->{'-mode'} = 'para' if  $args->{'-mode'} =~ /^[p|s]/i;
-    
+    $args->{'-sort'} = 'ogid' unless exists $args->{'-sort'};
+
     ########################################
     # teast args 
     ########################################
@@ -2692,7 +2693,9 @@ sub syntenyMatrix {
     ########################################
 
     my $fh = STDOUT;
-    my @orfs= sort { $b->ogid <=> $a->ogid } @{$args->{'-orfs'}};    
+    my $meth = $args->{'-sort'};
+    my @orfs= sort { $b->$meth <=> $a->$meth } 
+    map {$self->throw($_) unless /::/; $_ } @{$args->{'-orfs'}};    
 
     ########################################
     # print pretty .. 
@@ -2731,7 +2734,7 @@ sub syntenyMatrix {
 	    } else {$self->throw;}
 	    
 	    #print $orfs[$i]->name, $orfs[$j]->name, $score;		
-	    $synt{ $i }{ $j } = $score;
+	    $synt{ $orfs[$i]->name }{ $orfs[$j]->name } = $score;
 	    push @row, ( $args->{'-ascii'} ?  &_hypergob_ascii_visual($score) : $score);
 	}
 	
@@ -2753,7 +2756,17 @@ sub syntenyMatrix {
 	     '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
 	}
     } # orf
-    
+
+    # 
+
+    if ( $args->{'-symmetrical'} ) {
+	foreach my $i ( keys %synt ) {
+	    foreach my $j ( keys %{$synt{$i} } ) {
+		$synt{$j}{$i}=$synt{$i}{$j};
+	    }
+	}
+    }
+
     return \%synt;
 }
 
@@ -2770,6 +2783,90 @@ sub _hypergob_ascii_visual {
     } elsif ( $x < 20 ) {
 	return '**';
     } else { return '<<*>>'; }
+}
+
+=head2 groupBySynteny
+=cut
+
+sub groupBySynteny {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-verbose'} = undef unless exists $args->{'-verbose'};
+    $args->{'-min'} = 5 unless exists $args->{'-min'};
+    $self->throw unless $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;
+    
+    # Orgnaize by Species. Move on if not >=1 of each.  
+    # Then need to move from a species view (%org below) : 
+    # Scer => [1,2,3]
+    # ...
+    # Sbay => [1,2]
+    # to an orthogroup view (@cand below):
+    # OG1 => [Scer, .. Sbay]
+    # OG2 => [Scer, .. Sbay]
+    # ...
+
+    my %org;
+    map { push @{$org{$_->organism}},$_ } @{$args->{'-orfs'}};
+    return $args->{'-orfs'} unless scalar( keys %org ) == scalar($self->bound)+1;
+    my ($init,@order) = sort { $#{$org{$b}} <=> $#{$org{$a}} } keys %org;
+    my @cand = map { [$_] }  @{$org{$init}};
+
+    # iterate over species and 
+
+    foreach my $org ( @order ) {
+	my %best;
+	foreach my $cand_gene ( @{$org{$org}} ) {
+	    foreach my $cluster_id ( 0..$#cand ) {
+		my $syn = $self->syntenyMatrix(
+		    -orfs => [$cand_gene, @{$cand[$cluster_id]}], 
+		    -symmetrical => 1,
+		    );
+		my $score;
+		map { $score += $syn->{$cand_gene->name}->{$_->name} } @{$cand[$cluster_id]};
+		#print $org, $cand_gene, $cluster_id, $score;
+		$best{ join("+", $cand_gene->name,$cluster_id) }=[$score,$cand_gene];
+	    }	    
+	}
+	
+	# make decisions
+
+	my %seen;
+	foreach my $hit ( sort {$best{$b} <=> $best{$a}} keys %best ) {
+	    my ($g,$x) = split/\+/, $hit;
+	    #print $hit, $best{$hit}->[1]->name, $cand[$x]->[0]->name, $best{$hit}->[0];
+	    next if ( $seen{$g} || $seen{$x} );
+	    if ($best{$hit}->[0] >= $args->{'-min'}) {
+		push @{$cand[$x]},$best{$hit}->[1];
+		map { $seen{$_}++ } ($g,$x);
+	    }
+	}
+    }
+
+    # Make OGs if we can .. 
+    
+    foreach my $cand ( @cand ) {
+	#print map { $_->name }  @{$cand};
+	$self->syntenyMatrix(
+	    -orfs =>  $cand,
+	    -mode => 'ortho',
+	    -verbose => 1,
+	    -sort => 'hypergob',
+	    -ascii => 1
+	    ) if $args->{'-verbose'};
+
+	map { $self->throw  if $_->ogid } @{$cand};
+	my ($ref) = grep { $_->organism eq $self->organism } @{$cand};
+
+	$ref->_define_orthogroup( 
+	    -object => [ grep {$_ ne $ref }  @{$cand} ],
+	    -kaks => 0,
+	    -sowh => 0,
+	    -verbose => $args->{'-verbose'}
+	    ) if $#{$cand}==scalar($self->bound);
+    }
+    
+    return @cand;
 }
 
 =head2 _orthogroup_index 
@@ -2812,7 +2909,8 @@ sub group {
     ########################################
 
     $self->throw unless defined $args->{'-by'};
-    $self->throw unless defined $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;    
+    $self->throw unless defined $args->{'-orfs'} && 
+	ref($args->{'-orfs'}) =~ /ARRAY/;    
 
     ########################################
     # prep vars 
@@ -2820,7 +2918,7 @@ sub group {
 
     my $method = $args->{'-by'};
     my @orfs = @{$args->{'-orfs'}};
-    $self->throw unless $orfs[0]->can( $method ); # I think this is always true. change. 
+    $self->throw unless $orfs[0]->can( $method ); # always true? change. 
 
     my $ogIndex = $self->_orthogroup_index; # 123 => [o1, o2,o3..]
 
@@ -2832,13 +2930,14 @@ sub group {
     my %family;
     foreach my $o ( @orfs ) { # %ogIndex for non-ref species 
 
-	my @set = (
+	my @set = grep {defined} (
 	    $o,
 	    ($args->{'-basic'} ? () : $o->ohnolog),
 	    ($args->{'-basic'} ? () : @{$ogIndex->{$o->ogid}})
 	    );
 
-	foreach my $x ( grep { defined } @set) { 
+	foreach my $x ( @set) { 
+	    #$self->throw unless defined $x->$method;
 	    push @{ $family{ $o->$method } }, $x unless 
 		defined $index{$x->name}{ $o->$method };
 	    $index{$x->name}{ $o->$method }++;
@@ -2855,25 +2954,63 @@ sub group {
     return( wantarray ? (\%family,\%index) : \%family);
 }
 
-=head2 shape(-orfs => [], -group_by => )
+=head2 shape(-orfs => [orfs], -by => 'ohno|ortho|family|species', 
+    -filter => 'undef|ygob', -index => 0)
+
+    Method to create datastrctures of defined shape 
+    that hold all orfs. 
+
 =cut 
 
 sub shape { 
     my $self=shift; 
+    my $args = {@_};
 
-   my (%anc,%seen);
-    if ( ! defined $args->{'-group_by'} ) {
-	
-    } elsif (  $args->{'-group_by'} eq 'ohno' ) { 
-	foreach my $o ( grep {$_->ygob} map {$_->orfs} $self->iterate ) {	
+    $self->throw unless exists $args->{'-by'};
+    my $meth = $args->{'-by'};
+
+    $args->{'-filter'} = undef unless exists $args->{'-filter'};
+    my $filter = $args->{'-filter'};
+
+    # 
+    
+    my @init = (
+	$args->{'-orfs'} 
+	? @{ $args->{'-orfs'} }
+	: map {$_->orfs} $self->iterate
+	);
+    my @orfs = (
+	$args->{'-filter'}
+	? grep { $_->$filter } @init
+	: @init
+	);
+    # 
+    
+    my $method;
+    my (@shape,%shape,%seen);
+    if ( $meth =~ /^oh/i ) {
+	$method = 'ohnolog';
+	foreach my $o ( grep {$_->ohnolog} @orfs ) {	
 	    next if $seen{$o->organism.$o->_internal_id};
-	    push @{ $anc{ $o->ygob } }, [$o, $o->ohnolog];
-	    map { $seen{$_->organism.$_->_internal_id}++ } grep {defined} ($o, $o->ohnolog);	
+	    push @shape, [$o, $o->ohnolog];
+	    map { $seen{$_->organism.$_->_internal_id}++ } grep {defined} ($o, $o->ohnolog);
 	}
-    } elsif (  $args->{'-group_by'} eq 'ortho' ) {
-    } elsif (  $args->{'-group_by'} eq 'species' ) {
+    } elsif ( $meth =~ /^[ort|og]/i ) {
+	$method = 'ogid';
+	foreach my $o ( @orfs ) {	
+	    push @{$shape{$o->ogid}}, $o;
+	}
+    } elsif ( $meth =~ /^fam/i ) {
+	$method = 'family';
+	foreach my $o ( @orfs ) {
+	    push @{$shape{$o->family}}, $o;
+	}
     } else { $self->throw; }  
 
+    @shape = values %shape unless @shape;    
+    %shape = map { $_->[0]->$method => $_ } @shape unless %shape;
+    
+    return ($args->{'-index'} ? \%shape : @shape);
 }
 
 =head2 ohnologComparative
@@ -5590,7 +5727,7 @@ sub families {
 	
         $new_cluster_id++; # create a new cluster 
 	push @{ $clusters{ $new_cluster_id } }, keys %{$index->{$o->name}}; # load all families for this gene
-	foreach my $fam ( grep { exists $clusters{$_} } @{ $clusters{ $new_cluster_id } } ) { # cluster already exists 
+	foreach my $fam ( grep { exists $clusters{$_} } @{ $clusters{ $new_cluster_id } } ) { # already exists 
 	    my $old_cluster_id = $clusters{$fam};
 	    push  @{$clusters{$new_cluster_id}}, @{$clusters{$old_cluster_id}}; # move off all families
 	    delete $clusters{$old_cluster_id}; # destroy old cluster 
@@ -5600,101 +5737,79 @@ sub families {
 	$clusters{$new_cluster_id} = \@uniq;
     }
 
-    map { print $_,$clusters{$_} } grep {!/Anc/} keys %clusters; 
-
     ####    
-    # 2. Gather ORFs and Ancs
+    # 2. Gather ORFs, decompose into OGs and other trusted sub units. Decide within each unit. 
     ####
-
+    
     foreach my $id ( grep {!/Anc/} keys %clusters )  {
-
+	
 	# Get all Orfs assocaited with the cluster 
 	# Get all the Ancs associated with the cluster 
-	my @set;
-	foreach my $x ( @{$clusters{$id}} ) {
-	    push @set, grep { $_->family eq $x } map { @{$_} } values %{$family};
-	}
-	my @uniq_anc = keys %{{ map {$_ => 1} map { ($_->family,$_->ygob) } @set }};
+	my @set = map { @{$family->{$_}} } @{$clusters{$id}};
+	my @uniq_orfs = values %{{ map {$_->name => $_} @set }}; 
+	my @uniq_anc =  keys %{{ map {$_ => 1} map { $_->family } @uniq_orfs }};
 	
-	# Pretty print .. 
-	# syntenyMatrix is pretty amazing for visualization 
-
 	if ( $args->{'-verbose'} >= 2 )  {
+	    my @sort = sort {$a->ogid <=> $b->ogid} @uniq_orfs;
 	    print {STDOUT} ">$id", @{$clusters{$id}},"\n",
-	    (map {$_->sn} @set),"\n",
-	    (map {$_->ygob =~ /(\d+\.\d+)/; $1} @set),"\n",
-	    (map {$_->logscore('ygob')} @set),"\n",
-	    (map {$_->hypergob} @set),"\n",
-	    (map {$_->ogid} @set);	    
-	    $self->syntenyMatrix(
-		-orfs => \@set,
-		-mode => 'ortho',
-		-verbose => 1,
-		-ascii => 1
-		);
+	    (map {$_->sn} @sort),"\n",
+	    (map {$_->ygob =~ /(\d+\.\d+)/; $1} @sort),"\n",
+	    (map {$_->logscore('ygob')} @sort),"\n",
+	    (map {$_->hypergob} @sort),"\n",
+	    (map {$_->ogid} @sort);	    
 	}
-	
-	####
-	# 3. Iterate and test Ancs
-	####
-	
-	my $group = $self->group(-orfs => \@set, -by => 'ogid', -basic => 1);
+
+	# Decompose into OGs... then iterate  
+
+	my $group = $self->shape(-orfs => \@uniq_orfs, -by => 'ogid', -index => 1);
 
 	foreach my $og ( keys %{$group} ) { # Orthogropus 
+	    my @true_ogs = # For genes not in OGs we try to find some 
+		( $og ? $group->{$og} : $self->groupBySynteny(-orfs => $group->{$og}));
 
-	    # calculate the synetny scores 
+	    # Now... iterate on each of the newly defined OGs. 	    
+	    foreach my $sub_og ( @true_ogs ) {
+		$self->throw unless $#{$sub_og} <= scalar($self->bound); 
+		#next unless $#{$sub_og} >= 0;
 
-	    my %score;
-	    foreach my $anc ( @uniq_anc ) {
-		foreach my $o (  @{ $group->{$og} } ) { 
-		    my $store = $o->ygob;
-		    $o->data('YGOB' => $anc);
-		    $score{$anc}{'HYPER'}+=$o->hypergob;
-		    $score{$anc}{'LOSS'}+=$o->loss;
-		    $o->data('YGOB' => $store);
-		}
-	    }
+		# calculate the synetny scores 
+		# under alternative Anc assignments 
 
-	    # sort to get the best scoring Anc genes 
-
-	    my ($hyper,$h2) = sort { $score{$b}{'HYPER'} <=> $score{$a}{'HYPER'} } keys %score;
-	    my ($loss,$l2) = sort { $score{$b}{'LOSS'} <=> $score{$a}{'LOSS'} } keys %score;
-	    my $delta = $score{$hyper}{'HYPER'} - $score{$h2}{'HYPER'};
-	    
-	    # Decide whether or not to update 'family'
-
-	    if ( scalar(@{$group->{$og}}) <= scalar($self->bound)+1 ) {		
-		my $new;
-		if ( $delta/ scalar(@{$group->{$og}}) > 2 ) { # 2 is made up 
-		    $new = $hyper;
-		} else {
-		    my %count;
-		    map { $count{$_->family}++ } @{$group->{$og}};
-		    ($new) = sort {$count{$b} <=> $count{$a}} keys %count; 
-		}
-		map { $_->family(-set => $new) } map { $_->family(-set => undef); $_ }  @{$group->{$og}};		
-		
-		# Is there another orthogroup to get ? 
-		
-		my ($ref) = grep { $_->organism eq $self->organism } @{$group->{$og}};
-		if ( $ref && ! $ref->ogid ) {
-		    my @other = grep {$_ ne $ref} @{$group->{$og}};
-		    if ( scalar(@other) == scalar($self->bound) ) { 
-			$ref->_define_orthogroup( 
-			    -object => \@other,
-			    -kaks => 0,
-			    -sowh => 0,
-			    -verbose => 1
-			    );
+		my %score;
+		foreach my $anc ( grep { defined } @uniq_anc ) {
+		    foreach my $o ( @{ $sub_og } ) { 
+			my $store = $o->ygob;
+			$o->data('YGOB' => $anc);
+			$score{$anc}{'HYPER'}+=$o->hypergob;
+			$score{$anc}{'LOSS'}+=$o->loss;
+			$o->data('YGOB' => $store);
 		    }
 		}
-	    } else {
-		# I think I letting one get away here.
-		# Anc_5.396 / Anc_5.395 -- HXTs
+
+		# sort to get the best scoring Anc genes 
+
+		my ($hyper,$h2) = sort { $score{$b}{'HYPER'} <=> $score{$a}{'HYPER'} } keys %score;
+		my ($loss,$l2) = sort { $score{$b}{'LOSS'} <=> $score{$a}{'LOSS'} } keys %score;
+		my $delta = $score{$hyper}{'HYPER'} - $score{$h2}{'HYPER'};
+		
+		# Decide whether or not to update 'family'
+		
+		my $new;
+		if ( $delta/scalar( @{$sub_og} ) > 2 ) { # 2 is made up 
+		    $new = $hyper;
+		} else { # just do random voting.. 
+		    my %count;
+		    map { $count{$_->family}++ } grep {$_->family} @{$group->{$og}};
+		    ($new) = sort {$count{$b} <=> $count{$a}} keys %count; 
+		}
+		
+		# make the updates 
+		
+		map { $_->family(-set => $new) } map { $_->family(-set => undef); $_ }  @{$group->{$og}};
 	    }
 	}
     }
-    
+
     my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'family', -verbose => 1);
     foreach my $fam ( keys %{$family} ) {
 	foreach my $o ( @{ $family->{$fam} } ) {
