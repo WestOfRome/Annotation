@@ -5618,7 +5618,7 @@ sub output {
 	    $self->ygob, $self->logscore('ygob'),
 	    $self->sgd, $self->logscore('sgd'),
 	    $self->loss, $self->hypergob, $self->pillarscore,
-	    ($self->ohnolog ? ($self->ohnolog->sn, $self->score('ohno')) : (undef,undef)),
+	    ($self->ohnolog ? ($self->ohnolog->sn, $self->score('ohno')) : ('NoOhno','NoOhno')),
 	    $self->ogid, $self->quality()
 	    );
 	
