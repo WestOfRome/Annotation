@@ -598,7 +598,7 @@ sub ohnolog {
 	    my $key =  '__'.$attr; # it is a score so gets '__'
 	    $self->data( $key => ( ! $args->{'-object'} ? undef : $args->{'-score'}) );
 	    if ( my $ohno = $self->ohnolog ) {
-	    $ohno->data( $key => ( ! $args->{'-object'} ? undef : $args->{'-score'}) );
+		$ohno->data( $key => ( ! $args->{'-object'} ? undef : $args->{'-score'}) );
 	    }
 	}
     }
@@ -1677,7 +1677,7 @@ sub show {
 
     Draft version. Prints basic info and the chosen data('KEY').
     Copies to allele/Anna/Gene.svg for viewing. Use -tag to 
-    append addtional identifier info.
+    append addtional identifier info to file name.
 
 =cut
 
@@ -5619,13 +5619,14 @@ sub output {
     } elsif ( $args->{'-quality'} ) {
 
 	@r=(
-	    $self->name, $self->gene, $self->logscore('gene'),
-	    $self->ygob, $self->logscore('ygob'),
+	    $self->sn, $self->ogid, $self->data('KAKS'),(map {/Anc_(\d+\.\d+)/; 'A'.$1} $self->family),
+	    (map {/Anc_(\d+\.\d+)/; 'A'.$1} $self->ygob), $self->logscore('ygob'),
+	    $self->gene, $self->logscore('gene'),
 	    $self->sgd, $self->logscore('sgd'),
 	    $self->loss, $self->hypergob, $self->pillarscore,
 	    ($self->ohnolog ? ('*'.$self->ohnolog->sn, $self->score('ohno'),$self->ohnolog->ogid) : (('NoOhno')x3) ),
-	    $self->ogid, $self->family, (($self->quality())[1..3] || (('NoOG')x3) )
-    );
+	    ($self->quality ? ($self->quality) : (('NoOG')x4) )
+	    );
 	
     } elsif ( $args->{'-dump'} ) {
 	$self->oliver;
@@ -5709,6 +5710,24 @@ sub output {
     delete $args->{'-prepend'};
     map($_->output(%{$args}), $self->stream) if ($self->exons > 1 && $args->{'-recurse'});
     
+    return $self;
+}
+
+=head2 _dissolve_ohnolog
+=cut 
+
+sub _dissolve_ohnolog {
+    my $self = shift;
+    my $args = {@_};
+   
+    $args->{'-verbose'}=1 unless exists  $args->{'-verbose'};
+    
+    $self->throw unless my $oh = $self->ohnolog;
+    
+    # electing to leave the data on the data hash for now. 
+    
+    $self->ohnolog( -object => undef );
+    $self->throw if $self->ohnolog || $oh->ohnolog;
     return $self;
 }
 
