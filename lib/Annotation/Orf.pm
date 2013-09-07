@@ -1675,7 +1675,7 @@ sub show {
 
 =head2 glyph(-print => KEY, -tag => undef)
 
-    Draft version. Prints basic info and the chose data('KEY').
+    Draft version. Prints basic info and the chosen data('KEY').
     Copies to allele/Anna/Gene.svg for viewing. Use -tag to 
     append addtional identifier info.
 
@@ -1760,19 +1760,24 @@ sub glyph {
 	$im->string($font, ($obj->start + $w_off)/$mod, $h_off, $text, $black);
     }
 
+    # make a file in the working dir 
 
     my $fileid = $self->name.($args->{'-tag'} ? '_'.$args->{'-tag'} : undef).".svg";
-    my $svg = "/Library/WebServer/Documents/Anna/".$fileid;
-    my $current = "/Library/WebServer/Documents/Anna/current.svg";
-    chomp(my $host = `hostname`);
-
     open(SVG, ">$fileid");
     print SVG $im->svg;
     close(SVG);
-    system("cp $fileid $svg");
-    system("cp $fileid $current");
 
-    return ( -e $svg ? $host."/Anna/$fileid" : undef);
+    # if on a non-local server, put in web dir so I can look at it 
+
+    chomp(my $host = `hostname`);
+    if ( $host !~ /local/ ) {
+	my $svg = "/Library/WebServer/Documents/Anna/".$fileid;
+	my $current = "/Library/WebServer/Documents/Anna/current.svg";
+	system("cp $fileid $svg");
+	system("cp $fileid $current");
+    }
+
+    return ( $host !~ /local/ ? $host."/Anna/$fileid" : undef);
 }
 
 =head2 combinations( -object => [orfs], -overlap => undef ) 
@@ -5612,15 +5617,15 @@ sub output {
 	@r=( $self->name,$self->start,$self->stop,$self->strand,$self->assign,$self->gene);
 	
     } elsif ( $args->{'-quality'} ) {
-	
+
 	@r=(
 	    $self->name, $self->gene, $self->logscore('gene'),
 	    $self->ygob, $self->logscore('ygob'),
 	    $self->sgd, $self->logscore('sgd'),
 	    $self->loss, $self->hypergob, $self->pillarscore,
-	    ($self->ohnolog ? ($self->ohnolog->sn, $self->score('ohno')) : ('NoOhno','NoOhno')),
-	    $self->ogid, $self->quality()
-	    );
+	    ($self->ohnolog ? ('*'.$self->ohnolog->sn, $self->score('ohno'),$self->ohnolog->ogid) : (('NoOhno')x3) ),
+	    $self->ogid, $self->family, (($self->quality())[1..3] || (('NoOG')x3) )
+    );
 	
     } elsif ( $args->{'-dump'} ) {
 	$self->oliver;
