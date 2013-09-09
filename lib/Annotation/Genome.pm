@@ -2554,20 +2554,19 @@ sub ohnologComparative2 {
     my $anc = $self->consistentFamilies(
 	#-synteny_min => 1,
 	#-evalue_max => 10,
-	-group_by => undef,
+	-group_by => 'ohno',
 	-verbose => 1
 	);
 
     foreach my $fam (keys %{$anc} ) {
-	$count{ $#{$anc->{$fam}} }++;
-
-	#my @ok = sort map { join(':', $_->[0]->organism, $#{$_}) } @{ $anc->{$fam} };
-	#print @ok;
-        #$count{  join('+',@ok) }++;
+	#$count{ $#{$anc->{$fam}} }++;
+	my @ok = sort map { join(':', ($_->[0]->organism, ($_->[1] ? 2 : 1))) } @{ $anc->{$fam} };
+	#print $fam,  $#{$anc->{$fam}}, $anc->{$fam}->[0], $#{$anc->{$fam}->[0]}, @ok;
+        $count{  join('+', (map {s/^\w+\://; $_} @ok) ) }++;
     }
 
     foreach my $x ( sort {$count{$b} <=> $count{$a} } keys %count ) {
-	print $x, $count{$x};
+	print {STDOUT} $x, $count{$x} if ($x =~ /2/ && $count{$x} > 1);
     }
     
     exit;
@@ -3018,11 +3017,12 @@ sub shape {
     my (@shape,%shape,%seen);
     if ( $meth =~ /^oh/i ) {
 	$method = 'ohnolog';
-	foreach my $o ( grep {$_->ohnolog} @orfs ) {	
-	    next if $seen{$o->organism.$o->_internal_id};
+	foreach my $o ( @orfs ) {	
+	    next if $seen{$o->unique};
 	    push @shape, [$o, $o->ohnolog];
-	    map { $seen{$_->organism.$_->_internal_id}++ } grep {defined} ($o, $o->ohnolog);
+	    map { $seen{$_->unique}++ } grep {defined} ($o, $o->ohnolog);
 	}
+	#%shape = map { $_->[0]->$method => $_ } @shape unless %shape;
     } elsif ( $meth =~ /^[ort|og]/i ) {
 	$method = 'ogid';
 	foreach my $o ( @orfs ) {	
@@ -3036,9 +3036,8 @@ sub shape {
     } else { $self->throw; }  
 
     @shape = values %shape unless @shape;    
-    %shape = map { $_->[0]->$method => $_ } @shape unless %shape;
     
-    return ($args->{'-index'} ? \%shape : @shape);
+    return ($args->{'-index'} ? \%shape : \@shape);
 }
 
 =head2 ohnologComparative
@@ -5953,7 +5952,11 @@ sub consistentFamilies {
 
     if ( $args->{'-group_by'} ) {
 	foreach my $fam ( keys %{$family} ) {
-	    $family->{ $fam } = $self->shape(-orfs => $family->{$fam}, -by => $args->{'-group_by'});
+	    $family->{ $fam } = $self->shape(
+		-orfs => $family->{$fam}, 
+		-by => $args->{'-group_by'},
+		-index => 0
+		);
 	}
     }
 
