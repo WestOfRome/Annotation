@@ -2618,7 +2618,7 @@ sub ohnologComparative2 {
 		  -clean => 1
 	      );
 	  
-	  if (1==0) { 
+
 	      my ($pval,$percentile) = 
 		  $self->_alignSisterRands(
 		      -gene1 => $x,
@@ -2628,9 +2628,9 @@ sub ohnologComparative2 {
 		      -window => $args->{'-window'},
 		      -score => $score
 		  );
-	  }
+
 	  
-	  print $anc, $sp, $sp{$sp}{'OHNO'}, 
+	  print $fam, $sp, $sp{$sp}{'OHNO'}, 
 	  $x->sn, $y->sn, $x->family, $y->family, 
 	  $pval, $percentile, $score;	    
 	  $x->ohnolog( $y );
