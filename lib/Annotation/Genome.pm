@@ -2536,7 +2536,10 @@ sub ohnologComparative2 {
     $args->{'-orthogroup'} = 1 unless exists $args->{'-orthogroup'};
     $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
-    
+
+    $args->{'-replicates'} = 20 unless exists $args->{'-replicates'};    
+    $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
+
     my $fherr = STDERR;
     my $fh = STDOUT;
     my $species_count= scalar($self->bound)+1;
@@ -2558,19 +2561,22 @@ sub ohnologComparative2 {
 	-verbose => 1
 	);
 
+    # temporary code ...
+
     foreach my $fam (keys %{$anc} ) {
 	#$count{ $#{$anc->{$fam}} }++;
 	my @ok = sort map { join(':', ($_->[0]->organism, ($_->[1] ? 2 : 1))) } @{ $anc->{$fam} };
 	#print $fam,  $#{$anc->{$fam}}, $anc->{$fam}->[0], $#{$anc->{$fam}->[0]}, @ok;
-        $count{  join('+', (map {s/^\w+\://; $_} @ok) ) }++;
+        $count{  join('+', (map {s/(^\w+\:)/\1/; $_} @ok) ) }++;	
     }
 
     foreach my $x ( sort {$count{$b} <=> $count{$a} } keys %count ) {
-	print {STDOUT} $x, $count{$x} if ($x =~ /2/ && $count{$x} > 1);
+	my $sum;
+	map { /(\d+)/;$sum += $1 } split/\+/,$x;
+	next unless $x =~ /2/ && $x =~ /1/ && $sum==10;
+	print {STDOUT} $x, $count{$x};
     }
     
-    exit;
-   
     ################################
     # iterate through each Anc and 
     # look at ohno profile across species 
@@ -2582,90 +2588,62 @@ sub ohnologComparative2 {
     # 2. YGOB pillar mapping quality // data('_PILLAR') [Delta(LOSS)]
     # 3. Ohno quality scores // data('_OHNO') [alignedSisterScore]
     
-    ANC: foreach my $anc ( keys %anc ) {
-	next unless (! defined $args->{'-debug'}) || ($anc eq $args->{'-debug'});
-	next unless scalar( grep {$_->[1]} @{$anc{$anc}} ); # ignore ANCs with 0 ohnologs 
+  ANC: foreach my $fam ( keys %{$anc} ) {
+      next unless (! defined $args->{'-debug'}) || ($fam eq $args->{'-debug'});
+      
+      my %sp;
+      foreach my $pair (  @{ $anc->{$fam} }  ) {
+	  $sp{ $pair->[0]->organism }{'ALL'} += ($pair->[1] ? 2 : 1);	    
+	  $sp{ $pair->[0]->organism }{'OHNO'}++ if $pair->[1];
+      }
+      next unless scalar(keys %sp)==scalar($self->bound)+1;
+      
+      my $count_ohno;
+      foreach my $sp ( keys %sp ) {
+	  next ANC unless $sp{$sp}{'ALL'} == 2;
+	  $count_ohno++ if $sp{$sp}{'OHNO'};
+      }
+      next ANC unless $count_ohno >=2 && $count_ohno<scalar($self->bound)+1;
+      
+	# 
 
-	my @orfs = sort {$a->ogid <=> $b->ogid} grep {defined} map { @{$_} } @{$anc{$anc}};
-
-	########################################################
-	# remove any perfect cases-- all ohnos and orthos agree
-	########################################################
-
-	my %o = map {$_->ogid => $_} grep {$_->orthogroup} @orfs;	
-	foreach my $og ( keys %o ) {
-	    my $ohno = $o{$og}->_ohnolog_consistency;
-	    # -1  => [z,x] // z,x have no ohnologs 
-	    # 0   => [w]   // w has an ohnolog but it is not in an OG 
-	    # 123 => [d,w] // d and w are have ohnologs in the OG 123
-	    if ( scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0 ) {
-		for (my $i=$#orfs; $i >= 0; $i--) {		    
-		    splice(@orfs, $i, 1) if $orfs[$i]->ogid==$og; # || $orfs[$j]->ogid==$og2;
-		}
-	    }
+      foreach my $sp ( grep { ! $sp{$_}{'OHNO'} } keys %sp ) {			 
+	  my ($x,$y) = grep {defined} map {@{$_}} grep { $_->[0]->organism eq $sp } @{ $anc->{$fam} };
+	  my ($align, $score, $hash) =
+	      $x->alignSisterRegions(
+		  -sister => $y,
+		  -ancestor => $fam,
+		  -homology => 'YGOB',
+		  -score => 1, 
+		  -clean => 1
+	      );
+	  
+	  if (1==0) { 
+	      my ($pval,$percentile) = 
+		  $self->_alignSisterRands(
+		      -gene1 => $x,
+		      -gene2 => $y,
+		      -ancestor => $fam, 
+		      -replicates =>  $args->{'-replicates'},
+		      -window => $args->{'-window'},
+		      -score => $score
+		  );
+	  }
+	  
+	  print $anc, $sp, $sp{$sp}{'OHNO'}, 
+	  $x->sn, $y->sn, $x->family, $y->family, 
+	  $pval, $percentile, $score;	    
+	  $x->ohnolog( $y );
 	}
-	next if scalar(@orfs) < $species_count;
-	#print ++$xx, scalar( grep {defined} map { @{$_} } @{$anc{$anc}} ), scalar( @orfs );
-	#next unless scalar(@orfs)==2*$species_count;
-	
-	########################################################
-	# basic validation-- do we have all the info we need to improve ohnos?
-	########################################################
-	
-	# Anc_5.396 / Anc_5.202
-	
-	my $ogIndex = $self->_orthogroup_index();
-	my %orfs = map { $_->name => 1 } @orfs;
-	foreach my $o (@orfs) {
-	    if ( $o->ohnolog ) {
-		$self->throw unless exists $orfs{ $o->ohnolog->name };
-	    }
-	    if ( $o->ogid ) {
-		foreach my $p ( @{ $ogIndex->{$o->ogid} }) {
-		    #$self->throw 
-		    print $anc, 
-		    $o->name, $o->ygob, $o->ogid, 
-		    $p->name, $p->ygob, $p->ogid, 
-		    $o->data('KAKS'), $o->data('SOWH') 
-			unless exists $orfs{ $p->name };
-		    next ANC;
-		}
-	    }
-	}
+      
+      # 
+  }
 
-	next;
+    ########################################################
+    # basic validation-- do we have all the info we need to improve ohnos?
+    ########################################################
 
-	########################################################
-	# we have 2 relationships that we can use to put things in their right place 
-	# 1. synteny relationships 
-	# 2. orthogroup relationships 
-	########################################################
-
-	#####
-	# 1. create a synteny matrix 
-	#####
-
-	my %syn = $self->sisterSyntenyMatrix(
-	    -orfs => @orfs,
-	    -ancestor => $anc
-	    );
-
-	#####
-	# 2. create an ortholog matrix 	
-	#####
-	
-	# scheme: 
-	# go through species in order of ohnolog quality
-	# as we add a new species, check the following: 
-	# 1. test both relationships to the existing sister regions
-	# 2. are we conflicting with ortholog assignments 
-	# 3. are there better ohnologs in same species; 
-	# 4. if no ohnologs, how can we find
-
-
-    } # anc
-    
-    exit;
+    map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
 
     return $self;
 }
@@ -3574,7 +3552,7 @@ sub ohnologs2 {
     my $ohno = scalar( grep { $_->ohnolog } $self->orfs );    
     my $data_key = 'OHNO';
     my ($counter, $count_x, $count_y)=(0,0,0);
-
+    
     #######################################
     # prep work 
     #######################################
@@ -3699,64 +3677,28 @@ sub ohnologs2 {
 	my $g2 =  $sisters{$best}->{G2};
 
 	# get randomization based p-values 
+	# method not tested.. abstracted in a hurry.. 
 	
-	my ($pval,$percentile)=('NA','NA');
-	if ( $args->{'-replicates'} ) {
-	    my @scores;
-	    for my $rep ( 1..$args->{'-replicates'} ) {		
-		my $sample = int(rand($index))+1;
-		my $dummy = $index{$sample};
-		until ( ($dummy->distance(-object => $g1) > $args->{'-window'}*5) && 
-			($dummy->distance(-object => $g2) > $args->{'-window'}*5) ) {
-		    $sample = int(rand($index))+1;
-		    $dummy = $index{$sample};
-		}
-		#$dummy->output;
-		my $store = $dummy->_data;		
-		$dummy->_data( $g2->_data );
-		
-		my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
-		    $g1->alignSisterRegions(
-			-sister => $dummy,
-			-ancestor => $anc,
-			-window => $args->{'-window'},
-			-clean => 1,
-			-score => 1
-		    );
-		#print $score , " ( $sisters{$best}->{SCR} ) ";
-		#&_print_align($align);
-		push @scores, $score;
-		$dummy->_data( $store );		
-	    }
-	    $percentile = &_percentile($sisters{$best}->{SCR}, \@scores);
-	    $pval = ( $percentile==100 ? 1/$args->{'-replicates'} : sprintf("%.3f",(100-$percentile)/100) );	    
-	} 
+	my ($pval,$percentile) = $self->_aignSisterRands( 
+	    -gene1 => $g1,
+	    -gene2 => $g2,
+	    -ancestor => $anc, 
+	    -replicates => $args->{'-replicates'},
+	    -window =>  $args->{'-window'},
+	    -score => $sisters{$best}->{SCR}					  
+	    );
 	
-	# store the evidence even if we do not designate an ohnolog 
-	# actual ohnologs are stored on $self->{OHNOLOG}
-	# hope this doesn't break evidence routines ... 
-	foreach my $o ($g1,$g2) {
-	    $o->accept(
-		$data_key, 		    
-		{
-		    HIT => ( $o eq $g1 ? $g2 : $g1 ), 
-		    EVALUE => $pval, 
-		    SCORE => $sisters{$best}->{SCR}
-		}
-		);
-	}
-
 	# output 
-
+	
 	if ( $args->{'-verbose'} ) {
 	    print ++$count_x, $anc, 
 	    $g1->name, int($g1->hypergob), 
 	    $g2->name, int($g2->hypergob), 
 	    $sisters{$best}->{SCR}, $percentile, $pval;	    
 	}
-
+	
 	# apply cutoff 
-
+	
 	if ( $args->{'-replicates'} ) { next unless $pval <= $args->{'-significance'}; }
 	else { next unless $sisters{$best}->{SCR} >= $args->{'-cutoff'}; }
 	
@@ -3799,7 +3741,73 @@ sub _print_align {
     return 1;
 }
 
+# execute randomizations for 
 
+sub _alignSisterRands {
+    my $self = shift;
+    my $args = {@_};
+    
+    my $g1 = $args->{'-gene1'};
+    my $g2 = $args->{'-gene2'};
+    my $anc = $args->{'-ancestor'};
+    
+    my $data_key = 'OHNO';
+
+    # make an index 
+
+    my %index;
+    my $index;
+    map { $index{ ++$index }=$_ } grep { $_->ygob } map { $_->stream } $self->stream;
+
+    # do randomizations 
+
+    my ($pval,$percentile)=('NA','NA');
+    
+    my @scores;
+    for my $rep ( 1..$args->{'-replicates'} ) {		
+	my $sample = int(rand($index))+1;
+	my $dummy = $index{$sample};
+	until ( ($dummy->distance(-object => $g1) > $args->{'-window'}*5) && 
+		($dummy->distance(-object => $g2) > $args->{'-window'}*5) ) {
+	    $sample = int(rand($index))+1;
+	    $dummy = $index{$sample};
+	}
+	#$dummy->output;
+	my $store = $dummy->_data;		
+	$dummy->_data( $g2->_data );
+	
+	my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
+	    $g1->alignSisterRegions(
+		-sister => $dummy,
+		-ancestor => $anc,
+		-window => $args->{'-window'},
+		-clean => 1,
+		-score => 1
+	    );
+	#&_print_align($align);
+	push @scores, $score;
+	$dummy->_data( $store );		
+    }
+    $percentile = &_percentile($args->{'-score'}, \@scores);
+    $pval = ( $percentile==100 ? 1/$args->{'-replicates'} : sprintf("%.3f",(100-$percentile)/100) );
+    
+    # store the evidence even if we do not designate an ohnolog 
+    # actual ohnologs are stored on $self->{OHNOLOG}
+    # hope this doesn't break evidence routines ... 
+    
+    foreach my $o ($g1,$g2) {
+	$o->accept(
+	    $data_key, 		    
+	    {
+		HIT => ( $o eq $g1 ? $g2 : $g1 ), 
+		EVALUE => $pval, 
+		SCORE => $args->{'-score'}
+	    }
+	    );
+    }
+    
+    return ($pval,$percentile);
+}
 
 =head2 report()
 
