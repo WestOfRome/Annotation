@@ -6089,7 +6089,7 @@ sub accept {
     my $catstar = $cat;
     $catstar =~ s/\*$//;
     
-    $self->throw unless $cat && 
+    $self->throw($cat) unless $cat && 
 	($catstar eq 'GENE' || $catstar eq 'OHNO' || # will OHNO break something?
 	 exists $EVIDENCE{$catstar} || exists $HOMOLOGY{$catstar});
     $self->throw unless $hit && ref($hit) eq 'HASH';
