@@ -2532,14 +2532,24 @@ sub ohnologComparative2 {
     my $self = shift;
     my $args = {@_};
 
-    $self->throw unless $self->bound;
-    $args->{'-orthogroup'} = 1 unless exists $args->{'-orthogroup'};
+    #
     $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
+    # 
+    $args->{'-replicates'} = 50 unless exists $args->{'-replicates'};    
+    $args->{'-significance'} = 0.05 unless exists $args->{'-significance'}; 
+    
+    ################################
+    # QC
+    ################################
+    
+    $self->throw unless $self->bound;
+    $self->throw unless $args->{'-replicates'};
 
-    $args->{'-replicates'} = 20 unless exists $args->{'-replicates'};    
-    $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
-
+    ################################
+    # vars
+    ################################
+    
     my $fherr = STDERR;
     my $fh = STDOUT;
     my $species_count= scalar($self->bound)+1;
@@ -2563,20 +2573,19 @@ sub ohnologComparative2 {
 
     # temporary code ...
 
+    my %count;
     foreach my $fam (keys %{$anc} ) {
-	#$count{ $#{$anc->{$fam}} }++;
 	my @ok = sort map { join(':', ($_->[0]->organism, ($_->[1] ? 2 : 1))) } @{ $anc->{$fam} };
-	#print $fam,  $#{$anc->{$fam}}, $anc->{$fam}->[0], $#{$anc->{$fam}->[0]}, @ok;
         $count{  join('+', (map {s/(^\w+\:)/\1/; $_} @ok) ) }++;	
     }
-
     foreach my $x ( sort {$count{$b} <=> $count{$a} } keys %count ) {
 	my $sum;
 	map { /(\d+)/;$sum += $1 } split/\+/,$x;
 	next unless $x =~ /2/ && $x =~ /1/ && $sum==10;
 	print {STDOUT} $x, $count{$x};
     }
-    
+    exit;
+
     ################################
     # iterate through each Anc and 
     # look at ohno profile across species 
@@ -2618,27 +2627,25 @@ sub ohnologComparative2 {
 		  -clean => 1
 	      );
 	  
-
-	      my ($pval,$percentile) = 
-		  $self->_alignSisterRands(
-		      -gene1 => $x,
-		      -gene2 => $y,
-		      -ancestor => $fam, 
-		      -replicates =>  $args->{'-replicates'},
-		      -window => $args->{'-window'},
-		      -score => $score
-		  );
-
+	  # 
+	  
+	  my ($pval,$percentile) = 
+	      $self->_alignSisterRands(
+		  -gene1 => $x,
+		  -gene2 => $y,
+		  -ancestor => $fam, 
+		  -replicates =>  $args->{'-replicates'},
+		  -score => $score
+	      );
+	  next unless $pval <= $args->{'-significance'};
 	  
 	  print $fam, $sp, $sp{$sp}{'OHNO'}, 
 	  $x->sn, $y->sn, $x->family, $y->family, 
 	  $pval, $percentile, $score;	    
 	  $x->ohnolog( $y );
-	}
-      
-      # 
+      }
   }
-
+    
     ########################################################
     # basic validation-- do we have all the info we need to improve ohnos?
     ########################################################
