@@ -2568,24 +2568,11 @@ sub ohnologComparative2 {
 	#-synteny_min => 1,
 	#-evalue_max => 10,
 	-group_by => 'ohno',
+	-create_og => 1,
 	-verbose => 1
 	);
-
-    # temporary code ...
-
-    my %count;
-    foreach my $fam (keys %{$anc} ) {
-	my @ok = sort map { join(':', ($_->[0]->organism, ($_->[1] ? 2 : 1))) } @{ $anc->{$fam} };
-        $count{  join('+', (map {s/(^\w+\:)/\1/; $_} @ok) ) }++;	
-    }
-    foreach my $x ( sort {$count{$b} <=> $count{$a} } keys %count ) {
-	my $sum;
-	map { /(\d+)/;$sum += $1 } split/\+/,$x;
-	next unless $x =~ /2/ && $x =~ /1/ && $sum==10;
-	print {STDOUT} $x, $count{$x};
-    }
-    exit;
-
+    my $index = $self->_orthogroup_index; # must be done after as we may make new OGs.. 
+    
     ################################
     # iterate through each Anc and 
     # look at ohno profile across species 
@@ -2599,7 +2586,93 @@ sub ohnologComparative2 {
     
   ANC: foreach my $fam ( keys %{$anc} ) {
       next unless (! defined $args->{'-debug'}) || ($fam eq $args->{'-debug'});
+
+      ######################################################################
+      # 1. Leveraging orthogroups
+      ######################################################################
       
+      # the basic premise here is that if any gene is in both an OG and and 
+      # ohno relationship, then we belive that all genes in the OG should be 
+      # in an ohno relationship. Not exactly a null but it is a default. 
+      # We start by finding that one gene that starts the search. 
+
+      my %seen;
+      foreach my $pair ( grep { $_->[0]->ogid || $_->[1]->ogid } # must be OG  
+			 grep { $_->[1] } @{ $anc->{$fam} }  ) { # must be ohno 
+	  map { next if exists $seen{ $_->unique_id } } @{ $pair };
+	  map { ++$seen{ $_->unique_id } } @{ $pair };
+
+	  # make some named vars for us to work with 
+	  
+	  my ($gene) = grep {$_->ogid} @{$pair};
+	  my $check = $gene->_ohnolog_consistency; # do we need this?
+	  # -1  => [z,x] // z,x have no ohnologs 
+	  # 0   => [w]   // w has an ohnolog but it is not in an OG 
+	  # 123 => [d,w] // d and w are have ohnologs in the OG 123
+	  
+	  # go through each gene in the OG
+	  
+	  foreach my $query ( grep { !$_->ohnolog } grep { $_ ne $gene}  @{ $index->{$gene->ogid} } ) {
+	      my %scores;
+	      foreach my $cand ( grep { $_->[0]->organism eq $query->organism }  # species match .. 
+				 grep { ! $_->[1] } @{ $anc->{$fam} } ) {        # not already ohno ..  
+
+		  my ($align, $score, $hash) =
+		      $query->alignSisterRegions(
+			  -sister => $cand,
+			  -ancestor => $fam,
+			  -homology => 'YGOB',
+			  -score => 1, 
+			  -clean => 1
+		      );
+		  # 
+		  my ($pval,$percentile) = 
+		      $self->_alignSisterRands(
+			  -gene1 => $query,
+			  -gene2 => $cand,
+			  -ancestor => $fam, 
+			  -replicates => $args->{'-replicates'},
+			  -score => $score
+		      );
+		  
+		  $scores{ $query->unique_id.'*'.$cand->unique_id } = (
+		      'SCR' => $score,
+		      'PVAL' => $pval,
+		      'PERC' => $percentile,
+		      'GENE' => $cand
+		      ); 
+	      }
+
+	      # 
+	      
+	      my ($best_p,@others) = sort { $scores{$a}{'PVAL'} <=> $scores{$b}{'PVAL'} } keys %scores;
+	      my ($best_s,$second) = sort { $scores{$b}{'SCR'} <=> $scores{$a}{'SCR'} } 
+	      grep { $scores{$_}{'PVAL'}==$scores{$best_p}{'PVAL'} } @others;
+	      
+	      map { print $_, $scores{$_}{'SCR'},$scores{$_}{'PVAL'} } ( $best_p, $best_s, $second);
+	      next;
+	      print $fam, $sp, $sp{$sp}{'OHNO'}, 
+	      $x->sn, $y->sn, $x->family, $y->family, 
+	      $pval, $percentile, $score;	    		  
+	  }	  
+      }
+
+      next;
+
+
+my %o = map {$_->ogid => $_} grep {$_->orthogroup} @orfs;	
+	foreach my $og ( keys %o ) {
+
+	    if ( scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0 ) {
+		for (my $i=$#orfs; $i >= 0; $i--) {		    
+		    splice(@orfs, $i, 1) if $orfs[$i]->ogid==$og; # || $orfs[$j]->ogid==$og2;
+		}
+	    }
+	}
+	next if scalar(@orfs) < $species_count;
+
+      # we require genes in all species (consistent with use of OGs.)
+
       my %sp;
       foreach my $pair (  @{ $anc->{$fam} }  ) {
 	  $sp{ $pair->[0]->organism }{'ALL'} += ($pair->[1] ? 2 : 1);	    
@@ -2607,45 +2680,46 @@ sub ohnologComparative2 {
       }
       next unless scalar(keys %sp)==scalar($self->bound)+1;
       
+      # require >= 2 genes in all species because we are leveraging orthogroup. 
+      
       my $count_ohno;
       foreach my $sp ( keys %sp ) {
-	  next ANC unless $sp{$sp}{'ALL'} == 2;
+	  next ANC unless $sp{$sp}{'ALL'} >= 2;
 	  $count_ohno++ if $sp{$sp}{'OHNO'};
       }
-      next ANC unless $count_ohno >=2 && $count_ohno<scalar($self->bound)+1;
+
+      # we require at least one pre-existing ohnos in one species. 
+      # we are not doing de novo ohnologs -- this is comparative. 
+
+      next ANC unless $count_ohno >=1; 
+      my @ok = sort map { join(':', ($_->[0]->organism, ($_->[1] ? 2 : 1))) } @{ $anc->{$fam} };
+      $count{  join('+', (map {s/(^\w+\:)/\1/; $_} @ok) ) }++;	
+
+      # as long as we are using OGs, we are limited by min species. 
+      # so get the limit. cycle through OG elements and start testing. 
       
+      my ( $min ) = sort { $sp{$a}{'ALL'} <=> $sp{$b}{'ALL'} } keys %sp;
+      my $ohno_target = $sp{ $min }{ 'ALL' };
+      foreach my $oh ( @{ $anc->{$fam} } ) {
+	  
+      }
+
+      next;
+
 	# 
 
       foreach my $sp ( grep { ! $sp{$_}{'OHNO'} } keys %sp ) {			 
 	  my ($x,$y) = grep {defined} map {@{$_}} grep { $_->[0]->organism eq $sp } @{ $anc->{$fam} };
-	  my ($align, $score, $hash) =
-	      $x->alignSisterRegions(
-		  -sister => $y,
-		  -ancestor => $fam,
-		  -homology => 'YGOB',
-		  -score => 1, 
-		  -clean => 1
-	      );
-	  
-	  # 
-	  
-	  my ($pval,$percentile) = 
-	      $self->_alignSisterRands(
-		  -gene1 => $x,
-		  -gene2 => $y,
-		  -ancestor => $fam, 
-		  -replicates =>  $args->{'-replicates'},
-		  -score => $score
-	      );
-	  next unless $pval <= $args->{'-significance'};
-	  
-	  print $fam, $sp, $sp{$sp}{'OHNO'}, 
-	  $x->sn, $y->sn, $x->family, $y->family, 
-	  $pval, $percentile, $score;	    
+
 	  $x->ohnolog( $y );
       }
   }
-    
+
+
+    foreach my $k ( sort {$count{$b} <=> $count{$a} } keys %count ) {
+	print $k, $count{$k};
+    }
+
     ########################################################
     # basic validation-- do we have all the info we need to improve ohnos?
     ########################################################
@@ -2656,14 +2730,14 @@ sub ohnologComparative2 {
 }
 
 =head2 syntenyMatrix(-orfs => [], -ancestor => 'Anc_1.23', 
-    -verbose => 0)
-
+    -mode => 'o[rtholog]|p[aralog]', -verbose => 0)
+    
     Create a matrix of sysnteny scores between all pairs of 
     genes using alignSisterRegions. Alignments are built around
     -ancestor. 
     
     With -verbose will ouptut to screen. 
-
+    
 =cut 
 
 sub syntenyMatrix {
@@ -2894,7 +2968,7 @@ sub _orthogroup_index {
     my $self = shift;
     
     my %index = map { $_->ogid => [$_->_orthogroup] } grep { $_->ogid } $self->orfs;
-
+    
     return \%index;
 }
 
@@ -3003,9 +3077,9 @@ sub shape {
     if ( $meth =~ /^oh/i ) {
 	$method = 'ohnolog';
 	foreach my $o ( @orfs ) {	
-	    next if $seen{$o->unique};
+	    next if $seen{$o->unique_id};
 	    push @shape, [$o, $o->ohnolog];
-	    map { $seen{$_->unique}++ } grep {defined} ($o, $o->ohnolog);
+	    map { $seen{$_->unique_id}++ } grep {defined} ($o, $o->ohnolog);
 	}
 	#%shape = map { $_->[0]->$method => $_ } @shape unless %shape;
     } elsif ( $meth =~ /^[ort|og]/i ) {
@@ -5676,8 +5750,8 @@ sub consistentFamilies {
     $args->{'-evalue_max'} = 10 unless exists $args->{'-evalue_max'};
     $args->{'-synteny_min'} = 0.5 unless exists $args->{'-synteny_min'};
     # phase 1 
-    $args->{'-gene_min'} = 10 unless exists $args->{'-gene_min'};
     $args->{'-overwrite'} = undef unless exists $args->{'-overwrite'};
+    $args->{'-gene_min'} = 10 unless exists $args->{'-gene_min'};
     # phase 2 
     $args->{'-create_og'} = 1 unless exists $args->{'-create_og'};
     $args->{'-og_min'} = 5 unless exists $args->{'-og_min'};
