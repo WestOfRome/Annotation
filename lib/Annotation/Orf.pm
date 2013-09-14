@@ -5527,13 +5527,13 @@ sub shortname {
 
 sub sn { return $_[0]->shortname; }
 
-=head2 unique
+=head2 unique_id
 
     Return a unique stable id.
 
 =cut
 
-sub unique {
+sub unique_id {
     my $self = shift;
     return $self->organism.'+'.$self->_internal_id;
 }
