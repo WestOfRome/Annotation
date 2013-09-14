@@ -2553,7 +2553,8 @@ sub ohnologComparative2 {
     my $fherr = STDERR;
     my $fh = STDOUT;
     my $species_count= scalar($self->bound)+1;
-
+    my $data_key = 'OHNO';
+    
     ################################
     # random output -- legacy 
     ################################
@@ -2587,35 +2588,39 @@ sub ohnologComparative2 {
   ANC: foreach my $fam ( keys %{$anc} ) {
       next unless (! defined $args->{'-debug'}) || ($fam eq $args->{'-debug'});
 
+      # avoid some work
+      
+      my ($count_ohno,$count_all);
+      foreach my $pair (  @{ $anc->{$fam} }  ) {
+	  $count_ohno++ if $pair->[1];
+	  $count_all += ($pair->[1] ? 2 : 1);
+      }
+      next if $count_ohno==0 || $count_ohno==$count_all/2;
+
       ######################################################################
       # 1. Leveraging orthogroups
       ######################################################################
       
       # the basic premise here is that if any gene is in both an OG and and 
       # ohno relationship, then we belive that all genes in the OG should be 
-      # in an ohno relationship. Not exactly a null but it is a default. 
+      # in an ohno relationship. We test that assumption. 
       # We start by finding that one gene that starts the search. 
-
+      
       my %seen;
       foreach my $pair ( grep { $_->[0]->ogid || $_->[1]->ogid } # must be OG  
 			 grep { $_->[1] } @{ $anc->{$fam} }  ) { # must be ohno 
 	  map { next if exists $seen{ $_->unique_id } } @{ $pair };
-	  map { ++$seen{ $_->unique_id } } @{ $pair };
-
-	  # make some named vars for us to work with 
-	  
-	  my ($gene) = grep {$_->ogid} @{$pair};
-	  my $check = $gene->_ohnolog_consistency; # do we need this?
-	  # -1  => [z,x] // z,x have no ohnologs 
-	  # 0   => [w]   // w has an ohnolog but it is not in an OG 
-	  # 123 => [d,w] // d and w are have ohnologs in the OG 123
+	  map { $seen{ $_->unique_id }++ } @{ $pair };
 	  
 	  # go through each gene in the OG
 	  
+	  my ($gene) = grep {$_->ogid} @{$pair};	  
 	  foreach my $query ( grep { !$_->ohnolog } grep { $_ ne $gene}  @{ $index->{$gene->ogid} } ) {
 	      my %scores;
-	      foreach my $cand ( grep { $_->[0]->organism eq $query->organism }  # species match .. 
-				 grep { ! $_->[1] } @{ $anc->{$fam} } ) {        # not already ohno ..  
+	      foreach my $cand ( grep { $_->organism eq $query->organism }  # species match .. 
+				 map {$_->[0]} grep { ! $_->[1] } @{ $anc->{$fam} } ) { # not ohno ..  
+		  next if exists $seen{ $cand->unique_id };
+		  $seen{ $cand->unique_id }++;
 
 		  my ($align, $score, $hash) =
 		      $query->alignSisterRegions(
@@ -2635,91 +2640,76 @@ sub ohnologComparative2 {
 			  -score => $score
 		      );
 		  
-		  $scores{ $query->unique_id.'*'.$cand->unique_id } = (
+		  $scores{ $query->unique_id.'*'.$cand->unique_id } = {
 		      'SCR' => $score,
 		      'PVAL' => $pval,
 		      'PERC' => $percentile,
 		      'GENE' => $cand
-		      ); 
+		  }; 
 	      }
+	      next unless %scores;
+
+	      # pick a winner.
+	      # TBD : this is currently different to orthologs2()
+	      # which chooses based on score then applies a p-value cutoff. 
+	      # this seems more sensible but need to think more then unify.
+	      # In general, the code is pretty simlar and should probably be 
+	      # abstracted. 
+
+	      my ($best_p,@others) = sort { $scores{$a}->{'PVAL'} <=> 
+						$scores{$b}->{'PVAL'} } keys %scores;
+	      my ($best_s,$second) = sort { $scores{$b}->{'SCR'} <=> $scores{$a}->{'SCR'} } 
+	      grep { $scores{$_}->{'PVAL'}==$scores{$best_p}->{'PVAL'} } @others;
 
 	      # 
 	      
-	      my ($best_p,@others) = sort { $scores{$a}{'PVAL'} <=> $scores{$b}{'PVAL'} } keys %scores;
-	      my ($best_s,$second) = sort { $scores{$b}{'SCR'} <=> $scores{$a}{'SCR'} } 
-	      grep { $scores{$_}{'PVAL'}==$scores{$best_p}{'PVAL'} } @others;
+	      if ( $args->{'-verbose'} >= 2 ) {
+		  $gene->output(-qc=>1, -prepend => [">$fam", $query->sn]);	      
+		  map { print $_, $scores{$_}->{'SCR'},$scores{$_}->{'PVAL'} } ( $best_s, $second);
+	      }
+	      next unless $scores{$best_p}->{'PVAL'} <= $args->{'-significance'};
+	      next if $scores{$second}->{'SCR'} == $scores{$best_s}->{'SCR'}; # this is unfortunate
+
+	      # set evidence and make the ohnolog pair 
+
+	      my $best = $scores{$best_s}->{'GENE'};	      
+	      foreach my $o ($query, $best) {
+		  $o->accept( $data_key,  
+			      {		      
+				  'HIT' => ( $o eq $query ? $best : $query ), 
+				  'EVALUE' => $scores{$best_s}->{'PVAL'},
+				  'SCORE' => $scores{$best_s}->{'SCR'}
+			      }
+		      );
+	      }
+	      $query->ohnolog( $best );
 	      
-	      map { print $_, $scores{$_}{'SCR'},$scores{$_}{'PVAL'} } ( $best_p, $best_s, $second);
-	      next;
-	      print $fam, $sp, $sp{$sp}{'OHNO'}, 
-	      $x->sn, $y->sn, $x->family, $y->family, 
-	      $pval, $percentile, $score;	    		  
-	  }	  
+	      # 
+	      
+	      print $fam, $gene->sn, $query->sn, $best->sn,
+	      $query->family, $best->family, 
+	      $query->evalue('ohno'), $query->evalue('score');
+	  } # query 
+      } # pair loop
+
+      foreach my $ogx ( grep { $_->orthogroup } grep {defined} map {@{$_}} @{ $anc->{$fam} } ) {
+	  my $check = $ogx->_ohnolog_consistency; # do we need this?
+	  # -1  => [z,x] // z,x have no ohnologs 
+	  # 0   => [w]   // w has an ohnolog but it is not in an OG 
+	  # 123 => [d,w] // d and w are have ohnologs in the OG 123
+	  print map { "$_:$#{$check->{$_}}" } sort keys %{$check};
+	  my (@ogs) = grep { $_ >0 } sort keys %{$check};
+	  $self->throw( scalar(@ogs) ) unless $#ogs<1;
       }
 
-      next;
-
-
-my %o = map {$_->ogid => $_} grep {$_->orthogroup} @orfs;	
-	foreach my $og ( keys %o ) {
-
-	    if ( scalar(keys %{$ohno})==1 && (keys %{$ohno})[0] != 0 ) {
-		for (my $i=$#orfs; $i >= 0; $i--) {		    
-		    splice(@orfs, $i, 1) if $orfs[$i]->ogid==$og; # || $orfs[$j]->ogid==$og2;
-		}
-	    }
-	}
-	next if scalar(@orfs) < $species_count;
-
-      # we require genes in all species (consistent with use of OGs.)
-
-      my %sp;
-      foreach my $pair (  @{ $anc->{$fam} }  ) {
-	  $sp{ $pair->[0]->organism }{'ALL'} += ($pair->[1] ? 2 : 1);	    
-	  $sp{ $pair->[0]->organism }{'OHNO'}++ if $pair->[1];
-      }
-      next unless scalar(keys %sp)==scalar($self->bound)+1;
-      
-      # require >= 2 genes in all species because we are leveraging orthogroup. 
-      
-      my $count_ohno;
-      foreach my $sp ( keys %sp ) {
-	  next ANC unless $sp{$sp}{'ALL'} >= 2;
-	  $count_ohno++ if $sp{$sp}{'OHNO'};
-      }
-
-      # we require at least one pre-existing ohnos in one species. 
-      # we are not doing de novo ohnologs -- this is comparative. 
-
-      next ANC unless $count_ohno >=1; 
-      my @ok = sort map { join(':', ($_->[0]->organism, ($_->[1] ? 2 : 1))) } @{ $anc->{$fam} };
-      $count{  join('+', (map {s/(^\w+\:)/\1/; $_} @ok) ) }++;	
-
-      # as long as we are using OGs, we are limited by min species. 
-      # so get the limit. cycle through OG elements and start testing. 
-      
-      my ( $min ) = sort { $sp{$a}{'ALL'} <=> $sp{$b}{'ALL'} } keys %sp;
-      my $ohno_target = $sp{ $min }{ 'ALL' };
-      foreach my $oh ( @{ $anc->{$fam} } ) {
-	  
-      }
-
-      next;
-
-	# 
-
-      foreach my $sp ( grep { ! $sp{$_}{'OHNO'} } keys %sp ) {			 
-	  my ($x,$y) = grep {defined} map {@{$_}} grep { $_->[0]->organism eq $sp } @{ $anc->{$fam} };
-
-	  $x->ohnolog( $y );
-      }
-  }
-
-
+  } # Family / Anc 
+    
+    next;
+    
     foreach my $k ( sort {$count{$b} <=> $count{$a} } keys %count ) {
 	print $k, $count{$k};
     }
-
+    
     ########################################################
     # basic validation-- do we have all the info we need to improve ohnos?
     ########################################################
@@ -3760,7 +3750,7 @@ sub ohnologs2 {
 	# get randomization based p-values 
 	# method not tested.. abstracted in a hurry.. 
 	
-	my ($pval,$percentile) = $self->_aignSisterRands( 
+	my ($pval,$percentile) = $self->_alignSisterRands( 
 	    -gene1 => $g1,
 	    -gene2 => $g2,
 	    -ancestor => $anc, 
@@ -3783,6 +3773,23 @@ sub ohnologs2 {
 	if ( $args->{'-replicates'} ) { next unless $pval <= $args->{'-significance'}; }
 	else { next unless $sisters{$best}->{SCR} >= $args->{'-cutoff'}; }
 	
+	# store evidence 
+
+    # store the evidence even if we do not designate an ohnolog 
+    # actual ohnologs are stored on $self->{OHNOLOG}
+    # hope this doesn't break evidence routines ... 
+    
+    foreach my $o ($g1,$g2) {
+	$o->accept(
+	    $data_key, 		    
+	    {
+		HIT => ( $o eq $g1 ? $g2 : $g1 ), 
+		EVALUE => $pval, 
+		SCORE => $args->{'-score'}
+	    }
+	    );
+    }
+    
 	$g1->ohnolog( $g2 ); # we set reciprocals automatically	    
 	print {STDERR} $anc, $count_x, ++$count_y, (time-$time).'s',
 	$g1->name, $g2->name, $sisters{$best}->{SCR},$args->{'-replicates'},$percentile, $pval;
@@ -3872,21 +3879,7 @@ sub _alignSisterRands {
     $percentile = &_percentile($args->{'-score'}, \@scores);
     $pval = ( $percentile==100 ? 1/$args->{'-replicates'} : sprintf("%.3f",(100-$percentile)/100) );
     
-    # store the evidence even if we do not designate an ohnolog 
-    # actual ohnologs are stored on $self->{OHNOLOG}
-    # hope this doesn't break evidence routines ... 
-    
-    foreach my $o ($g1,$g2) {
-	$o->accept(
-	    $data_key, 		    
-	    {
-		HIT => ( $o eq $g1 ? $g2 : $g1 ), 
-		EVALUE => $pval, 
-		SCORE => $args->{'-score'}
-	    }
-	    );
-    }
-    
+
     return ($pval,$percentile);
 }
 
