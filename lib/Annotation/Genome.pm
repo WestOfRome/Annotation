@@ -2617,7 +2617,8 @@ sub ohnologComparative2 {
 	  my ($gene) = grep {$_->ogid} @{$pair};	  
 	  foreach my $query ( grep { !$_->ohnolog } grep { $_ ne $gene}  @{ $index->{$gene->ogid} } ) {
 	      my %scores;
-	      foreach my $cand ( grep { $_->organism eq $query->organism }  # species match .. 
+	      foreach my $cand ( grep { $_->organism eq $query->organism } # right species 
+				 grep {$_ ne $query} # not self ...
 				 map {$_->[0]} grep { ! $_->[1] } @{ $anc->{$fam} } ) { # not ohno ..  
 		  next if exists $seen{ $cand->unique_id };
 		  $seen{ $cand->unique_id }++;
@@ -2646,9 +2647,10 @@ sub ohnologComparative2 {
 		      'PERC' => $percentile,
 		      'GENE' => $cand
 		  }; 
+		  #print '#', $cand->sn, $scores{ $query->unique_id.'*'.$cand->unique_id }->{PVAL};
 	      }
 	      next unless %scores;
-
+	      
 	      # pick a winner.
 	      # TBD : this is currently different to orthologs2()
 	      # which chooses based on score then applies a p-value cutoff. 
@@ -2656,23 +2658,26 @@ sub ohnologComparative2 {
 	      # In general, the code is pretty simlar and should probably be 
 	      # abstracted. 
 
-	      my ($best_p,@others) = sort { $scores{$a}->{'PVAL'} <=> 
+	      my ($best_p, @others)= sort { $scores{$a}->{'PVAL'} <=> 
 						$scores{$b}->{'PVAL'} } keys %scores;
 	      my ($best_s,$second) = sort { $scores{$b}->{'SCR'} <=> $scores{$a}->{'SCR'} } 
-	      grep { $scores{$_}->{'PVAL'}==$scores{$best_p}->{'PVAL'} } @others;
-
+	      grep { $scores{$_}->{'PVAL'}==$scores{$best_p}->{'PVAL'} } keys %scores;
+	      $self->throw( join( '_', keys %scores ) ) unless $best_s;
+	      
 	      # 
 	      
 	      if ( $args->{'-verbose'} >= 2 ) {
-		  $gene->output(-qc=>1, -prepend => [">$fam", $query->sn]);	      
-		  map { print $_, $scores{$_}->{'SCR'},$scores{$_}->{'PVAL'} } ( $best_s, $second);
+		  $gene->output(-qc=>1, -prepend => [">>>$fam", $query->sn]);
+		  map { print {$fh} $_,$scores{$_}->{'SCR'},$scores{$_}->{'PVAL'} } 
+		  grep {defined} ($best_s, $second);
 	      }
-	      next unless $scores{$best_p}->{'PVAL'} <= $args->{'-significance'};
-	      next if $scores{$second}->{'SCR'} == $scores{$best_s}->{'SCR'}; # this is unfortunate
-
+	      
+	      next unless $scores{$best_s}->{'PVAL'} <= $args->{'-significance'};
+	      next if ($second && $scores{$second}->{'SCR'} == $scores{$best_s}->{'SCR'});
+	      
 	      # set evidence and make the ohnolog pair 
-
-	      my $best = $scores{$best_s}->{'GENE'};	      
+	      
+	      $self->throw( $best_s ) unless my $best = $scores{$best_s}->{'GENE'};	      
 	      foreach my $o ($query, $best) {
 		  $o->accept( $data_key,  
 			      {		      
@@ -2683,32 +2688,30 @@ sub ohnologComparative2 {
 		      );
 	      }
 	      $query->ohnolog( $best );
-	      
-	      # 
-	      
-	      print $fam, $gene->sn, $query->sn, $best->sn,
-	      $query->family, $best->family, 
-	      $query->evalue('ohno'), $query->evalue('score');
+	      $query->output( 
+		  -qc => 1, 
+		  -prepend => ['NEW'], 
+		  -append => [$fam, $best->sn, $query->evalue('ohno'), $query->score('ohno')] 
+		  );
 	  } # query 
       } # pair loop
-
+      
       foreach my $ogx ( grep { $_->orthogroup } grep {defined} map {@{$_}} @{ $anc->{$fam} } ) {
 	  my $check = $ogx->_ohnolog_consistency; # do we need this?
 	  # -1  => [z,x] // z,x have no ohnologs 
 	  # 0   => [w]   // w has an ohnolog but it is not in an OG 
 	  # 123 => [d,w] // d and w are have ohnologs in the OG 123
-	  print map { "$_:$#{$check->{$_}}" } sort keys %{$check};
 	  my (@ogs) = grep { $_ >0 } sort keys %{$check};
-	  $self->throw( scalar(@ogs) ) unless $#ogs<1;
+	  # $self->throw( scalar(@ogs) ) unless $#ogs <1;
+	  if( $#ogs > 0 ) {
+	      print {$fh} '>',map { "$_:$#{$check->{$_}}" } sort keys %{$check};
+	      foreach my $og ( sort  keys %{$check} ) {
+		  map { $_->output(-qc=>1, -prepend=>[$fam,$og]) } @{ $check->{$og} };
+	      }
+	  }
       }
 
   } # Family / Anc 
-    
-    next;
-    
-    foreach my $k ( sort {$count{$b} <=> $count{$a} } keys %count ) {
-	print $k, $count{$k};
-    }
     
     ########################################################
     # basic validation-- do we have all the info we need to improve ohnos?
