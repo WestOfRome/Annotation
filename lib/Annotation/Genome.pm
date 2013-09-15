@@ -2597,6 +2597,28 @@ sub ohnologComparative2 {
       }
       next if $count_ohno==0 || $count_ohno==$count_all/2;
 
+      # qc
+
+      foreach my $ogx ( grep { $_->orthogroup } grep {defined} map {@{$_}} @{ $anc->{$fam} } ) {
+	  my $check = $ogx->_ohnolog_consistency; # do we need this?
+	  # -1  => [z,x] // z,x have no ohnologs 
+	  # 0   => [w]   // w has an ohnolog but it is not in an OG 
+	  # 123 => [d,w] // d and w are have ohnologs in the OG 123	  
+	  my (@ogs) = grep { $_ >0 } sort keys %{$check};
+	  print {$fh} '>',map { "$_:$#{$check->{$_}}" } sort keys %{$check};
+	  foreach my $og ( sort  keys %{$check} ) {
+	      map { $_->output(-qc=>1, -prepend=>[$fam,$og]) } @{ $check->{$og} };
+	  }
+	  #$self->throw;
+	  $trigger++ if $#ogs >0;
+      }
+      if ($trigger) {
+	  map { $_->output(-qc => 1, -prepend => [$_->family,$_->ygob]) } 
+	  sort {$a->ogid <=> $b->ogid} grep {defined} map {@{$_}} @{ $anc->{$fam} };
+	  exit;
+      }
+      next;
+
       ######################################################################
       # 1. Leveraging orthogroups
       ######################################################################
@@ -2604,7 +2626,7 @@ sub ohnologComparative2 {
       # the basic premise here is that if any gene is in both an OG and and 
       # ohno relationship, then we belive that all genes in the OG should be 
       # in an ohno relationship. We test that assumption. 
-      # We start by finding that one gene that starts the search. 
+      # We start by finding the one gene that starts the search. 
       
       my %seen;
       foreach my $pair ( grep { $_->[0]->ogid || $_->[1]->ogid } # must be OG  
@@ -2612,9 +2634,15 @@ sub ohnologComparative2 {
 	  map { next if exists $seen{ $_->unique_id } } @{ $pair };
 	  map { $seen{ $_->unique_id }++ } @{ $pair };
 	  
-	  # go through each gene in the OG
+	  # look at OGs etc
 	  
-	  my ($gene) = grep {$_->ogid} @{$pair};	  
+	  my ($gene) = grep {$_->ogid} @{$pair};
+	  #my ($ref)  = grep { $_->organism eq $self->organism }  @{ $index->{$gene->ogid} };
+	  #my $check = $ref->_ohnolog_consistency; # do we need this?
+	  #print {$fh} '+',map { "$_:$#{$check->{$_}}" } sort keys %{$check};
+	  
+	  # go through each gene in the OG
+
 	  foreach my $query ( grep { !$_->ohnolog } grep { $_ ne $gene}  @{ $index->{$gene->ogid} } ) {
 	      my %scores;
 	      foreach my $cand ( grep { $_->organism eq $query->organism } # right species 
@@ -2647,7 +2675,9 @@ sub ohnologComparative2 {
 		      'PERC' => $percentile,
 		      'GENE' => $cand
 		  }; 
-		  #print '#', $cand->sn, $scores{ $query->unique_id.'*'.$cand->unique_id }->{PVAL};
+
+		  print {$fh} '#'.$gene->sn, $gene->ogid, $query->sn, $cand->sn, $score, $pval
+		      if $args->{'-verbose'} >= 2 || 1;
 	      }
 	      next unless %scores;
 	      
@@ -2667,9 +2697,9 @@ sub ohnologComparative2 {
 	      # 
 	      
 	      if ( $args->{'-verbose'} >= 2 ) {
-		  $gene->output(-qc=>1, -prepend => [">>>$fam", $query->sn]);
-		  map { print {$fh} $_,$scores{$_}->{'SCR'},$scores{$_}->{'PVAL'} } 
-		  grep {defined} ($best_s, $second);
+		  $gene->output(-qc=>1, -prepend => [">$fam", $query->sn]);
+		  #map { print {$fh} $_,$scores{$_}->{'SCR'},$scores{$_}->{'PVAL'} } 
+		  #grep {defined} ($best_s, $second);
 	      }
 	      
 	      next unless $scores{$best_s}->{'PVAL'} <= $args->{'-significance'};
@@ -2690,8 +2720,8 @@ sub ohnologComparative2 {
 	      $query->ohnolog( $best );
 	      $query->output( 
 		  -qc => 1, 
-		  -prepend => ['NEW'], 
-		  -append => [$fam, $best->sn, $query->evalue('ohno'), $query->score('ohno')] 
+		  -prepend => [">>>$fam", $best->sn], 
+		  -append => [$query->evalue('ohno'), $query->score('ohno')] 
 		  );
 	  } # query 
       } # pair loop
@@ -2701,13 +2731,15 @@ sub ohnologComparative2 {
 	  # -1  => [z,x] // z,x have no ohnologs 
 	  # 0   => [w]   // w has an ohnolog but it is not in an OG 
 	  # 123 => [d,w] // d and w are have ohnologs in the OG 123
+
 	  my (@ogs) = grep { $_ >0 } sort keys %{$check};
-	  # $self->throw( scalar(@ogs) ) unless $#ogs <1;
+
 	  if( $#ogs > 0 ) {
 	      print {$fh} '>',map { "$_:$#{$check->{$_}}" } sort keys %{$check};
 	      foreach my $og ( sort  keys %{$check} ) {
 		  map { $_->output(-qc=>1, -prepend=>[$fam,$og]) } @{ $check->{$og} };
 	      }
+	      $self->throw;
 	  }
       }
 
@@ -2887,11 +2919,13 @@ sub groupBySynteny {
 
     my %org;
     map { push @{$org{$_->organism}},$_ } @{$args->{'-orfs'}};
-    return $args->{'-orfs'} unless scalar( keys %org ) == scalar($self->bound)+1;
+    #return $args->{'-orfs'} unless scalar( keys %org ) == scalar($self->bound)+1;
     my ($init,@order) = sort { $#{$org{$b}} <=> $#{$org{$a}} } keys %org;
-    my @cand = map { [$_] }  @{$org{$init}};
+    my @cand = map { [$_] }  @{$org{$init}}; # 1 group for each gene in $init
 
-    # iterate over species and 
+    # iterate over species
+    # within each species, compute a score for adding a gene to each
+    # existing cluster. 
 
     foreach my $org ( @order ) {
 	my %best;
@@ -2919,6 +2953,7 @@ sub groupBySynteny {
 		push @{$cand[$x]},$best{$hit}->[1];
 		map { $seen{$_}++ } ($g,$x);
 	    }
+	    $self->throw if $#{$cand[$x]} > scalar($self->bound);
 	}
     }
 
@@ -2935,7 +2970,8 @@ sub groupBySynteny {
 	    ) if $args->{'-verbose'};
 
 	map { $self->throw  if $_->ogid } @{$cand};
-	my ($ref) = grep { $_->organism eq $self->organism } @{$cand};
+	my ($ref,$check) = grep { $_->organism eq $self->organism } @{$cand};
+	$self->throw if $check;
 
 	$ref->_define_orthogroup( 
 	    -object => [ grep {$_ ne $ref }  @{$cand} ],
@@ -2945,6 +2981,8 @@ sub groupBySynteny {
 	    ) if $#{$cand}==scalar($self->bound);
     }
     
+    map { $self->throw if $#{$_} > scalar($self->bound) } @cand;
+
     return @cand;
 }
 
@@ -5765,7 +5803,8 @@ sub consistentFamilies {
     
     my @all = map { $_->family(-set => undef); $_ } grep {$_->ygob} map {$_->orfs} $self->iterate;
     my @orfs =  map { $_->family(-set => $_->ygob); $_ } # we set to default value 
-    grep { $_->evalue('ygob') <= $args->{'-evalue'} || $_->hypergob >= $args->{'-synteny_min'} } @all;
+    #grep { $_->evalue('ygob') <= $args->{'-evalue'} || $_->hypergob >= $args->{'-synteny_min'} } 
+    @all;
 
     # map { print $_->organism, scalar( grep {$_->ohnolog } $_->orfs ) } $self->iterate;
 
@@ -5915,9 +5954,9 @@ sub consistentFamilies {
 	    my @true_ogs = # For genes not in OGs we try to find some 
 		( $og ? $group->{$og} : $self->groupBySynteny(-orfs => $group->{$og}));
 
-	    # Now... iterate on each of the newly defined OGs. 	    
+	    # Now... iterate on each of the newly defined groups -- they are not guaranteed to be OGs.
 	    foreach my $sub_og ( @true_ogs ) {
-		$self->throw unless $#{$sub_og} <= scalar($self->bound); 
+		$self->throw( ($#{$sub_og},$og) ) unless $#{$sub_og} <= scalar($self->bound); 
 		#next unless $#{$sub_og} >= 0;
 
 		# calculate the synetny scores 
@@ -5936,7 +5975,7 @@ sub consistentFamilies {
 		}
 
 		# sort to get the best scoring Anc genes 
-
+		
 		my ($hyper,$h2) = sort { $score{$b}{'HYPER'} <=> $score{$a}{'HYPER'} } keys %score;
 		my ($loss,$l2) = sort { $score{$b}{'LOSS'} <=> $score{$a}{'LOSS'} } keys %score;
 		my $delta = $score{$hyper}{'HYPER'} - $score{$h2}{'HYPER'};
