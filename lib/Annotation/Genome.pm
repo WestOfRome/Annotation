@@ -2519,6 +2519,25 @@ sub quality {
     return $self;
 }
 
+=head2 reconcileOrthologsOhnologs()
+
+    Go through all orthogroups, identify discordances
+    and reconcile using....
+
+=cut 
+
+sub reconcileOrthologsOhnologs {
+    my $self = shift;
+    my $args = {@_};
+    
+    #
+    $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
+    $args->{'-debug'} = undef unless exists $args->{'-debug'};
+
+    # 
+    return $self;
+}
+
 =head2 ohnologComparative2()
 
     Method to compare ohnolog assignments across
@@ -2565,13 +2584,16 @@ sub ohnologComparative2 {
     # prep work 
     ################################
 
-    my $anc = $self->consistentFamilies(
+    my $fam = $self->consistentFamilies(
 	#-synteny_min => 1,
 	#-evalue_max => 10,
 	-group_by => 'ohno',
 	-create_og => 1,
 	-verbose => 1
 	);
+
+    $self->reconcileOrthologsOhnologs();
+
     my $index = $self->_orthogroup_index; # must be done after as we may make new OGs.. 
     
     ################################
