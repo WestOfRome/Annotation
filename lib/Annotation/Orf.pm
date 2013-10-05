@@ -1307,7 +1307,11 @@ sub summarize {
     return $self;
 }
 
-=head2 organism
+=head2 organism()
+
+    Access genome->organism() value. 
+    Baked into libraries but poor style.. 
+
 =cut
 
 sub organism {
@@ -5245,6 +5249,22 @@ sub fragments {
     #$orf->merge(-object => $lorf, -reference => $file);
     return ( $sc3 > ($hi + $lo/2) ? 1 : 0 );
 }
+
+=head2 reconcile()
+=cut 
+
+sub reconcile {
+    my $self = shift;
+    my $args = {@_};
+    
+    #
+    $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
+    $args->{'-debug'} = undef unless exists $args->{'-debug'};
+
+    # 
+    return $self;
+}
+
 
 =head2 validate 
 

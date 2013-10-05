@@ -2533,6 +2533,9 @@ sub reconcileOrthologsOhnologs {
     #
     $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
+    
+    #
+    
 
     # 
     return $self;
@@ -2584,15 +2587,15 @@ sub ohnologComparative2 {
     # prep work 
     ################################
 
-    my $fam = $self->consistentFamilies(
+    my $anc = $self->consistentFamilies(
 	#-synteny_min => 1,
 	#-evalue_max => 10,
 	-group_by => 'ohno',
 	-create_og => 1,
-	-verbose => 1
+	-verbose => 0
 	);
 
-    $self->reconcileOrthologsOhnologs();
+    #$self->reconcileOrthologsOhnologs();
 
     my $index = $self->_orthogroup_index; # must be done after as we may make new OGs.. 
     
@@ -2617,9 +2620,15 @@ sub ohnologComparative2 {
 	  $count_ohno++ if $pair->[1];
 	  $count_all += ($pair->[1] ? 2 : 1);
       }
-      next if $count_ohno==0 || $count_ohno==$count_all/2;
+      next if ($count_ohno==0) || ( $count_ohno==($count_all/2) );
 
       # qc
+
+      print {$fh} ">>>$fam", ++$countf, $count_all, $count_ohno;
+      $self->printFamily( -object => $anc->{$fam} );
+      next;
+
+      # 
 
       foreach my $ogx ( grep { $_->orthogroup } grep {defined} map {@{$_}} @{ $anc->{$fam} } ) {
 	  my $check = $ogx->_ohnolog_consistency; # do we need this?
@@ -2627,13 +2636,14 @@ sub ohnologComparative2 {
 	  # 0   => [w]   // w has an ohnolog but it is not in an OG 
 	  # 123 => [d,w] // d and w are have ohnologs in the OG 123	  
 	  my (@ogs) = grep { $_ >0 } sort keys %{$check};
-	  print {$fh} '>',map { "$_:$#{$check->{$_}}" } sort keys %{$check};
+	  print {$fh} '>'.(++$countg),map { "$_:$#{$check->{$_}}" } sort keys %{$check};
 	  foreach my $og ( sort  keys %{$check} ) {
-	      map { $_->output(-qc=>1, -prepend=>[$fam,$og]) } @{ $check->{$og} };
+	      #map { $_->output(-qc=>1, -prepend=>[$fam,$og]) } @{ $check->{$og} };
 	  }
 	  #$self->throw;
 	  $trigger++ if $#ogs >0;
       }
+      next;
       if ($trigger) {
 	  map { $_->output(-qc => 1, -prepend => [$_->family,$_->ygob]) } 
 	  sort {$a->ogid <=> $b->ogid} grep {defined} map {@{$_}} @{ $anc->{$fam} };
@@ -2772,6 +2782,69 @@ sub ohnologComparative2 {
     ########################################################
 
     map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
+
+    return $self;
+}
+
+=head2 printFamily()
+=cut 
+
+sub printFamily {
+    my $self = shift;
+    my $args = {@_};
+
+    $self->throw unless ref($args->{'-object'}) eq 'ARRAY';
+
+    # 
+
+    my $attr = '_ohno_temp_name_'.int(rand(1000));
+    my $fh = STDOUT;
+
+    # 
+
+    my @orfs = grep {defined} map { (ref($_) eq 'ARRAY' ? @{$_} : $_ ) } @{ $args->{'-object'} };
+    my $ohno = $self->shape( -orfs => \@orfs, -by => 'ohno', -index => 0 );
+    my $og = $self->shape( -orfs => \@orfs, -by => 'ortho', -index => 1 );
+
+    # name ohnologs 
+    
+    my $offset=65;
+    foreach my $pair ( grep { $_->[1] } @{$ohno} ) {
+	foreach my $o ( @{$pair} ) {
+	    $o->data($attr => chr($offset) );
+	}
+	$offset++;
+    }
+
+    # design row order 
+    
+    my @ord=( 
+	sort {scalar(grep {$_->ohnolog} @{$og->{$b}}) <=> 
+		  scalar(grep {$_->ohnolog} @{$og->{$a}})} grep {$_>0} keys %{$og},
+	);
+
+    # print 
+    
+    my @org =  ($self->organism, $self->bound);
+    print {$fh} 'OGID', @org;
+    foreach my $ogid ( @ord ) {
+	my @order;
+	foreach my $org ( @org ) {
+	    my ($o) = grep { $_->organism eq $org } @{$og->{$ogid}};
+	    push @order, ($o ? ( $o->data($attr) || '.' ) : undef);
+	}	
+	print $ogid, @order; 
+    }
+
+    foreach my $o ( grep {defined} @{$og->{''}} ) {
+	my @order;
+	foreach my $org ( @org ) {
+	    push @order, ($o->organism eq $org ? ( $o->data($attr) || '.' ) : undef);
+	}
+	print '-', @order; 
+    }
+
+    map { $_->data($attr => undef) } grep {defined} @orfs;
 
     return $self;
 }
@@ -3115,21 +3188,22 @@ sub shape {
     
     my @init = (
 	$args->{'-orfs'} 
-	? @{ $args->{'-orfs'} }
-	: map {$_->orfs} $self->iterate
+	? @{$args->{'-orfs'}}
+	: (map {$_->orfs} $self->iterate)
 	);
-    my @orfs = (
-	$args->{'-filter'}
-	? grep { $_->$filter } @init
+    my @orfs = grep {defined} (
+$args->{'-filter'}
+	? (grep { $_->$filter } @init)
 	: @init
 	);
+
     # 
     
     my $method;
     my (@shape,%shape,%seen);
     if ( $meth =~ /^oh/i ) {
 	$method = 'ohnolog';
-	foreach my $o ( @orfs ) {	
+	foreach my $o ( grep {defined} @orfs ) {	
 	    next if $seen{$o->unique_id};
 	    push @shape, [$o, $o->ohnolog];
 	    map { $seen{$_->unique_id}++ } grep {defined} ($o, $o->ohnolog);
