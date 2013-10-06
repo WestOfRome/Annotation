@@ -2526,30 +2526,6 @@ sub quality {
 
 =cut 
 
-sub reconcileOrthologsOhnologs {
-    my $self = shift;
-    my $args = {@_};
-    
-    #
-    $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
-    $args->{'-debug'} = undef unless exists $args->{'-debug'};
-    
-    #
-    
-
-    # 
-    return $self;
-}
-
-=head2 ohnologComparative2()
-
-    Method to compare ohnolog assignments across
-    species in a bound genome object and reconcile
-    differences. In the ideal case this means adding
-    more ohnologs. 
-
-=cut 
-
 sub ohnologComparative2 {
     my $self = shift;
     my $args = {@_};
@@ -2560,6 +2536,8 @@ sub ohnologComparative2 {
     # 
     $args->{'-replicates'} = 50 unless exists $args->{'-replicates'};    
     $args->{'-significance'} = 0.05 unless exists $args->{'-significance'}; 
+
+    my $LOCAL_DEBUG_PARAM=($args->{'-debug'} ? 0 : 3 );
     
     ################################
     # QC
@@ -2609,7 +2587,20 @@ sub ohnologComparative2 {
     # 3. Ohno quality scores // data('_OHNO') [alignedSisterScore]
     
   ANC: foreach my $fam ( keys %{$anc} ) {
-      next unless (! defined $args->{'-debug'}) || ($fam eq $args->{'-debug'});
+      next ANC unless (! defined $args->{'-debug'}) || ($fam eq $args->{'-debug'});
+
+      # debugging -- there are three major scenarios #########
+      if ( $LOCAL_DEBUG_PARAM ) {
+	  my @og = grep { $_->orthogroup } grep {defined} map {@{$_}} @{ $anc->{$fam} };
+	  if ( $LOCAL_DEBUG_PARAM < 2 ) {
+	      next ANC unless scalar(@og) < 2; # 1/2/3
+	  } elsif ( $LOCAL_DEBUG_PARAM > 2 ) {
+	      next ANC unless scalar(@og) > 2; # 1/2/3
+	  } else {
+	      next ANC unless scalar(@og)==2; # 1/2/3
+	  }
+      }
+      ########################################################
 
       # avoid some work
       
@@ -2640,16 +2631,21 @@ sub ohnologComparative2 {
       ########################################################
       # 2. advanced search 
       ########################################################     
-
+      
       # create all possible combinations of genes 
       # if the OGs are correct we willl reover them
       # but we do not want to assume that they are right 
+      
+      my @hypoth = $self->combinations( 
+	  -orfs => $anc->{$fam},
+	  -limit => ($LOCAL_DEBUG_PARAM ? 5e2 : 1e4)
+	  );
 
-      my @hypoth = $self->combinations( -orfs => $anc->{$fam} );      
       unless ( @hypoth ) {
-	  map { $_->_dissolve_ohnolog } grep {$_->[1]}  @{ $anc->{$fam} };
+	  map { $_->_dissolve_ohnolog } grep {defined} map {$_->[1]} @{ $anc->{$fam} };
 	  $self->printFamily( -object => $anc->{$fam} );
-	  next;
+	  $outcomes{'1.NoHyp'}++;
+	  next ANC;
       }
       
       # compute all pairwise syntey scores for putative OG
@@ -2676,7 +2672,7 @@ sub ohnologComparative2 {
       # 5 species must have at least 2^5 combinations
       # --> enough to compute mean, SD etc and develop null.
       # we also retain any exisitng OGs
-
+      
       my @sort = sort {$b <=> $a} @scores;
       my ($m,$sd,$n) = &_calcMeanSD( grep {$_ <= $sort[0] } @scores); # trimed mean 
       push @ok, grep { $scores[$_] > ($m+(2*$sd)) } (0..$#scores);
@@ -2692,12 +2688,10 @@ sub ohnologComparative2 {
       }
 
       if ( $#uniq <= 0 ) {
-	  # 
-	  #map { $_->_dissolve_ohnolog } 
-	  #grep { $_->[0]->score('ohno') <5 } 
-	  #grep {$_->[1]}  @{ $anc->{$fam} };
-	  #$self->printFamily( -object => $anc->{$fam} );
-	  next;
+	  map { $_->_dissolve_ohnolog } grep {defined} map {$_->[1]} @{ $anc->{$fam} };
+	  $self->printFamily( -object => $anc->{$fam} );
+	  $outcomes{'2.NoSigHyp'}++;
+	  next ANC;
       }
 
       ####################################################
@@ -2762,7 +2756,7 @@ sub ohnologComparative2 {
 		    -gene1 => $hypoth[$i_ind]->[$x],
 		    -gene2 => $hypoth[$j_ind]->[$x],
 		    -ancestor => $fam,
-		    -replicates => $args->{'-replicates'},
+		    -replicates => ( $LOCAL_DEBUG_PARAM ? -1 : $args->{'-replicates'} ),
 		    -score => $score
 		    );
 		# push @scores_rand, $rands;
@@ -2778,15 +2772,25 @@ sub ohnologComparative2 {
 	    # process real data and store 
 	    
 	    my ($mean,$sd) = &_calcMeanSD(@scores_para);
+	    my $ratio =  $mean/($sd>0 ? $sd : 1);
 	    
 	    $score{ join('_',$i_ind,$j_ind) } = {
 		OG1 => $i_ind,
 		OG2 => $j_ind,
 		SUM => $score_sum,
-		RATIO => $mean/($sd>0 ? $sd : 1),
+		RATIO => $ratio,
 		SPECIES => \%species_stats, 
 		SUM_OG => $scores[$i_ind]+$scores[$j_ind]
 	    };
+
+	    if ( $args->{'-verbose'} >=2 ) {
+		print {$fh} '##',
+		(map {  $hypoth[$_]->[0]->sn } ($i_ind, $j_ind)),
+		(map {  $hypoth[$_]->[0]->ogid } ($i_ind, $j_ind)),
+		(map {  $hypoth[$_]->[0]->hypergob } ($i_ind, $j_ind)),		
+		(map {  $self->syntenyMatrix( -orfs => [$hypoth[$_]->[0]->_orthogroup],-score =>1 ) } ($i_ind, $j_ind)),
+		$score_sum, $ratio;
+	    }
 	}
       }
       
@@ -2808,23 +2812,25 @@ sub ohnologComparative2 {
 	  print {$fh} $score{$best}->{ 'SUM_OG' }, $score{$best}->{ 'SUM' }, $score{$best}->{ 'RATIO' };
 	  #(map { $_->sn}  @{$hypoth[ $score{$best}->{ 'OG1' } ]}, @{$hypoth[ $score{$best}->{ 'OG1' } ]}),	  
       }
-
+      
       # check species by species p-values since we do not have a true p-value
       
       my $sig_count;
       foreach my $sp ( $self->organism, $self->bound ) {
 	  my $data = $score{ $best }->{'SPECIES'}->{$sp}; 
 	  # print $sp, $data->{SCR}, $data->{PVAL};
-	  $sig_count++;# if $data->{PVAL} <= $args->{'-significance'};
+	  $sig_count++ if $data->{PVAL} <= $args->{'-significance'};
       }
       
-      # require at least 3 significant ...
+      # require at least 3 significant ... ugly. 
       # require ratio >0 . lenient. 
       
       unless ( $score{$best}->{ 'RATIO' } > 0 && $sig_count>=2 ) {
-	  
+	  $outcomes{'4.NoSigSisters'}++;
+	  $self->printFamily( -object => $anc->{$fam} );
 	  next;
       }
+      $outcomes{'5.Success'}++;
       
       ###########################
       # get the two groups and make OGs if needed 
@@ -2846,8 +2852,8 @@ sub ohnologComparative2 {
 	  my ($ref) = grep { $_->organism eq $self->organism } @hyp;
 	  $ref->_define_orthogroup( 
 	      -object => [grep {$_ ne $ref} @hyp],
-	      -sowh => 1,
-	      -kask => 1,
+	      -sowh => ($LOCAL_DEBUG_PARAM ? 0 : 1),
+	      -kaks => ($LOCAL_DEBUG_PARAM ? 0 : 1),
 	      -verbose => 1
 	      );
       }
@@ -2855,7 +2861,7 @@ sub ohnologComparative2 {
       ###########################
       # get the two groups and make OGs if needed 
       ###########################
-
+      
       my @og1 = @{$hypoth[ $score{ $best }->{'OG1'} ]};
       my @og2 = @{$hypoth[ $score{ $best }->{'OG2'} ]};
       
@@ -2908,12 +2914,16 @@ sub ohnologComparative2 {
 
   } # Family / Anc 
     
+    foreach my $x ( sort keys %outcomes ) {
+	print $x, $outcomes{$x};
+    }
+    
     ########################################################
     # clean up 
     ########################################################
-
+    
     map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
-
+    
     return $self;
 }
 
@@ -2961,14 +2971,20 @@ sub printFamily {
     # print OGs
     
     my @org =  ($self->organism, $self->bound);
-    print {$fh} 'OGID', @org;
+    print {$fh} 'OGID', @org, 'YGOB', 'Syn', 'Quality';
     foreach my $ogid ( @ord ) {
 	my @order;
 	foreach my $org ( @org ) {
 	    my ($o) = grep { $_->organism eq $org } @{$og->{$ogid}};
 	    push @order, ($o ? $o->up->id.$o->data($attr) : undef);
 	}
-	print {$fh} $ogid, @order; 
+	
+	my ($scr) = $self->syntenyMatrix(-orfs => $og->{$ogid}, -score => 1);
+	my @ygob = map { $_->logscore('ygob') } @{$og->{$ogid}};
+	my ($mean,$sd) = &_calcMeanSD( @ygob );
+	$sd=1 unless $sd >0;
+	my $ygscr = sprintf("%.1f", $mean/$sd);
+	print {$fh} $ogid, @order, $ygscr, $scr, sprintf("%.1f", $scr*$ygscr*-1); 
     }
 
     # print genes not in OGs-- 1 per row 
@@ -3323,7 +3339,7 @@ sub group {
 sub shape { 
     my $self=shift; 
     my $args = {@_};
-
+    
     $self->throw unless exists $args->{'-by'};
     my $meth = $args->{'-by'};
 
@@ -3383,6 +3399,7 @@ sub combinations {
 
     $self->throw unless $self->bound;
     $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
+    $args->{'-limit'} = 1e4 unless exists $args->{'-limit'};
 
     # set up 
     
@@ -3394,7 +3411,7 @@ sub combinations {
     my $product=1;
     map { $product*=scalar(@{$_}) } @{$species};
     # print $product;
-    return () if $product >= 10000;
+    return () if $product >= $args->{'-limit'};
 
     # initialize 
 
@@ -4164,6 +4181,8 @@ sub _print_align {
 sub _alignSisterRands {
     my $self = shift;
     my $args = {@_};
+
+    return (0,100,[]) if $args->{'-replicates'}==-1;
     
     my $g1 = $args->{'-gene1'};
     my $g2 = $args->{'-gene2'};
@@ -6112,14 +6131,16 @@ sub consistentFamilies {
 
     #######################################
     # TEMP / DEBUG / DEVIN 
-    foreach my $fam ( keys %{$family} ) {
-	$family->{ $fam } = $self->shape(
-	    -orfs => $family->{$fam}, 
-	    -by => $args->{'-group_by'},
-	    -index => 0
-	    );
-    }     
-    return $family;
+    if ( 1==2 ) {
+	foreach my $fam ( keys %{$family} ) {
+	    $family->{ $fam } = $self->shape(
+		-orfs => $family->{$fam}, 
+		-by => $args->{'-group_by'},
+		-index => 0
+		);
+	}     
+	return $family;
+    }
     #######################################
 
     # These data are actually pretty amazing. 
