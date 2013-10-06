@@ -5250,22 +5250,6 @@ sub fragments {
     return ( $sc3 > ($hi + $lo/2) ? 1 : 0 );
 }
 
-=head2 reconcile()
-=cut 
-
-sub reconcile {
-    my $self = shift;
-    my $args = {@_};
-    
-    #
-    $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
-    $args->{'-debug'} = undef unless exists $args->{'-debug'};
-
-    # 
-    return $self;
-}
-
-
 =head2 validate 
 
     Verify object integrity by checking all reciprocal linkages
