@@ -2588,21 +2588,18 @@ sub ohnologComparative2 {
     ################################
 
     my $anc = $self->consistentFamilies(
-	#-synteny_min => 1,
-	#-evalue_max => 10,
 	-group_by => 'ohno',
 	-create_og => 1,
 	-verbose => 0
 	);
-
+    
     #$self->reconcileOrthologsOhnologs();
-
+    
     my $index = $self->_orthogroup_index; # must be done after as we may make new OGs.. 
     
-    ################################
-    # iterate through each Anc and 
-    # look at ohno profile across species 
-    ################################
+    ######################################################################
+    # 0. iterate through each Anc and look at ohno profile across species 
+    ######################################################################
 
     # Data to leverage : 
     # 0. Phylogenetic consistency // data('SOWH') // seems not to be stored ...
@@ -2615,44 +2612,29 @@ sub ohnologComparative2 {
 
       # avoid some work
       
-      my ($count_ohno,$count_all);
+      my ($count_ohno,$count_all,%countC);
       foreach my $pair (  @{ $anc->{$fam} }  ) {
-	  $count_ohno++ if $pair->[1];
 	  $count_all += ($pair->[1] ? 2 : 1);
+	  next unless $pair->[1];
+	  $count_ohno++;
+	  $countC{ join('_',$pair->[0]->ogid,$pair->[1]->ogid) }++;
       }
       next if ($count_ohno==0) || ( $count_ohno==($count_all/2) );
-
-      # qc
-
-      print {$fh} ">>>$fam", ++$countf, $count_all, $count_ohno;
-      $self->printFamily( -object => $anc->{$fam} );
-      next;
-
-      # 
-
-      foreach my $ogx ( grep { $_->orthogroup } grep {defined} map {@{$_}} @{ $anc->{$fam} } ) {
-	  my $check = $ogx->_ohnolog_consistency; # do we need this?
-	  # -1  => [z,x] // z,x have no ohnologs 
-	  # 0   => [w]   // w has an ohnolog but it is not in an OG 
-	  # 123 => [d,w] // d and w are have ohnologs in the OG 123	  
-	  my (@ogs) = grep { $_ >0 } sort keys %{$check};
-	  print {$fh} '>'.(++$countg),map { "$_:$#{$check->{$_}}" } sort keys %{$check};
-	  foreach my $og ( sort  keys %{$check} ) {
-	      #map { $_->output(-qc=>1, -prepend=>[$fam,$og]) } @{ $check->{$og} };
-	  }
-	  #$self->throw;
-	  $trigger++ if $#ogs >0;
+      my ($og_pair) = sort {$countC{$b} <=> $countC{$a}} keys %countC;
+      next if scalar( keys %countC )==1 && 
+	  $count_ohno==$countC{ $og_pair } && # ohno|ortho perfectly coherent 
+	  $og_pair =~ /\d+_\d+/ && # true OG on both sides 
+	  ($count_all - ($count_ohno)*2 < $species_count); # not too much stuff floating .. 
+      
+      # look at families 
+      
+      if ( $args->{'-verbose'} ) {
+	  print {$fh} "\n".('='x50)."\n>$fam", ++$countf, $count_all, $count_ohno;
+	  $self->printFamily( -object => $anc->{$fam} );
       }
-      next;
-      if ($trigger) {
-	  map { $_->output(-qc => 1, -prepend => [$_->family,$_->ygob]) } 
-	  sort {$a->ogid <=> $b->ogid} grep {defined} map {@{$_}} @{ $anc->{$fam} };
-	  exit;
-      }
-      next;
-
+      
       ######################################################################
-      # 1. Leveraging orthogroups
+      # 1. Leveraging orthogroups -- hypothesis based .. 
       ######################################################################
       
       # the basic premise here is that if any gene is in both an OG and and 
@@ -2757,7 +2739,127 @@ sub ohnologComparative2 {
 		  );
 	  } # query 
       } # pair loop
+
+      ########################################################
+      # 2. advanced search 
+      ########################################################     
+
+      if ( $args->{'-verbose'} ) {
+	  $self->printFamily( -object => $anc->{$fam} );
+      }
+
+      # create all possible combinations of genes for OGs
+
+      my @hypoth = $self->combinations( -orfs => $anc->{$fam} );
+      #$self->warn("$fam : No combinations") and next unless @hypoth;
       
+      # compute all pairwise syntey scores for putative OG
+      # and sumarize as mean/sd 
+      
+      my (@scores,@data,@ok);
+      foreach my $i ( 0..$#hypoth ) {
+	  my ($scr,$m,$sd) =  $self->syntenyMatrix(
+	      -orfs => $hypoth[$i],
+	      -ancestor => $fam,
+	      -mode => 'ortho',
+	      -score => 1
+	      );
+	  push @scores, $scr;
+	  push @data, [$scr,$m,$sd];
+	  
+	  # we want to include all OGs on the list for furhter consideration
+	  
+	  my @ogid = map {$_->ogid} grep {$_->ogid} @{ $hypoth[$i] };
+	  next unless $#ogid == $#{  $hypoth[$i] };
+	  push @ok, $i if scalar( keys %{{ map { $_ => 1} @ogid }} )==1;
+      }
+      
+      # 5 species must have at least 2^5 combinations
+      # --> enough to compute mean, SD etc and develop null.
+      # we focus on particular hypotheses: 
+      # 1. putative OGs that reject null 
+      # 2. putative OGs supported pre-existing biases e.g. linked by an OG
+      
+      my @sort = sort {$b <=> $a} @scores;
+      my ($m,$sd,$n) = &_calcMeanSD( grep {$_ <= $sort[0] } @scores); # trimed mean 
+      push @ok, grep { $scores[$_] > ($m+(2*$sd)) } (0..$#scores);
+      my @uniq = keys %{{ map { $_ => 1 } @ok }};
+      
+      # output ...  
+      
+      if ( $args->{'-verbose'} ) {
+	  print {$fh} "\n#", $m, $sd, $n, $#uniq;      
+	  for my $k (sort {$scores[$b] <=> $scores[$a]} @uniq ) {
+	      print {$fh} (map { $_->sn } @{$hypoth[$k]}), @{ $data[$k] }, $scores[$k];	  
+	  }
+      }
+
+      ####################################################
+      # compare pairs of acceptable OG hypotheses 
+      # to identify most likely sister regions 
+      ####################################################
+      
+      next unless $#uniq>0;
+      
+      my %score;
+      for my $i ( 0..($#uniq-1) ) {
+	HYP: for my $j ( ($i+1)..$#uniq ) {
+	    my $i_ind = $uniq[$i];
+	    my $j_ind = $uniq[$j];
+
+	    # 1. exlude cases that are non-MECE i.e. same gene on both  
+	    # 2. require some evidence of sister relationship 
+	    
+	    for my $x ( 0 .. $#{$hypoth[0]} ) {
+		next HYP if $hypoth[$i_ind]->[$x] eq $hypoth[$j_ind]->[$x];
+	    }
+	    my $hyp_ohno_count;
+	    for my $x ( 0 .. $#{$hypoth[0]} ) {
+		$hyp_ohno_count++ if $hypoth[$i_ind]->[$x]->ohnolog eq $hypoth[$j_ind]->[$x];
+	    }
+	    #next HYP unless $hyp_ohno_count;
+	    
+	    # 
+	    
+	    my @scores_para;
+	    for my $x ( 0 .. $#{$hypoth[0]} ) {
+		my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
+		    $hypoth[$i_ind]->[$x]->alignSisterRegions(
+			-sister => $hypoth[$j_ind]->[$x],
+			-ancestor => $fam,
+			-clean => 1,
+			-score => 1,
+			-verbose => 0
+		    );
+		push @scores_para, $score;
+	    }
+
+	    my ($m,$sd,$n) = &_calcMeanSD(@scores_para); # trimed mean
+	    $score{ join('_',$i_ind,$j_ind) } = {
+		OG1 => $i_ind,
+		OG2 => $j_ind,
+		MEAN => $m,
+		SD => $sd,
+		RATIO => $m/($sd>0 ? $sd : 1)
+	    };
+	    #print values %{ $score{  join('_',$i_ind,$j_ind) } };
+	}
+      }
+      
+      foreach my $key ( sort { $score{$b} <=> $score{$a} } keys %score ) {
+	  my $x = $score{$key};
+	  print {$fh} (map {$_->sn} (@{$hypoth[$x->{OG1}]}, @{$hypoth[$x->{OG2}]})), 
+	  $scores[$x->{OG1}], $scores[$x->{OG2}], $x->{RATIO};
+	  if ( $x->{RATIO} > 1 ) {
+	  }
+      }
+      
+      next;
+
+    ########################################################
+    # 3. basic validation 
+    ########################################################     
+
       foreach my $ogx ( grep { $_->orthogroup } grep {defined} map {@{$_}} @{ $anc->{$fam} } ) {
 	  my $check = $ogx->_ohnolog_consistency; # do we need this?
 	  # -1  => [z,x] // z,x have no ohnologs 
@@ -2778,7 +2880,7 @@ sub ohnologComparative2 {
   } # Family / Anc 
     
     ########################################################
-    # basic validation-- do we have all the info we need to improve ohnos?
+    # clean up 
     ########################################################
 
     map { print $_->species, scalar( grep {$_->ohnolog} map {$_->stream} $_->stream ) } $self->iterate;
@@ -2786,7 +2888,11 @@ sub ohnologComparative2 {
     return $self;
 }
 
-=head2 printFamily()
+=head2 printFamily( -object => [orfs] )
+
+    Display ortholog, ohnolog and species relationships
+    for supplied set of genes (assumed to be a family).
+
 =cut 
 
 sub printFamily {
@@ -2808,10 +2914,10 @@ sub printFamily {
 
     # name ohnologs 
     
-    my $offset=65;
+    my $offset=65;#65/97
     foreach my $pair ( grep { $_->[1] } @{$ohno} ) {
 	foreach my $o ( @{$pair} ) {
-	    $o->data($attr => chr($offset) );
+	    $o->data($attr => ' ('.chr($offset).')' );
 	}
 	$offset++;
     }
@@ -2823,7 +2929,7 @@ sub printFamily {
 		  scalar(grep {$_->ohnolog} @{$og->{$a}})} grep {$_>0} keys %{$og},
 	);
 
-    # print 
+    # print OGs
     
     my @org =  ($self->organism, $self->bound);
     print {$fh} 'OGID', @org;
@@ -2831,17 +2937,19 @@ sub printFamily {
 	my @order;
 	foreach my $org ( @org ) {
 	    my ($o) = grep { $_->organism eq $org } @{$og->{$ogid}};
-	    push @order, ($o ? ( $o->data($attr) || '.' ) : undef);
-	}	
-	print $ogid, @order; 
+	    push @order, ($o ? $o->up->id.$o->data($attr) : undef);
+	}
+	print {$fh} $ogid, @order; 
     }
+
+    # print genes not in OGs-- 1 per row 
 
     foreach my $o ( grep {defined} @{$og->{''}} ) {
 	my @order;
 	foreach my $org ( @org ) {
-	    push @order, ($o->organism eq $org ? ( $o->data($attr) || '.' ) : undef);
+	    push @order, ($o->organism eq $org ? $o->up->id.$o->data($attr) : undef);
 	}
-	print '-', @order; 
+	print {$fh} '-', @order; 
     }
 
     map { $_->data($attr => undef) } grep {defined} @orfs;
@@ -2863,10 +2971,10 @@ sub printFamily {
 sub syntenyMatrix {
     my $self = shift;
     my $args = {@_};
-
+    
     # ortholog / conserved => synteny_conserved 
     # paralog / sister => alignSisterRegions
-
+    
     $args->{'-mode'} = 'o' unless exists $args->{'-mode'};
     $args->{'-mode'} = 'ortho' if  $args->{'-mode'} =~ /^[o|c]/i;
     $args->{'-mode'} = 'para' if  $args->{'-mode'} =~ /^[p|s]/i;
@@ -2903,6 +3011,7 @@ sub syntenyMatrix {
     ########################################
     
     my %synt;
+    my @scores;
     for my $i ( 0..($#orfs-1) ) {
 	my @row = ('-') x ($i+1);
 	for my $j ( $i+1 .. $#orfs ) {
@@ -2928,6 +3037,7 @@ sub syntenyMatrix {
 	    #print $orfs[$i]->name, $orfs[$j]->name, $score;		
 	    $synt{ $orfs[$i]->name }{ $orfs[$j]->name } = $score;
 	    push @row, ( $args->{'-ascii'} ?  &_hypergob_ascii_visual($score) : $score);
+	    push @scores, $score;
 	}
 	
 	########################################
@@ -2948,6 +3058,13 @@ sub syntenyMatrix {
 	     '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
 	}
     } # orf
+
+    # 
+
+    if ( $args->{'-score'} ) {
+	my ($m,$sd) = &_calcMeanSD( @scores );
+	return ( sprintf("%.1f", $m/( $sd>0 ? $sd : 1 )), $m, $sd );
+    }
 
     # 
 
@@ -3129,7 +3246,7 @@ sub group {
     ########################################
 
     my $method = $args->{'-by'};
-    my @orfs = @{$args->{'-orfs'}};
+    my @orfs = @{ $args->{'-orfs'} };
     $self->throw unless $orfs[0]->can( $method ); # always true? change. 
 
     my $ogIndex = $self->_orthogroup_index; # 123 => [o1, o2,o3..]
@@ -3186,16 +3303,9 @@ sub shape {
 
     # 
     
-    my @init = (
-	$args->{'-orfs'} 
-	? @{$args->{'-orfs'}}
-	: (map {$_->orfs} $self->iterate)
-	);
-    my @orfs = grep {defined} (
-$args->{'-filter'}
-	? (grep { $_->$filter } @init)
-	: @init
-	);
+    my @init = ( $args->{'-orfs'} ? @{$args->{'-orfs'}} : (map {$_->orfs} $self->iterate) );
+    my @pre =  grep {defined} map { (ref($_) eq 'ARRAY' ? @{$_} : $_ ) } @init;
+    my @orfs = ( $args->{'-filter'} ? (grep { $_->$filter } @pre) : @pre );
 
     # 
     
@@ -3211,19 +3321,73 @@ $args->{'-filter'}
 	#%shape = map { $_->[0]->$method => $_ } @shape unless %shape;
     } elsif ( $meth =~ /^[ort|og]/i ) {
 	$method = 'ogid';
-	foreach my $o ( @orfs ) {	
-	    push @{$shape{$o->ogid}}, $o;
+	foreach my $o ( @orfs ) {
+	    push @{ $shape{$o->ogid} }, $o;
 	}
     } elsif ( $meth =~ /^fam/i ) {
 	$method = 'family';
 	foreach my $o ( @orfs ) {
-	    push @{$shape{$o->family}}, $o;
+	    push @{ $shape{$o->family} }, $o;
+	}
+    } elsif ( $meth =~ /^[s|org]/i ) {	
+	$method = 'organism';
+	foreach my $o ( @orfs ) {
+	    push @{ $shape{$o->organism} }, $o;
 	}
     } else { $self->throw; }  
 
     @shape = values %shape unless @shape;    
     
     return ($args->{'-index'} ? \%shape : \@shape);
+}
+
+=head2 combinations( -orfs => [orfs] )
+
+    Return all possible OG combinations from a set of 
+    orfs. 
+
+=cut 
+
+sub combinations {
+    my $self = shift;
+    my $args = {@_};
+
+    $self->throw unless $self->bound;
+    $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
+
+    # set up 
+    
+    my $species = $self->shape( -orfs => $args->{'-orfs'}, -by => 'species' );
+    return () unless $#{$species}==scalar($self->bound);
+
+    # can we do it without choking ?
+    
+    my $product=1;
+    map { $product*=scalar(@{$_}) } @{$species};
+    # print $product;
+    $self->throw if $product >= 10000;
+
+    # initialize 
+
+    my $index=0;
+    $index++ until ( $species->[$index]->[0]->organism eq $self->organism );    
+    my @hyp = map { [$_] } map {@{$_}} splice(@{$species}, $index, 1);
+    
+    # 
+    
+    foreach my $sp ( @{$species} ) {
+	my @new;
+	foreach my $hy ( @hyp ) {	    
+	    foreach my $g ( @{$sp} ) {
+		push @new, [@{$hy}, $g];
+	    }
+	}
+	undef @hyp;
+	@hyp = @new;
+    }
+ 
+    map { $self->throw unless $#{$_}==scalar($self->bound) } @hyp; 
+    return @hyp;
 }
 
 =head2 ohnologComparative
@@ -5875,6 +6039,8 @@ sub consistentFamilies {
     my $args = {@_};
 
     $self->throw("Comparative context only.") unless $self->bound;
+    $self->throw("Evalue max and synteny min options disabled.") if 
+	exists  $args->{'-evalue_max'} || exists  $args->{'-synteny_min'};
 
     # pre-processing 
     $args->{'-evalue_max'} = 10 unless exists $args->{'-evalue_max'};
@@ -5901,7 +6067,7 @@ sub consistentFamilies {
     my @orfs =  map { $_->family(-set => $_->ygob); $_ } # we set to default value 
     #grep { $_->evalue('ygob') <= $args->{'-evalue'} || $_->hypergob >= $args->{'-synteny_min'} } 
     @all;
-
+    
     # map { print $_->organism, scalar( grep {$_->ohnolog } $_->orfs ) } $self->iterate;
 
     #########################################
@@ -5912,7 +6078,19 @@ sub consistentFamilies {
     # Identify all orfs that are in >1 family. Construct matricx of linked families. 
     
     my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'family', -verbose => 1);        
-    
+
+    #######################################
+    # TEMP / DEBUG / DEVIN 
+    foreach my $fam ( keys %{$family} ) {
+	$family->{ $fam } = $self->shape(
+	    -orfs => $family->{$fam}, 
+	    -by => $args->{'-group_by'},
+	    -index => 0
+	    );
+    }     
+    return $family;
+    #######################################
+
     # These data are actually pretty amazing. 
     # Genes included         24364	
     # Genes in >1 "family"   110	
@@ -6184,7 +6362,7 @@ sub consistentFamilies {
 
     map { print $_->organism, scalar( grep {$_->ohnolog } $_->orfs ) } $self->iterate if 
 	$args->{'-verbose'} >= 3;
-
+    
     return $family;
 }
 
