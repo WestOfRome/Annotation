@@ -2601,7 +2601,8 @@ sub ohnologComparative2 {
     # 0. iterate through each Anc and look at ohno profile across species 
     ######################################################################
 
-    # Data to leverage : 
+    # This is a red herring -- not used in this implementation :  
+    # Data to leverage.. 
     # 0. Phylogenetic consistency // data('SOWH') // seems not to be stored ...
     # 1. Orthogroup quality scores (from quality() ) // need to run $g->quality(o)
     # 2. YGOB pillar mapping quality // data('_PILLAR') [Delta(LOSS)]
@@ -2620,6 +2621,9 @@ sub ohnologComparative2 {
 	  $countC{ join('_',$pair->[0]->ogid,$pair->[1]->ogid) }++;
       }
       next if ($count_ohno==0) || ( $count_ohno==($count_all/2) );
+
+      # does this make sense ?
+
       my ($og_pair) = sort {$countC{$b} <=> $countC{$a}} keys %countC;
       next if scalar( keys %countC )==1 && 
 	  $count_ohno==$countC{ $og_pair } && # ohno|ortho perfectly coherent 
@@ -2633,122 +2637,13 @@ sub ohnologComparative2 {
 	  $self->printFamily( -object => $anc->{$fam} );
       }
       
-      ######################################################################
-      # 1. Leveraging orthogroups -- hypothesis based .. 
-      ######################################################################
-      
-      # the basic premise here is that if any gene is in both an OG and and 
-      # ohno relationship, then we belive that all genes in the OG should be 
-      # in an ohno relationship. We test that assumption. 
-      # We start by finding the one gene that starts the search. 
-      
-      my %seen;
-      foreach my $pair ( grep { $_->[0]->ogid || $_->[1]->ogid } # must be OG  
-			 grep { $_->[1] } @{ $anc->{$fam} }  ) { # must be ohno 
-	  map { next if exists $seen{ $_->unique_id } } @{ $pair };
-	  map { $seen{ $_->unique_id }++ } @{ $pair };
-	  
-	  # look at OGs etc
-	  
-	  my ($gene) = grep {$_->ogid} @{$pair};
-	  #my ($ref)  = grep { $_->organism eq $self->organism }  @{ $index->{$gene->ogid} };
-	  #my $check = $ref->_ohnolog_consistency; # do we need this?
-	  #print {$fh} '+',map { "$_:$#{$check->{$_}}" } sort keys %{$check};
-	  
-	  # go through each gene in the OG
-
-	  foreach my $query ( grep { !$_->ohnolog } grep { $_ ne $gene}  @{ $index->{$gene->ogid} } ) {
-	      my %scores;
-	      foreach my $cand ( grep { $_->organism eq $query->organism } # right species 
-				 grep {$_ ne $query} # not self ...
-				 map {$_->[0]} grep { ! $_->[1] } @{ $anc->{$fam} } ) { # not ohno ..  
-		  next if exists $seen{ $cand->unique_id };
-		  $seen{ $cand->unique_id }++;
-
-		  my ($align, $score, $hash) =
-		      $query->alignSisterRegions(
-			  -sister => $cand,
-			  -ancestor => $fam,
-			  -homology => 'YGOB',
-			  -score => 1, 
-			  -clean => 1
-		      );
-		  # 
-		  my ($pval,$percentile) = 
-		      $self->_alignSisterRands(
-			  -gene1 => $query,
-			  -gene2 => $cand,
-			  -ancestor => $fam, 
-			  -replicates => $args->{'-replicates'},
-			  -score => $score
-		      );
-		  
-		  $scores{ $query->unique_id.'*'.$cand->unique_id } = {
-		      'SCR' => $score,
-		      'PVAL' => $pval,
-		      'PERC' => $percentile,
-		      'GENE' => $cand
-		  }; 
-
-		  print {$fh} '#'.$gene->sn, $gene->ogid, $query->sn, $cand->sn, $score, $pval
-		      if $args->{'-verbose'} >= 2 || 1;
-	      }
-	      next unless %scores;
-	      
-	      # pick a winner.
-	      # TBD : this is currently different to orthologs2()
-	      # which chooses based on score then applies a p-value cutoff. 
-	      # this seems more sensible but need to think more then unify.
-	      # In general, the code is pretty simlar and should probably be 
-	      # abstracted. 
-
-	      my ($best_p, @others)= sort { $scores{$a}->{'PVAL'} <=> 
-						$scores{$b}->{'PVAL'} } keys %scores;
-	      my ($best_s,$second) = sort { $scores{$b}->{'SCR'} <=> $scores{$a}->{'SCR'} } 
-	      grep { $scores{$_}->{'PVAL'}==$scores{$best_p}->{'PVAL'} } keys %scores;
-	      $self->throw( join( '_', keys %scores ) ) unless $best_s;
-	      
-	      # 
-	      
-	      if ( $args->{'-verbose'} >= 2 ) {
-		  $gene->output(-qc=>1, -prepend => [">$fam", $query->sn]);
-		  #map { print {$fh} $_,$scores{$_}->{'SCR'},$scores{$_}->{'PVAL'} } 
-		  #grep {defined} ($best_s, $second);
-	      }
-	      
-	      next unless $scores{$best_s}->{'PVAL'} <= $args->{'-significance'};
-	      next if ($second && $scores{$second}->{'SCR'} == $scores{$best_s}->{'SCR'});
-	      
-	      # set evidence and make the ohnolog pair 
-	      
-	      $self->throw( $best_s ) unless my $best = $scores{$best_s}->{'GENE'};	      
-	      foreach my $o ($query, $best) {
-		  $o->accept( $data_key,  
-			      {		      
-				  'HIT' => ( $o eq $query ? $best : $query ), 
-				  'EVALUE' => $scores{$best_s}->{'PVAL'},
-				  'SCORE' => $scores{$best_s}->{'SCR'}
-			      }
-		      );
-	      }
-	      $query->ohnolog( $best );
-	      $query->output( 
-		  -qc => 1, 
-		  -prepend => [">>>$fam", $best->sn], 
-		  -append => [$query->evalue('ohno'), $query->score('ohno')] 
-		  );
-	  } # query 
-      } # pair loop
-
       ########################################################
       # 2. advanced search 
       ########################################################     
 
-      if ( $args->{'-verbose'} ) {
-	  $self->printFamily( -object => $anc->{$fam} );
-      }
-
-      # create all possible combinations of genes for OGs
+      # create all possible combinations of genes 
+      # if the OGs are correct we willl reover them
+      # but we do not want to assume that they are right 
 
       my @hypoth = $self->combinations( -orfs => $anc->{$fam} );
       #$self->warn("$fam : No combinations") and next unless @hypoth;
@@ -2776,10 +2671,8 @@ sub ohnologComparative2 {
       
       # 5 species must have at least 2^5 combinations
       # --> enough to compute mean, SD etc and develop null.
-      # we focus on particular hypotheses: 
-      # 1. putative OGs that reject null 
-      # 2. putative OGs supported pre-existing biases e.g. linked by an OG
-      
+      # we also retain any exisitng OGs
+
       my @sort = sort {$b <=> $a} @scores;
       my ($m,$sd,$n) = &_calcMeanSD( grep {$_ <= $sort[0] } @scores); # trimed mean 
       push @ok, grep { $scores[$_] > ($m+(2*$sd)) } (0..$#scores);
@@ -2794,19 +2687,23 @@ sub ohnologComparative2 {
 	  }
       }
 
+      if ( $#uniq <=0 ) {
+	  # 
+	  print " >>>>>>>>>>>>>>>>>>>>>> * <<<<<<<<<<<<<<<<<<";
+	  next;
+      }
+
       ####################################################
       # compare pairs of acceptable OG hypotheses 
       # to identify most likely sister regions 
       ####################################################
-      
-      next unless $#uniq>0;
       
       my %score;
       for my $i ( 0..($#uniq-1) ) {
 	HYP: for my $j ( ($i+1)..$#uniq ) {
 	    my $i_ind = $uniq[$i];
 	    my $j_ind = $uniq[$j];
-
+	    
 	    # 1. exlude cases that are non-MECE i.e. same gene on both  
 	    # 2. require some evidence of sister relationship 
 	    
@@ -2819,10 +2716,15 @@ sub ohnologComparative2 {
 	    }
 	    #next HYP unless $hyp_ohno_count;
 	    
-	    # 
+	    # compute some scores and statistics.  
+	    # we comepute only species level statstics 
+	    # not comparative becuase we do not have the code 
+	    # for the randomizations. 
 	    
-	    my @scores_para;
+	    my ($score_sum, @scores_para, @scores_rand); # these are broken. See note below. 
+	    my %species_stats; # These are OK. 
 	    for my $x ( 0 .. $#{$hypoth[0]} ) {
+		
 		my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
 		    $hypoth[$i_ind]->[$x]->alignSisterRegions(
 			-sister => $hypoth[$j_ind]->[$x],
@@ -2831,30 +2733,155 @@ sub ohnologComparative2 {
 			-score => 1,
 			-verbose => 0
 		    );
+
 		push @scores_para, $score;
+		$score_sum += $score;		
+		# develop some statistics. 
+		
+		# NOTE #################################################
+		# OK -- the comparative level statistic is not kosher. 
+		# The rands are independet by species but the 
+		# the real data are not independent. 
+		# Should be doing randomizations differently. 
+		# when I sum these I am averaging out any rand signal 
+		# and inflating the pvalues. 
+		# revering to jst collecting the species level stats. 
+		# grr. #################################################
+		
+		my ($pval, $perc, $rands) = $self->_alignSisterRands(	    
+		    -gene1 => $hypoth[$i_ind]->[$x],
+		    -gene2 => $hypoth[$j_ind]->[$x],
+		    -ancestor => $fam,
+		    -replicates => $args->{'-replicates'}
+		    -score => $score
+		    );
+		# push @scores_rand, $rands;
+		$species_stats{ $hypoth[$i_ind]->[$x]->organism } = {
+		    PERC => $perc,
+		    PVAL => $pval,
+		    SCR => $score
+		};
 	    }
 
-	    my ($m,$sd,$n) = &_calcMeanSD(@scores_para); # trimed mean
+	    #####################################################################
+	    # Broken ....
+	    if ( 1==2 ) {
+		my (@rand_sum, @rand_rat);
+		foreach my $i ( 1..$args->{'-replicates'} ) {
+		    my @r_i = map { $scores_rand[$_]->[$i-1] } (0 .. $#scores_rand);
+		    my ($m,$sd,$n) = &_calcMeanSD(@r_i);
+		    my $sum;
+		    map { $sum += $_ } @r_i; 
+		    push @rand_sum, $sum;
+		    push @rand_rat, $m/($sd>0 ? $sd : 1); 
+		}
+		
+		# create precentiles etc 
+		
+		my $perc_s = &_percentile($score_sum, \@rand_sum);
+		my $pval_s = ( $perc_s==100 ? 1/$args->{'-replicates'} : sprintf("%.3f",(100-$perc_s)/100) );
+
+		my ($mean,$sd,$n) = &_calcMeanSD(@scores_para); # trimed mean
+		my $ratio =  $mean/($sd>0 ? $sd : 1);
+		my $perc_r = &_percentile($ratio, \@rand_rat);
+		my $pval_r = ( $perc_r==100 ? 1/$args->{'-replicates'} : sprintf("%.3f",(100-$perc_r)/100) );
+		
+		print 
+		    $score_sum, &_calcMeanSD(@rand_sum), $pval_s, 
+		    $ratio, &_calcMeanSD(@rand_rat), $pval_r;
+	    }
+	    #####################################################################
+	    
+	    # process real data and store 
+
+	    my ($mean,$sd) = &_calcMeanSD(@scores_para);
+	    
 	    $score{ join('_',$i_ind,$j_ind) } = {
 		OG1 => $i_ind,
 		OG2 => $j_ind,
-		MEAN => $m,
-		SD => $sd,
-		RATIO => $m/($sd>0 ? $sd : 1)
+		SUM => $score_sum,
+		RATIO => $mean/($sd>0 ? $sd : 1),
+		SPECIES => \%species_stats, 
+		SUM_OG => $scores[$i_ind]+$scores[$j_ind]
 	    };
-	    #print values %{ $score{  join('_',$i_ind,$j_ind) } };
 	}
       }
       
-      foreach my $key ( sort { $score{$b} <=> $score{$a} } keys %score ) {
-	  my $x = $score{$key};
-	  print {$fh} (map {$_->sn} (@{$hypoth[$x->{OG1}]}, @{$hypoth[$x->{OG2}]})), 
-	  $scores[$x->{OG1}], $scores[$x->{OG2}], $x->{RATIO};
-	  if ( $x->{RATIO} > 1 ) {
-	  }
+      ###########################
+      # choose a winner 
+      ###########################
+      
+      # find best pair using  mean/sd metric with underlying OG scores for tiebreakers
+      
+      my ($best, $next) = sort { $score{$b}->{'RATIO'} <=> $score{$a}->{'RATIO'} } keys %score;
+      if ( $next && $score{$best} == $score{$next} ) {
+	  my @tie = grep { $score{$_}==$score{$best} } keys %score;
+	  ($best) = sort { $score{$b}->{'SUM_OG'} <=> $score{$a}->{'SUM_OG'} } @tie;
+      }
+
+      # require ratio >0 . lenient. 
+
+      if ( $args->{'-verbose'} ) {
+	  print {$fh} $score{$best}->{ 'SUM_OG' }, $score{$best}->{ 'SUM' }, $score{$best}->{ 'RATIO' };
+	  #(map { $_->sn}  @{$hypoth[ $score{$best}->{ 'OG1' } ]}, @{$hypoth[ $score{$best}->{ 'OG1' } ]}),	  
+      }
+      next unless $score{$best}->{ 'RATIO' } > 0; 
+
+      # check species by species p-values since we do not have a true p-value
+      
+      foreach my $sp ( $self->organism, $self->bound ) {
+	  my $data = $scores{ $best }->{'SPECIES'}->{$sp}; 
+	  print $sp, $data->{SCR}, $data->{PVAL};
       }
       
-      next;
+      # require at least 3 significant ...
+
+      
+
+      ###########################
+      # get the two groups and make OGs if needed 
+      ###########################
+      
+      foreach my $hyp ( qw(OG1 OG2) ) {
+	  my @hyp = @{$hypoth[ $score{$best}->{ $hyp } ]};
+	  my @ogid = map {$_->ogid} grep {$_->ogid} @hyp;
+	  my @uniq = keys %{{ map { $_ => 1} @ogid }};
+	  next if ($#ogid==$#hyp && $#uniq==0); # already an OG 
+	  
+	  # need to break OGs..
+	  if ( @ogid ) {
+	      print ">>>>>>",@uniq;
+	      map { $_->_dissolve_orthogroup } map { $index->{$_}->[0] } @uniq;
+	  }
+	  # create new OGs ..
+	  my ($ref) = grep { $_->organism eq $self->organism } @hyp;
+	  $ref->_define_orthogroup( grep {$_ ne $ref} @hyp);
+      }
+
+      ###########################
+      # get the two groups and make OGs if needed 
+      ###########################
+
+      foreach my $i ( 0 .. $#og1 ) { 
+	  
+	  # create the ohnologs 
+	  
+	  map {$_->ohnolog(-object => undef)} grep {$_->ohnolog} ($og1[$i], $og2[$i]);
+	  $og1[$i]->ohnolog( -object => $og2[$i] );
+	  
+	  # build the data hash 
+	  
+	  my $data = $scores{ $best }->{'SPECIES'}->{$og1[$i]->organism}; 
+	  foreach my $o ( $og1[$i], $og2[$i] ) {
+	      $o->accept( $data_key, 
+			  {               
+			      'HIT' => ( $o eq $og1[$i] ? $og2[$i] : $og1[$i] ),
+			      'EVALUE' => $data->{'PVAL'},
+			      'SCORE' => $data->{'SCR'}
+			  }
+		  );
+	  }
+      }
 
     ########################################################
     # 3. basic validation 
@@ -4108,7 +4135,7 @@ sub _percentile {
     my @sort = sort {$a <=> $b} @{$rands};
     
     pop(@sort) until (! @sort || $scr > $sort[$#sort]);
-    
+
     return ( scalar(@sort)/scalar(@{$rands})*100 );
 }
 
@@ -4177,11 +4204,13 @@ sub _alignSisterRands {
 	push @scores, $score;
 	$dummy->_data( $store );		
     }
+
+    return @scores unless $args->{'-score'};
+
     $percentile = &_percentile($args->{'-score'}, \@scores);
     $pval = ( $percentile==100 ? 1/$args->{'-replicates'} : sprintf("%.3f",(100-$percentile)/100) );
     
-
-    return ($pval,$percentile);
+    return ($pval,$percentile,\@scores);
 }
 
 =head2 report()
