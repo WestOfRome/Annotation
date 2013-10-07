@@ -2492,7 +2492,7 @@ sub quality {
 	my @normal_stats = &_calcMeanSD( @{$hash{ $dimension }} );
 	print $dimension, $#{$hash{$dimension}}, @normal_stats; 
 	$self->{$key}->{ $dimension } = [ @{$hash{ $dimension }} ]; #[ @normal_stats ]; 
-
+	
 	######################################### 
 	# output for analysis 
 	######################################### 
