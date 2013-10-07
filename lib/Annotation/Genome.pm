@@ -2376,7 +2376,7 @@ sub quality {
     ##############################    
     # P2-ICEB-ULUR-AHUC-ALAK
     ##############################    
-    
+
     my $count=0;
     if ( $args->{'-nulldist'} ) {
 
@@ -2446,10 +2446,7 @@ sub quality {
 	    $sd_ygob=1 unless $sd_ygob >0;
 	    my $score_ygob = sprintf("%.1f", $mean_ygob/$sd_ygob);
 	    push @{ $hash{'YGOB'} }, -1*$score_ygob; # make +ve -- needed for Qnorm below 
-	    
-	    # colean up 
 
-	    push @{ $hash{'COMB'} }, -1*$score_syn*$score_ygob; # I am making this +ve 	    
 	    #print STDERR $mean_len, $score_syn, $score_ygob;
 	    last if ++$count >= $args->{'-nulldist'};
 	}
@@ -2463,14 +2460,14 @@ sub quality {
 	    $self->throw("LOW COUNT: $dimension, $#{$hash{$dimension}} ") 
 		if $#{$hash{$dimension}} <= 50;
 	    
-	    # unit normalize -- this turns out to be not very useful .. 
+	    # unit normalize -- this turns out to be not useful .. 
 	    my @normal_stats = &_calcMeanSD( @{$hash{ $dimension }} );
 	    @{$hash{ $dimension.'_Z' }} = # Unit normalized -- Z-scores 
 		map { ($_-$normal_stats[0])/$normal_stats[1] } @{$hash{ $dimension }};
 	    
 	    # print and store data 
 	    print $dimension, $#{$hash{$dimension}}, @normal_stats; 
-	    $self->{$key}->{ $dimension } = [ @normal_stats ]; 
+	    # $self->{$key}->{ $dimension } = [ @normal_stats ]; 
 	}
 	
 	######################################### 	
@@ -2480,15 +2477,21 @@ sub quality {
 
 	@{$hash{ 'YGOB_QN' }} = &quantileNormalize( $hash{'SYN'}, $hash{'YGOB'} );
 	
+	my (@temp);
+	foreach my $i ( 0..$#{ $hash{'YGOB'} } ) {
+	    push @temp, { YGOB => $hash{'YGOB'}->[$i], YGOB_QN => $hash{'YGOB_QN'}->[$i] };
+	}
+	$self->{$key}->{MAP} = [ sort {$a->{YGOB} <=> $b->{YGOB}} @temp ];
+
 	######################################### 	
-	# create a unified quality metric 
+	# create a unified quality metric to use as a null distribution 
 	######################################### 
 	
-	my $dimension = 'QUAL';
-	@{$hash{ $dimension }} = map { $hash{'SYN'}->[$_]*$hash{'YGOB_QN'}->[$_] } (0..$#{ $hash{'SYN'} });
+	my $dimension = 'NULL'; ## Sum or Product ?? 
+	@{$hash{ $dimension }} = map { $hash{'SYN'}->[$_] + $hash{'YGOB_QN'}->[$_] } (0..$#{ $hash{'SYN'} });
 	my @normal_stats = &_calcMeanSD( @{$hash{ $dimension }} );
 	print $dimension, $#{$hash{$dimension}}, @normal_stats; 
-	$self->{$key}->{ $dimension } = [ @normal_stats ]; 
+	$self->{$key}->{ $dimension } = [ @{$hash{ $dimension }} ]; #[ @normal_stats ]; 
 
 	######################################### 
 	# output for analysis 
@@ -2503,84 +2506,69 @@ sub quality {
 	}
 
     } elsif ( $args->{'-object'} ) {
-	
-	$self->throw unless exists $self->{$key} &&
-	    exists $self->{$key}->{'PID'};
+
+	#################################
+	# validate needed datastructures 
+	#################################
+
+	$self->throw unless 
+	    exists $self->{$key} &&
+	    exists $self->{$key}->{'NULL'} && 
+	    exists $self->{$key}->{'MAP'} && 
+	    exists $self->{$key}->{'MAP'}->[0]->{'YGOB_QN'};
+	$self->throw unless $self->{$key}->{'MAP'}->[0]->{'YGOB_QN'} <
+	    $self->{$key}->{'MAP'}->[-1]->{'YGOB_QN'};
+
+	#################################
+	# validate argnuments 
+	#################################
+
 	$self->throw unless $self->down->down->isa(ref( $args->{'-object'} ));	
 	my ($qual,$o) = ($self->{$key}, $args->{'-object'});
+
+	#################################	
+	# get data 
+	#################################
+
+	# synteny 
+
+	my ( $score_syn, $mean_syn, $sd_syn ) = 
+	    $self->syntenyMatrix(
+		-orfs => [ $o->_orthogroup ],
+		-mode => 'ortho',
+		-score => 1
+	    );
 	
-	my ($total,$len_z,$pid_z,$syn_z);
-
-	# 
+	# homology 
 	
-	my @org = map { $_->organism } $o->_orthogroup;
-	my @tags = map { [sort ($org[$_],$org[$_-1])] } 0..$#org;
-	foreach my $pair ( @tags ) {
-	    my ($i) = grep { $_->organism eq $pair->[0] } $o->_orthogroup; 
-	    my ($j) = grep { $_->organism eq $pair->[1] } $o->_orthogroup; 
-	    my $pid = $i->bl2seq(-object => $j, -identity => 1);		
-	    
-	    my $tag = join(':', @{$pair});
-	    $self->throw($tag) unless exists $qual->{'PID'}->{$tag};
-	    my ($mean,$sd, $n) = @{$qual->{'PID'}->{$tag}};
-	    
-	    if ( $sd > 0 ) {
-		my $zscr = ($pid - $mean ) / $sd;
-		$pid_z += ( $zscr / ($args->{'-equalize'} ? scalar(@org) : 1) );
-		#print $i->name , $j->name, $tag, $pid, $mean, $sd, $zscr, $pid_z;
+	my ($mean_ygob,$sd_ygob) = &_calcMeanSD( map { $_->logscore('ygob') } $o->_orthogroup );
+	$sd_ygob=1 unless $sd_ygob >0;
+	my $score_ygob = -1*sprintf("%.1f", $mean_ygob/$sd_ygob);
+	
+	#################################
+	# convert homology to quantile normalized value 
+	#################################
+
+	my $score_qn;
+	if ( $score_ygob <= $qual->{MAP}->[0]->{'YGOB'} ) {
+	    $score_qn = $qual->{MAP}->[0]->{'YGOB_QN'};
+	} elsif ( $score_ygob >= $qual->{MAP}->[-1]->{'YGOB'} ) {
+	    $score_qn = $qual->{MAP}->[-1]->{'YGOB_QN'};
+	} else {
+	    for my $i ( 1..$#{ $qual->{MAP} } ) {
+		$score_qn = $qual->{MAP}->[$i-1]->{'YGOB_QN'};
+		last if $score_ygob >= $qual->{MAP}->[$i-1]->{'YGOB'} &&
+		    $score_ygob <= $qual->{MAP}->[$i]->{'YGOB'};
 	    }
+	} 
 
-	    # syntney ...
-
-	    my $syn = $i->synteny_conserved(-object => $j);
-
-	    $self->throw($tag) unless exists $qual->{'SYN'}->{$tag};
-	    my ($mean,$sd, $n) = @{$qual->{'SYN'}->{$tag}};
-	    
-	    if ( $sd > 0 ) {
-		my $zscr = ($pid - $mean ) / $sd;
-		$syn_z += ( $zscr / ($args->{'-equalize'} ? scalar(@org) : 1) );
-		#print $i->name , $j->name, $tag, $pid, $mean, $sd, $zscr, $pid_z;
-	    }	    
-	}
-
-	#########################################
-	# depracated : does not provide relevant info 
-	if ( 0 == 1 ) {
-	    foreach my $i ( $o->_orthogroup ) {
-		my $binom = $i->binomialsynteny;
-		# 
-		my $tdist = $i->telomereDistance;
-		my $index = int( ($tdist + $args->{'-unit'} ) / $args->{'-unit'} );
-		$index = 10 if $index > 10;
-		my $tag = $i->organism.$index;
-		my ($mean,$sd, $n) = @{$qual->{'SYN'}->{ $tag }};
-		
-		if ( $sd > 0 ) {
-		    my $zscr = ($binom - $mean ) / $sd;
-		    $syn_z += ( $zscr / ($args->{'-equalize'} ? scalar(@org) : 1) );
-		    #print $i->name , $tdist, $tag, $binom, $mean, $sd, $zscr, $syn_z;  
-		}
-	    }
-	}
-	#########################################
-
-	# 
-
-	if ( $o->_orthogroup ) {
-	    my ($m_og,$sd_og) = _calcMeanSD( map {$_->length} $o->_orthogroup );
-	    my $tag = sprintf("%.1f", log($m_og)/log(10));	
-	    my ($mean, $sd, $n) = @{$qual->{'LEN'}->{ $tag }};	
-	    if ( $sd > 0 ) {
-		my $zscr = ($sd_og - $mean ) / $sd;
-		$len_z -= $zscr; # unlike others, lower is better than higher 
-		#print {STDERR} $o->identify, $tag, $m_og, $mean, $sd, $sd_og, $zscr, $len_z;  
-	    }
-	}
-
-	my $total = $len_z + $pid_z + $syn_z;
-	my @res = map { sprintf("%.1f", $_) } ( $total, $pid_z, $syn_z, $len_z );
-	return ( wantarray ? @res : $res[0] ) ;
+	#################################
+	# convert to percentile to compare OGs 
+	#################################
+	
+	my $score = $score_syn + $score_qn; ## Sum or Product ?? 
+	my $quality = &_percentile($score, $self->{$key}->{'NULL'});
+	return ( wantarray ? ($quality,$score, $score_syn, $score_ygob) : $quality );
 	
     } else {
 	    
@@ -2588,11 +2576,7 @@ sub quality {
 	
 	my $check=0;
 	foreach my $og ( grep {$_->coding}  $self->orthogroups ) {
-
-	    my @qual = $self->quality( -object => $og, @_ );
-	    my $res = ( $qual[0]/3 < -1 || $qual[1] < -2 || $qual[2] < -2 || $qual[3] < -2 ? 1 : 0);
-	    $check++ if $res;
-
+	    my @qual = $self->quality( -object => $og );
 	    #$og->kaks;
 	    my $sowh = $og->phyml( -sowh =>  $args->{'-sowh'} ) if $args->{'-sowh'};
 	    my @sowh = map { $sowh->{$_} } qw(DELTA PVAL RESULT);
@@ -2647,8 +2631,6 @@ sub ohnologComparative2 {
     # 
     $args->{'-replicates'} = 50 unless exists $args->{'-replicates'};    
     $args->{'-significance'} = 0.05 unless exists $args->{'-significance'}; 
-
-    my $LOCAL_DEBUG_PARAM=($args->{'-debug'} ? 0 : 3 );
     
     ################################
     # QC
@@ -2665,7 +2647,8 @@ sub ohnologComparative2 {
     my $fh = STDOUT;
     my $species_count= scalar($self->bound)+1;
     my $data_key = 'OHNO';
-    
+    my $LOCAL_DEBUG_PARAM=($args->{'-debug'} ? 0 : 3 );
+
     ################################
     # random output -- legacy 
     ################################
@@ -2722,7 +2705,7 @@ sub ohnologComparative2 {
 	  $count_ohno++;
 	  $countC{ join('_',$pair->[0]->ogid,$pair->[1]->ogid) }++;
       }
-      next if ($count_ohno==0) || ( $count_ohno==($count_all/2) );
+      next ANC if ($count_ohno==0) || ( $count_ohno==($count_all/2) );
 
       # does this make sense ?
 
@@ -2738,7 +2721,8 @@ sub ohnologComparative2 {
 	  print {$fh} "\n".('='x50)."\n>$fam", ++$countf, $count_all, $count_ohno;
 	  $self->printFamily( -object => $anc->{$fam} );
       }
-      
+      next ANC;
+
       ########################################################
       # 2. advanced search 
       ########################################################     
@@ -2758,7 +2742,7 @@ sub ohnologComparative2 {
 	  $outcomes{'1.NoHyp'}++;
 	  next ANC;
       }
-      
+
       # compute all pairwise syntey scores for putative OG
       # and sumarize as mean/sd 
       
@@ -3082,7 +3066,7 @@ sub printFamily {
     # print OGs
     
     my @org =  ($self->organism, $self->bound);
-    print {$fh} 'OGID', @org, 'YGOB', 'Syn', 'Quality';
+    print {$fh} 'OGID', @org, 'YGOB', 'Syn', 'Score', 'Quality';
     foreach my $ogid ( @ord ) {
 	my @order;
 	foreach my $org ( @org ) {
@@ -3090,12 +3074,10 @@ sub printFamily {
 	    push @order, ($o ? $o->up->id.$o->data($attr) : undef);
 	}
 	
-	my ($scr) = $self->syntenyMatrix(-orfs => $og->{$ogid}, -score => 1);
-	my @ygob = map { $_->logscore('ygob') } @{$og->{$ogid}};
-	my ($mean,$sd) = &_calcMeanSD( @ygob );
-	$sd=1 unless $sd >0;
-	my $ygscr = sprintf("%.1f", $mean/$sd);
-	print {$fh} $ogid, @order, $ygscr, $scr, sprintf("%.1f", $scr*$ygscr*-1); 
+	my ($ref) = grep { $_->organism eq $self->organism } @{$og->{$ogid}};
+	my @quality = $self->quality( -object => $ref );
+
+	print {$fh} $ogid, @order, reverse(@quality) ;
     }
 
     # print genes not in OGs-- 1 per row 
