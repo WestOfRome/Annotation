@@ -2343,18 +2343,39 @@ sub quality {
     my $self = shift;
     my $args = {@_};
 
+    ##############################    
+    # Defaults 
+    ##############################    
+
+    # run mode 
     $args->{'-object'} = undef unless exists $args->{'-object'};
-    $args->{'-unit'} = 20; # unless exists $args->{'-unit'};
+    $args->{'-nulldist'} = $args->{'-null'} if exists $args->{'-null'};
     $args->{'-nulldist'} = undef unless exists $args->{'-nulldist'};
-    $args->{'-verbose'} = undef unless exists $args->{'-verbose'};
+    # null set selection 
+    $args->{'-length_filter'} = .1 unless exists $args->{'-length_filter'};
+    # score normalization 
+    $args->{'-unit'} = 20; # unless exists $args->{'-unit'};
     $args->{'-equalize'} = 1 unless exists $args->{'-equalize'};
+    # 
+    $args->{'-verbose'} = undef unless exists $args->{'-verbose'};
+    # bonus 
     $args->{'-sowh'} = 20 unless exists  $args->{'-sowh'};
 
+    ##############################        
+    # param chencksing 
+    ##############################    
+    
     $self->throw if $args->{'-object'} && $args->{'-nulldist'};
+
+    ##############################    
+    # set required vars 
+    ##############################    
+
     my $key = 'QUALITY';
 
     ##############################    
     # P2-ICEB-ULUR-AHUC-ALAK
+    ##############################    
     
     my $count=0;
     if ( $args->{'-nulldist'} ) {
@@ -2365,66 +2386,129 @@ sub quality {
 	my %hash;
 	foreach my $o ( sort { $a->_internal_id <=> $b->_internal_id } @ogs ) {
 	    
-	    # for %ID we index by species pair 
-	    
-	    foreach my $i ( sort {$a->organism cmp $b->organism} $o->_orthogroup ) {
-		foreach my $j ( sort {$a->organism cmp $b->organism} $o->_orthogroup ) {
-		    next unless $i->organism lt $j->organism;
-		    my $tag = $i->organism.':'.$j->organism;
-		    push @{$hash{'PID'}{ $tag }}, $i->bl2seq(-object => $j, -identity => 1);		    
-		}
-	    }
-
-	    # synteny 
-
-	    foreach my $i ( sort {$a->organism cmp $b->organism} $o->_orthogroup ) {
-		foreach my $j ( sort {$a->organism cmp $b->organism} $o->_orthogroup ) {
-		    next unless $i->organism lt $j->organism;
-		    my $tag = $i->organism.':'.$j->organism;
-		    push @{$hash{'SYN'}{ $tag }}, $i->synteny_conserved(-object => $j);
-		}
-	    }
-	    
 	    #########################################
-	    # depracated : index by telomere distance 	    
+	    # Depracated.  
+	    # The telomere distance is a really nice idea but too hard. 
+	    # %ID may need to be restored for non-Anc loci. 
+	    #########################################
 	    if ( 1==0 ) {
+		# index by telomere distance 	    
 		foreach my $i ( grep { $_->up->length >1e5} $o->_orthogroup ) {
 		    my $tdist = $i->telomereDistance;
 		    my $index = int( ($tdist + $args->{'-unit'} ) / $args->{'-unit'} );
 		    $index = 10 if $index > 10;
 		    push @{ $hash{'SYN'}{ $i->organism.$index } }, $i->synteny( -hyper => );
+		}	    
+		# for %ID we index by species pair 	    
+		foreach my $i ( sort {$a->organism cmp $b->organism} $o->_orthogroup ) {
+		    foreach my $j ( sort {$a->organism cmp $b->organism} $o->_orthogroup ) {
+			next unless $i->organism lt $j->organism;
+			my $tag = $i->organism.':'.$j->organism;
+			push @{$hash{'PID'}{ $tag }}, $i->bl2seq(-object => $j, -identity => 1);
+		    }
 		}
 	    }
-	    #########################################
 
-	    # no indexing for length 
+	    ######################################### 
+	    # qualifying criteria 
+	    ######################################### 
+
+	    # consistency on YGOB hit... 	    
+
+	    map { next unless $_->ygob eq $o->ygob } $o->orthogroup;
+
+	    # look like complete genes... 
+
+	    my ($mean_len,$sd_len) = &_calcMeanSD( map {$_->length} $o->_orthogroup );
+	    next unless $sd_len/$mean_len < $args->{'-length_filter'};
+	    $sd_len = 1 unless $sd_len >0;
+	    # my $loglen = sprintf("%.1f", log($m)/log(10));	
+	    my $score_len = sprintf("%.1f", $mean_len/$sd_len);
+	    push @{ $hash{'LEN'} }, $score_len;	    
 	    
-	    my ($m,$sd) = _calcMeanSD( map {$_->length} $o->_orthogroup );
-	    my $loglen = sprintf("%.1f", log($m)/log(10));	
-	    push @{$hash{ 'LEN' }{ $loglen }}, $sd;	    
+	    ######################################### 
+	    # quality criteria 
+	    ######################################### 
+	    
+	    # synteny 	    
+
+	    my ( $score_syn, $mean_syn, $sd_syn ) = 
+		$self->syntenyMatrix(
+		    -orfs => [ $o->_orthogroup ],
+		    -mode => 'ortho',
+		    -score => 1
+		);
+	    push @{ $hash{'SYN'} }, $score_syn;
+
+	    # homology 
+
+	    my ($mean_ygob,$sd_ygob) = &_calcMeanSD( map { $_->logscore('ygob') } $o->_orthogroup );
+	    $sd_ygob=1 unless $sd_ygob >0;
+	    my $score_ygob = sprintf("%.1f", $mean_ygob/$sd_ygob);
+	    push @{ $hash{'YGOB'} }, -1*$score_ygob; # make +ve -- needed for Qnorm below 
+	    
+	    # colean up 
+
+	    push @{ $hash{'COMB'} }, -1*$score_syn*$score_ygob; # I am making this +ve 	    
+	    #print STDERR $mean_len, $score_syn, $score_ygob;
 	    last if ++$count >= $args->{'-nulldist'};
 	}
 	
-	# 
-
+	######################################### 
+	# normalize data and create data structure 
+	######################################### 
+	
 	delete $self->{$key};
-	foreach my $i ( keys %hash ) {
-	    foreach my $j ( sort keys %{$hash{$i}} ) {
-		print $i,$j,$#{$hash{$i}{$j}}, _calcMeanSD( @{$hash{ $i }{ $j } }) 
-		    if $args->{'-verbose'};
-		$self->warn("LOW COUNT: $i,$j,$#{$hash{$i}{$j}}") if $#{$hash{$i}{$j}} <= 20;
-		$self->{$key}->{ $i }->{ $j } = 
-		    [ _calcMeanSD( @{$hash{ $i }{ $j } }), scalar( @{$hash{ $i }{ $j } } ) ];
+	foreach my $dimension ( keys %hash ) {
+	    $self->throw("LOW COUNT: $dimension, $#{$hash{$dimension}} ") 
+		if $#{$hash{$dimension}} <= 50;
+	    
+	    # unit normalize -- this turns out to be not very useful .. 
+	    my @normal_stats = &_calcMeanSD( @{$hash{ $dimension }} );
+	    @{$hash{ $dimension.'_Z' }} = # Unit normalized -- Z-scores 
+		map { ($_-$normal_stats[0])/$normal_stats[1] } @{$hash{ $dimension }};
+	    
+	    # print and store data 
+	    print $dimension, $#{$hash{$dimension}}, @normal_stats; 
+	    $self->{$key}->{ $dimension } = [ @normal_stats ]; 
+	}
+	
+	######################################### 	
+	# quantile normalize YGOB data to match synteny 
+	######################################### 
+	# Synteny data is almost normal so we normalize to that 
+
+	@{$hash{ 'YGOB_QN' }} = &quantileNormalize( $hash{'SYN'}, $hash{'YGOB'} );
+	
+	######################################### 	
+	# create a unified quality metric 
+	######################################### 
+	
+	my $dimension = 'QUAL';
+	@{$hash{ $dimension }} = map { $hash{'SYN'}->[$_]*$hash{'YGOB_QN'}->[$_] } (0..$#{ $hash{'SYN'} });
+	my @normal_stats = &_calcMeanSD( @{$hash{ $dimension }} );
+	print $dimension, $#{$hash{$dimension}}, @normal_stats; 
+	$self->{$key}->{ $dimension } = [ @normal_stats ]; 
+
+	######################################### 
+	# output for analysis 
+	######################################### 
+
+	if ( $args->{'-verbose'} >= 2 || 1 ) {
+	    my @head =  qw(LEN LEN_Z YGOB YGOB_Z YGOB_QN SYN SYN_Z QUAL);
+	    print {STDERR} 'N', @head;
+	    foreach my $i ( 0..$#{ $hash{'SYN'} } ) {
+		print {STDERR} $i, (map { $hash{$_}->[$i] } @head);
 	    }
 	}
 
     } elsif ( $args->{'-object'} ) {
-
+	
 	$self->throw unless exists $self->{$key} &&
 	    exists $self->{$key}->{'PID'};
 	$self->throw unless $self->down->down->isa(ref( $args->{'-object'} ));	
 	my ($qual,$o) = ($self->{$key}, $args->{'-object'});
-
+	
 	my ($total,$len_z,$pid_z,$syn_z);
 
 	# 
@@ -2517,6 +2601,33 @@ sub quality {
     }
     
     return $self;
+}
+
+=head2 quantileNormalize(\@ref, \@target)
+=cut 
+
+sub quantileNormalize {
+    my @ref = @{ shift @_ };
+    my @target = @{ shift @_ };
+    
+    #print @_, $#ref, $#target;
+    die unless $#ref==$#target;
+    die unless $#ref>=10;
+
+    # leverage ref 
+    my @sort_ref = sort { $a <=> $b } @ref;     
+    my %rank2val = map { $_ => $sort_ref[$_] } 0..$#sort_ref; # low index => low value 
+
+    # target 
+    my @ds = map { {ORDER => $_, VALUE => $target[ $_ ] } } 0..$#target;
+    my @sort_ds = sort { $a->{VALUE} <=> $b->{VALUE} } @ds; # sorted by value 
+    map { $sort_ds[$_]->{RANK}=$_ } 0..$#sort_ds; # tag with rank 
+    map { $_->{QN} = $rank2val{ $_->{RANK} } } @sort_ds; # map to new value using rank 
+
+    # restore original order for return 
+    my @ret = map { $_->{QN} } sort { $a->{ORDER} <=> $b->{ORDER} } @sort_ds; 
+
+    return @ret;
 }
 
 =head2 reconcileOrthologsOhnologs()
