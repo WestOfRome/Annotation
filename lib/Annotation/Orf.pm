@@ -613,11 +613,13 @@ sub ohnolog {
 =head2 critique
 
     Return 0-1 value representing the quality of the prediction
-    compared to the assocaited SGD gene model. 
+    compared to the assocaited (SGD) gene model. 
 
     Returns undef if no SGD (or other gold standard) model has 
     been associated. The association process uses $genome->compare(file.gff)
-    and is nontrivial. Hard even in fragmented genomes. 
+    and is nontrivial. Hard even in non-fragmented genomes. 
+
+    The score reflects base pair level overlap with penalty for overcalling. 
 
 =cut
 
@@ -958,7 +960,7 @@ sub _scoreSisterAlignment {
     # scoring matrix for alignment phase.  
     # >>>> should be possible to pass in a matrix. <<<<<
     
-    my %matrix = (
+    my %scoring_matrix = (
 	'OHNO' => 1,
 	'CROSS' => 1,
 	'SAME' => 0,
@@ -969,7 +971,7 @@ sub _scoreSisterAlignment {
 
     # 
     
-    my %score = (
+    my %count = (
 	'OHNO' => -1,
 	'KC' => 0,
 	'GAP' => 0,
@@ -994,15 +996,15 @@ sub _scoreSisterAlignment {
 	# second 2 involve interleaving and intra locus scoring 
 	
 	if (! $row->{$key1} && ! $row->{$key2}) { 
-	    $score{'GAP'}++;
+	    $count{'GAP'}++;
 	    next;
 	} elsif ( $row->{$key1} && $row->{$key2} ) { 
-	    $score{'OHNO'}++;
+	    $count{'OHNO'}++;
 	    next;
 	} elsif ( ($row->{$key1} && $old->{$key1}) || ($row->{$key2} && $old->{$key2}) ) {
-	    $score{'SAME'}++;
+	    $count{'SAME'}++;
 	} elsif ( ($row->{$key1} && $old->{$key2}) || ($row->{$key2} && $old->{$key1}) ) {
-	    $score{'CROSS'}++;
+	    $count{'CROSS'}++;
 	} else {} # this is possible at the start of an alignment. 
 	
 	$oldk=$k; # only assigned of single-copy 
@@ -1019,21 +1021,23 @@ sub _scoreSisterAlignment {
 	next unless ($row->{$key1} || $row->{$key2});
 	$oldk=$k and next unless ($old->{$key1} || $old->{$key2} );
 	# 
-	$score{'KC'}++;
+	$count{'KC'}++;
 	my $delta = abs( $old->{$key0}->data('ANC_POS') - $row->{$key0}->data('ANC_POS'))-1;  
 	my $pen = ($delta >= $args->{'-penalty'} ? 0 : $args->{'-penalty'} - $delta );
-	$score{'DELTA'} += $pen;
-	push @{$score{'ARRAY'}}, $pen;
+	$count{'DELTA'} += $pen;
+	push @{$count{'ARRAY'}}, $pen;
 	$oldk=$k;
     }
     
     ################################################    
-    # finalize scoring and create datastructure 
-    
+    # finalize scoring and create datastructure. 
+    # we ignore delta (depracated), array (not relevant) and KC (by setting score to 0). 
+    # In current implementation, only ohno and crossing contribute. 
+
     my $score=0;
-    map { $score+=$score{$_}*$matrix{$_} } grep {!/delta|array/i} keys %matrix; 
+    map { $score+=$count{$_}*$scoring_matrix{$_} } grep {!/delta|array/i} keys %scoring_matrix; 
     
-    return (wantarray ? ($score, \%score) : $score);
+    return (wantarray ? ($score, \%count) : $score);
 }
 
 sub dpalign {
