@@ -1197,6 +1197,23 @@ sub _bind {
     Group genes from different species into orthology groups based on 
     homology and synteny. 
 
+    We use an iterative process that considers candidates OGs in 
+    confiednce bands based on homology to YOGB models, synteny and
+    parameters linked to dynamic programming alignment methods. 
+
+    The gradient descent is not parametrized to allow user control 
+    but the results are fairly insensitive to details. 
+
+    In each iteration we do two phases: 
+    1. Identification of most compelling new OGs based on gradient descent. 
+    2. NW alignment of regions between high quality OGs to lock-in weak 
+    candidates that make syntenic sense and progressively simplify the problem. 
+    
+    Improvements: 
+    Develop a model that creates pseudo-orthogroups. ie missing some 
+    fraction of genes but strong evidence that they are real. 
+    We could initialize on the Ancestral genome....
+
 =cut 
 
 sub syntenic_orthologs {
@@ -2325,9 +2342,9 @@ sub _access_synteny_null_dist {
 =head2 quality( -object => $orf, -nulldist => #samples, -equalize => 1|0) 
 
     Compute quality of Orthogroups based on population statistics. 
-    We compute distributions for %ID, synteny and length variation among
-    members of an orthogropu and then compare query to obtain Z-score for
-    each of 3 criteria. 
+    We compute distributions for homology and synteny and use these to 
+    bench mark each gene. In both cases we use 1/coefficient of variation
+    (mean/sd) in the OG as the metric. 
 
     With no arguments compares all OGs to the existing null distribution. 
     
@@ -2335,7 +2352,7 @@ sub _access_synteny_null_dist {
     -nulldist : build the null distribution based on -nulldist OGs. 
     -equalize : weight the 3 quality metrics equally
 
-    Returns: Total, PID, Synteny, Length
+    Returns %ile, score, synteny score, homology score. 
 
 =cut 
 
@@ -2880,10 +2897,10 @@ sub ohnologComparative2 {
 
 	    if ( $args->{'-verbose'} >=2 ) {
 		print {$fh} '##',
-		(map {  $hypoth[$_]->[0]->sn } ($i_ind, $j_ind)),
-		(map {  $hypoth[$_]->[0]->ogid } ($i_ind, $j_ind)),
-		(map {  $hypoth[$_]->[0]->hypergob } ($i_ind, $j_ind)),		
-		(map {  $self->syntenyMatrix( -orfs => [$hypoth[$_]->[0]->_orthogroup],-score =>1 ) } ($i_ind, $j_ind)),
+		(map { $hypoth[$_]->[0]->sn } ($i_ind, $j_ind)),
+		(map { $hypoth[$_]->[0]->ogid } ($i_ind, $j_ind)),
+		(map { $hypoth[$_]->[0]->hypergob } ($i_ind, $j_ind)),		
+		(map { $self->quality( -object =>$hypoth[$_]->[0])+0 } ($i_ind, $j_ind)),
 		$score_sum, $ratio;
 	    }
 	}
