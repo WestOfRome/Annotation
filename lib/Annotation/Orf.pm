@@ -806,6 +806,7 @@ sub _filter_tandems {
 sub alignSisterRegions {
     my $self = shift;
     my $args = {@_};
+
     my $sister = $args->{'-sister'};
     my $anc = $args->{'-ancestor'};
 
@@ -822,8 +823,6 @@ sub alignSisterRegions {
     # prepare variables 
     ######################################	
 
-    $anc =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
-    my ($chr,$anc_index) = ($1,$2);
     my $key0 = 'ANC';  # used multiple places. 
     
     ######################################	
@@ -831,12 +830,27 @@ sub alignSisterRegions {
     # the two regions. we create now with reference to '-window' 
     ######################################	
     
-    my ($max_anc) = $anc_index + ( 2*$args->{'-window'} ); 
-    my ($min_anc) = $anc_index - ( 2*$args->{'-window'} ); 
+    my ($chr, $max_anc, $min_anc);
+    if ( ref( $anc ) eq 'SCALAR' ) {
+	$anc =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+	$chr = $1;
+	($max_anc) = $2 + ( 2*$args->{'-window'} ); 
+	($min_anc) = $2 - ( 2*$args->{'-window'} ); 
+    } elsif ( ref($anc) eq 'ARRAY' ) {
+	$anc[0] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+	my ($chr1,$min) = ($1,$2);
+	$anc[1] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+	my ($chr2,$max) = ($1,$2);
+	$self->throw unless $chr1 eq $chr2;
+	($chr, $max_anc, $min_anc) = ($chr, $min, $max);
+    } else { $self->throw; }
+
     $min_anc = 1 unless $min_anc >= 1;
     $self->throw unless $min_anc <= $max_anc;	      
     
+    ######################################	
     # 
+    ######################################	
     
     my $genome = $self->up->up->clone;
     $genome->organism( $key0 );
