@@ -1262,7 +1262,7 @@ sub syntenic_orthologs {
     # ALGORITHM: 
     # We do banded syntenic ortholog search, resolving the 
     # easiest cases first and then using these as extra 
-    # constrains to resolve harder cases. This is facilitated 
+    # constraints to resolve harder cases. This is facilitated 
     # by switching back and forth between an "homology first,
     # synteny second" phase and a "synteny first, homology second"
     # phase. Once both phases are complete, we decrease stringency
@@ -3223,7 +3223,7 @@ sub syntenyMatrix {
 
     # 
 
-    if ( $args->{'-symmetrical'} ) {
+    if ( $args->{'-symmetrical'} || $args->{'-symmetric'} ) {
 	foreach my $i ( keys %synt ) {
 	    foreach my $j ( keys %{$synt{$i} } ) {
 		$synt{$j}{$i}=$synt{$i}{$j};
@@ -3861,7 +3861,7 @@ sub ohnologs2 {
     my $self = shift;
     my $args = {@_};
     
-    #$self->warn("Experimental: Probabilities not yet computed.");
+    $self->throw("This contains a logical flaw. Use synteic_parolgs() instead.");
 
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
@@ -3920,9 +3920,9 @@ sub ohnologs2 {
 	next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );	
 	#print "\n".('#' x 60)."\n".">$anc" unless $args->{'-verbose'} == -1;
 	
-	###################
+	######################################	
 	# cycle through homologs and get synteny 
-	###################
+	######################################	
 	
 	my $old;
 	foreach my $cand ( sort {$a->name <=> $b->name} @{$anc{$anc}} ) {
@@ -3945,6 +3945,7 @@ sub ohnologs2 {
 	
 	######################################	
 	# basic synteny qualification -- we set the bar LOW
+	######################################	
 	
 	my ($x, @init) = map { $_->data($attr => undef); $_ }  
 	sort { $b->data($attr) <=> $a->data($attr) } 
@@ -4054,6 +4055,175 @@ sub ohnologs2 {
 	$g1->name, $g2->name, $sisters{$best}->{SCR},$args->{'-replicates'},$percentile, $pval;
 	$time=time; 
     }
+    
+    map { $_->data($attr => 'delete') } $self->orfs;
+    return $self;
+}
+
+=head2 syntenic_paralogs() 
+=cut 
+
+sub syntenic_paralogs {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-debug'} = undef unless exists $args->{'-debug'};
+    $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
+
+    $args->{'-synteny'} = 0 unless exists $args->{'-synteny'};
+    $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
+ 
+    $args->{'-cutoff'} = ($args->{'-window'} <= 7 ? 2 : 3) unless exists $args->{'-cutoff'};  
+    $args->{'-significance'} = 0.05 unless exists $args->{'-significance'};
+    $args->{'-replicates'} = 20 unless exists $args->{'-replicates'};
+    
+    #######################################
+    # make some vars for the next phase 
+    #######################################
+    
+    my $fh = STDOUT;
+    my $attr = '_ohno_temp_var'.int(rand(100));
+    my $ohno = scalar( grep { $_->ohnolog } $self->orfs );    
+    my $data_key = 'OHNO';
+    my ($counter, $count_x, $count_y)=(0,0,0);
+    
+    #######################################
+    # prep work 
+    #######################################
+      
+    if ( $args->{'-verbose'} == 2 ) {
+	print 
+	    qw(#Family AncLocus Ohno1 Synteny1 Ohno2 Synteny2 |), 
+	    (grep {!/array/i} sort keys %score_def),
+	    qw(Score | Align_Len Track1_Len Track2_Len); 
+    }
+    
+    # create indexes
+    # %anc stores all orfs with same anc homology 
+    # %index provides a unique numeric id access to orfs in genome
+
+    my %anc;
+    my %index;
+    my $index;
+    foreach my $orf ( grep { $_->ygob } map { $_->stream } $self->stream ) {
+	$orf->data($attr => undef);
+	if ( my $oh = $orf->ohnolog ) {
+	    $oh->ohnolog(undef);
+	}
+	push @{ $anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
+	$index{ ++$index }=$orf;
+    }
+    
+    #######################################
+    # Cycle through all Anc families and compute all pairwise synteny.
+    # We use this to do initial prioritization. 
+    #######################################
+
+    my %synteny;   
+    foreach my $anc ( grep { $#{$anc{$_}} >= 1 } keys %anc) {
+	next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );
+	# print $anc;
+
+	my $scores = 
+	    $self->syntenyMatrix(
+		-orfs => $anc{$anc},
+		-mode => 'paralog',
+		-ancestor => $anc,
+		-verbose => 0,
+		-symmetric => 1
+	    );
+	
+	my $f_count=0;
+      CAND: for my $i (0..($#{$anc{$anc}}-1)) {
+	  for my $j ( ($i+1)..$#{$anc{$anc}}) {
+	      my $x = $anc{$anc}->[$i];
+	      my $y = $anc{$anc}->[$j];
+	      $synteny{ join(':',$x->name, $y->name) } = 
+	      {
+		  G1 => $x, 
+		  G2 => $y, 
+		  FAM => $anc,
+		  FAM_N => ++$f_count,
+		  FAM_TOT => undef,
+		  SCORE => ($x->distance( -object => $y ) <= $args->{'-window'}*2 
+			    ? -1 : $scores->{ $x->name }{ $y->name } )
+	      };
+	  }
+      }
+	map {$synteny{$_}->{FAM_TOT}=$f_count } grep { $synteny{$_}->{FAM} eq $anc } keys %synteny;
+	last if ++$tracker >20;
+    }
+    
+    #######################################
+    # descend through stack and accept if 
+    # 1. no conflicting constraints
+    # 2. p-value support 
+    # 3. ?
+    #######################################
+    
+    foreach my $pair ( sort {  $synteny{$b}->{'SCORE'} <=> $synteny{$a}->{'SCORE'} } keys %synteny ) {
+	print $synteny{$pair}->{ANC},$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
+	$synteny{$pair}->{G1}->sn, $synteny{$pair}->{G2}->sn, $synteny{$pair}->{SCORE};
+	
+	my ($x,$y) = map { $synteny{ $cand }->{$_} } qw(G1 G2);
+
+	# check for a conflict with pre-existing more highly weighted decisions
+	# by looking left and right for existing ohnologs 
+	
+	foreach my $dir ( qw(left right) ) {
+	    
+	}
+	my @x = grep { $_->ohnolog } $x->context(-distance => $args->{'-window'}*2);
+	my @y = grep { $_->ohnolog } $x->context(-distance => $args->{'-window'}*2);
+	
+	# get randomization based p-values 
+	# method not tested.. abstracted in a hurry.. 
+	
+	my ($pval,$percentile) = $self->_alignSisterRands( 
+	    -gene1 => $g1,
+	    -gene2 => $g2,
+	    -ancestor => $anc, 
+	    -replicates => $args->{'-replicates'},
+	    -window =>  $args->{'-window'},
+	    -score => $sisters{$best}->{SCR}					  
+	    );
+	
+	# output 
+	
+	if ( $args->{'-verbose'} ) {
+	    print ++$count_x, $anc, 
+	    $g1->name, int($g1->hypergob), 
+	    $g2->name, int($g2->hypergob), 
+	    $sisters{$best}->{SCR}, $percentile, $pval;	    
+	}
+	
+	# apply cutoff 
+	
+	if ( $args->{'-replicates'} ) { next unless $pval <= $args->{'-significance'}; }
+	else { next unless $sisters{$best}->{SCR} >= $args->{'-cutoff'}; }
+	
+	# store evidence 
+
+    # store the evidence even if we do not designate an ohnolog 
+    # actual ohnologs are stored on $self->{OHNOLOG}
+    # hope this doesn't break evidence routines ... 
+    
+    foreach my $o ($g1,$g2) {
+	$o->accept(
+	    $data_key, 		    
+	    {
+		HIT => ( $o eq $g1 ? $g2 : $g1 ), 
+		EVALUE => $pval, 
+		SCORE => $args->{'-score'}
+	    }
+	    );
+    }
+
+	$g1->ohnolog( $g2 ); # we set reciprocals automatically	    
+	print {STDERR} $anc, $count_x, ++$count_y, (time-$time).'s',
+	$g1->name, $g2->name, $sisters{$best}->{SCR},$args->{'-replicates'},$percentile, $pval;
+	$time=time; 
+    
     
     map { $_->data($attr => 'delete') } $self->orfs;
     return $self;
