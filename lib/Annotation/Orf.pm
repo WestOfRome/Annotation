@@ -4005,17 +4005,28 @@ sub quality {
     return $G->quality(-object => $self); # Ugly! 
 }
 
-=head2 direction( -object => 'left' )
+=head2 direction( -object => orf, -numeric => 0|1)
     
     Return direction of object relative to caller.
+    
+    By default return 'left' or 'right' but with 
+    -numeric switch will return -1 and 1 respectively. 
 
 =cut
 
 sub direction {
     my $self = shift;
+    my $args = {@_};
+
+    my %map = ( 'right' => 1, 'left' => -1 );
+
     $self->throw unless $self->isa( ref( $args->{'-object'} ) );
     $self->throw unless $self->up eq $args->{'-object'}->up;
-    return ( $self->index < $args->{'-object'}->index ? 'right' : 'left' );
+    $self->throw if $self eq $args->{'-object'};
+
+    my $dir = ( $self->index < $args->{'-object'}->index ? 'right' : 'left' );
+    
+    return ( $args->{'-numeric'} ? $map{$dir} : $dir );
 }
 
 =head2 codons(-query => 'coding|stop')
