@@ -789,7 +789,7 @@ sub _filter_tandems {
     return @uniq;
 }
 
-=head2 alignSisterRegions(-sister => , -ancestor => , 
+=head2 syntenic_alignment(-object => Orf, -ancestor => Anc_x.y|[Anc_x.y,Anc_w.z], 
     -homology => 'YGOB', -window => 7, -clean => 1, -score => 1)
     
     Perform a gene-level alignment of two genes ([self],[sister]) 
@@ -803,11 +803,11 @@ sub _filter_tandems {
     
 =cut 
 
-sub alignSisterRegions {
+sub syntenic_alignment {
     my $self = shift;
     my $args = {@_};
 
-    my $sister = $args->{'-sister'};
+    my $sister =  $args->{'-object'} || $args->{'-sister'};
     my $anc = $args->{'-ancestor'};
 
     ######################################	
