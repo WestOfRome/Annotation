@@ -796,7 +796,7 @@ sub _filter_tandems {
     by anchoring on [ancestor] and using a window of [window] genes, 
 
     We return an alignment (array of hashes), score and scoring hash.
-
+    
     dpalign() does the heavy lifting to create the alignment once the 
     datastructures have been created to represent the two regions 
     and the ancestral chromosome. 
@@ -831,19 +831,18 @@ sub syntenic_alignment {
     ######################################	
     
     my ($chr, $max_anc, $min_anc);
-    if ( ref( $anc ) eq 'SCALAR' ) {
-	$anc =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+    if ( $anc =~ /^Anc_(\d+)\.(\d+)/ ) {
 	$chr = $1;
 	($max_anc) = $2 + ( 2*$args->{'-window'} ); 
 	($min_anc) = $2 - ( 2*$args->{'-window'} ); 
     } elsif ( ref($anc) eq 'ARRAY' ) {
-	$anc[0] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+	$anc->[0] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
 	my ($chr1,$min) = ($1,$2);
-	$anc[1] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+	$anc->[1] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
 	my ($chr2,$max) = ($1,$2);
 	$self->throw unless $chr1 eq $chr2;
 	($chr, $max_anc, $min_anc) = ($chr, $min, $max);
-    } else { $self->throw; }
+    } else { $self->throw( $anc, ref($anc) ); }
 
     $min_anc = 1 unless $min_anc >= 1;
     $self->throw unless $min_anc <= $max_anc;	      
