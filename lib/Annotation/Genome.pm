@@ -3134,6 +3134,7 @@ sub syntenyMatrix {
     $args->{'-mode'} = 'ortho' if  $args->{'-mode'} =~ /^[o|c]/i;
     $args->{'-mode'} = 'para' if  $args->{'-mode'} =~ /^[p|s]/i;
     $args->{'-sort'} = 'ogid' unless exists $args->{'-sort'};
+    $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
 
     ########################################
     # teast args 
@@ -3178,6 +3179,7 @@ sub syntenyMatrix {
 		    $orfs[$i]->syntenic_alignment(
 			-sister => $orfs[$j],
 			-ancestor => $args->{'-ancestor'},
+			-window => $args->{'-window'},
 			-clean => 1,
 			-score => 1,
 			-verbose => 0
@@ -4130,6 +4132,7 @@ sub syntenic_paralogs {
 		-orfs => $anc{$anc},
 		-mode => 'paralog',
 		-ancestor => $anc,
+		-window =>  $args->{'-window'},
 		-verbose => 0,
 		-symmetric => 1
 	    );
@@ -4152,7 +4155,7 @@ sub syntenic_paralogs {
 	  }
       }
 	map {$synteny{$_}->{FAM_TOT}=$f_count } grep { $synteny{$_}->{FAM} eq $anc } keys %synteny;
-	last if ++$tracker >500;
+	last if ++$tracker >1e6;
     }
     
     #######################################
@@ -4162,9 +4165,9 @@ sub syntenic_paralogs {
     #######################################
     
     my %seen;
-    foreach my $pair ( sort {  $synteny{$b}->{'SCORE'} <=> $synteny{$a}->{'SCORE'} } keys %synteny ) {
-	
-	my ($x,$y) = map { $synteny{ $pair }->{$_} } qw(G1 G2);
+  CAND: foreach my $pair ( sort {  $synteny{$b}->{'SCORE'} <=> $synteny{$a}->{'SCORE'} } keys %synteny ) {
+      
+      my ($x,$y) = map { $synteny{ $pair }->{$_} } qw(G1 G2);
 
 	# have $x or $y already been placed in an OG ?
 
@@ -4177,7 +4180,8 @@ sub syntenic_paralogs {
 		-gene1 => $x, 
 		-gene2 => $y, 
 		-ancestor => $synteny{$pair}->{FAM},
-		-replicates => 20, 
+		-replicates => -1, 
+		-window =>  $args->{'-window'},
 		-score => $synteny{$pair}->{SCORE}
 	    );
 
@@ -4211,7 +4215,7 @@ sub syntenic_paralogs {
 	    # we will center windows on this for later analysis. 
 
 	    foreach my $chr (keys %ohnos) {
-		print $chr, $#{$ohnos{$chr}{'left'}}, $#{$ohnos{$chr}{'right'}};
+		print '~', $chr, $#{$ohnos{$chr}{'left'}}, $#{$ohnos{$chr}{'right'}};
 
 		my @center_of_gravity;
 		foreach my $left ( @{$ohnos{$chr}{'left'}} ) {
@@ -4231,6 +4235,7 @@ sub syntenic_paralogs {
 
 			my $d_query = $left->distance( -object => $right,-nogap => 1 )+1;
 			my $d_ohno = $left->ohnolog->distance( -object => $right->ohnolog,-nogap => 1 )+1;
+			print '*', $d_anc, $d_ohno, $d_query, $d_left;
 			#next unless abs(log($d_query/$d_ohno)/log(2)) <= 2;
 			map { next unless ( ($_/$d_query <= 2) || 
 					    ($_ <= $args->{'-window'}*2) ) } ($d_anc, $d_ohno);
@@ -4264,7 +4269,7 @@ sub syntenic_paralogs {
 			    SISTER => $cog_ohno,
 			    ANC => $sp1.'_'.$chr1.'.'.$cog_anc
 			};
-			print $o->name, $cog_ohno->name,  $sp1.'_'.$chr1.'.'.$cog_anc;
+			print '-', $o->name, $cog_ohno->name,  $sp1.'_'.$chr1.'.'.$cog_anc;
 		    }
 		}
 		next unless @center_of_gravity;
@@ -4289,98 +4294,85 @@ sub syntenic_paralogs {
 	###########################################	
 
 	foreach my $alt ( keys %alternatives ) {
-	    my ($g1,$g2,$anc) = map { $alternatives{$_} } qw(QUERY SISTER ANC);
+	    my ($a1,$a2,$anc) = map { $alternatives{$_} } qw(QUERY SISTER ANC);
 	    my ($alt_align,$alt_score,$alt_hash) = # either an alignment (array of hashes) or hash
-		$g1->syntenic_alignment(
-		    -object => $g2,
+		$a1->syntenic_alignment(
+		    -object => $a2,
 		    -ancestor => $anc,
 		    -clean => 1,
 		    -score => 1,
+		    -window => $args->{'-window'},
 		    -verbose => 0
 		);
 	    
 	    my ($alt_pval, $alt_norm, $alt_rands) = ( 
 		$alt_score		
 		? $self->syntenic_significance(
-		    -gene1 => $g1,
-		    -gene2 => $g2,
+		    -gene1 => $a1,
+		    -gene2 => $a2,
 		    -ancestor => $anc,
 		    -replicates => 20, 
+		    -window =>  $args->{'-window'},
 		    -score => $alt_score
 		) 
 		: (1, 0, ())
 		);
 	    
-	    print $anc, $g1->sn, $g2->sn, $alt_score, $alt_pval, $alt_norm;
-	}
-	
-	
-	next; 
+	    print $anc, $a1->sn, $a2->sn, $alt_score, $alt_pval, $alt_norm;
 
-	# this code is used elsewher 
-	
-	foreach my $dir ( qw(left right) ) {
-	    my @orfs = $x->context(
-		-direction => $dir,
-		-distance => $args->{'-window'}*2,
-		-self => -1
-		);
-	    foreach my $test ( grep {$_->ohnolog} @orfs ) {
-		my $ohno = $test->ohnolog;
-		next unless $y->distance(-object => $ohno ) <=  $args->{'-window'}*2;
-		my $ori = $y->direction( -object => $ohno );
-		push @{$span{ join(':', $dir,$ori) }}, [$test, $ohno];
-	    }
-	}
-
-	
-	# get randomization based p-values 
-	# method not tested.. abstracted in a hurry.. 
-	
-	my ($pval,$percentile) = $self->syntenic_significance( 
-	    -gene1 => $g1,
-	    -gene2 => $g2,
-	    -ancestor => $anc, 
-	    -replicates => $args->{'-replicates'},
-	    -window =>  $args->{'-window'},
-	    -score => $sisters{$best}->{SCR}					  
-	    );
-	
-	# output 
-	
-	if ( $args->{'-verbose'} ) {
-	    print ++$count_x, $anc, 
-	    $g1->name, int($g1->hypergob), 
-	    $g2->name, int($g2->hypergob), 
-	    $sisters{$best}->{SCR}, $percentile, $pval;	    
+	    next CAND unless $norm > $alt_norm;
 	}
 	
-	# apply cutoff 
-	
-	if ( $args->{'-replicates'} ) { next unless $pval <= $args->{'-significance'}; }
-	else { next unless $sisters{$best}->{SCR} >= $args->{'-cutoff'}; }
-	
-	# store evidence 
+	# 
 
     # store the evidence even if we do not designate an ohnolog 
     # actual ohnologs are stored on $self->{OHNOLOG}
     # hope this doesn't break evidence routines ... 
-    
-	foreach my $o ($g1,$g2) {
-	    $o->accept(
-		$data_key, 		    
-		{
-		    HIT => ( $o eq $g1 ? $g2 : $g1 ), 
-		    EVALUE => $pval, 
-		    SCORE => $args->{'-score'}
-		}
-		);
-	}
-	$g1->ohnolog( $g2 ); # we set reciprocals automatically	    
-	print {STDERR} $anc, $count_x, ++$count_y, (time-$time).'s',
-	$g1->name, $g2->name, $sisters{$best}->{SCR},$args->{'-replicates'},$percentile, $pval;
-	$time=time; 
-    }
+
+      my $g1=$x;
+      my $g2=$y;
+      foreach my $o ($g1,$g2) {
+	  $o->accept(
+	      $data_key, 		    
+	      {
+		  HIT => ( $o eq $g1 ? $g2 : $g1 ), 
+		  EVALUE => $pval, 
+		  SCORE => $synteny{$pair}->{SCORE}
+	      }
+	      );
+      }
+      $g1->ohnolog( $g2 ); # we set reciprocals automatically	    
+      map { $seen{ $_->sn }++ } ($g1,$g2);  
+      print '>>',$g1->sn, $g2->sn;
+      next; 
+
+	# this code can be used for the synteny first phase .. 
+	
+      foreach my $dir ( qw(left right) ) {
+	  my @orfs = $x->context(
+	      -direction => $dir,
+	      -distance => $args->{'-window'}*2,
+	      -self => -1
+	      );
+	  foreach my $test ( grep {$_->ohnolog} @orfs ) {
+	      my $ohno = $test->ohnolog;
+	      next unless $y->distance(-object => $ohno ) <=  $args->{'-window'}*2;
+	      my $ori = $y->direction( -object => $ohno );
+	      push @{$span{ join(':', $dir,$ori) }}, [$test, $ohno];
+	  }
+      }
+      
+      
+      # output 
+      
+      if ( $args->{'-verbose'} ) {
+	  print ++$count_x, $anc, 
+	  $g1->name, int($g1->hypergob), 
+	  $g2->name, int($g2->hypergob), 
+	  $sisters{$best}->{SCR}, $percentile, $pval;	    
+      }
+      
+  }
     
     map { $_->data($attr => 'delete') } $self->orfs;
     return $self;
