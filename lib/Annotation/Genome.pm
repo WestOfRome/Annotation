@@ -2864,7 +2864,7 @@ sub ohnologComparative2 {
 		# revering to just collecting the species level stats. 
 		# grr. #################################################
 		
-		my ($pval, $perc, $rands) = $self->_alignSisterRands(	    
+		my ($pval, $perc, $rands) = $self->syntenic_significance(	    
 		    -gene1 => $hypoth[$i_ind]->[$x],
 		    -gene2 => $hypoth[$j_ind]->[$x],
 		    -ancestor => $fam,
@@ -4010,7 +4010,7 @@ sub ohnologs2 {
 	# get randomization based p-values 
 	# method not tested.. abstracted in a hurry.. 
 	
-	my ($pval,$percentile) = $self->_alignSisterRands( 
+	my ($pval,$percentile) = $self->syntenic_significance( 
 	    -gene1 => $g1,
 	    -gene2 => $g2,
 	    -ancestor => $anc, 
@@ -4152,7 +4152,7 @@ sub syntenic_paralogs {
 	  }
       }
 	map {$synteny{$_}->{FAM_TOT}=$f_count } grep { $synteny{$_}->{FAM} eq $anc } keys %synteny;
-	last if ++$tracker >20;
+	last if ++$tracker >500;
     }
     
     #######################################
@@ -4163,8 +4163,6 @@ sub syntenic_paralogs {
     
     my %seen;
     foreach my $pair ( sort {  $synteny{$b}->{'SCORE'} <=> $synteny{$a}->{'SCORE'} } keys %synteny ) {
-	print $synteny{$pair}->{FAM},$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
-	$synteny{$pair}->{G1}->sn, $synteny{$pair}->{G2}->sn, $synteny{$pair}->{SCORE};
 	
 	my ($x,$y) = map { $synteny{ $pair }->{$_} } qw(G1 G2);
 
@@ -4174,15 +4172,20 @@ sub syntenic_paralogs {
 
 	# now we calculate stats -- we will need them for both 1 and 2 above. 
 
-	$x->syntenic_alignment(
-	    -orf => $y,
-	    -ancestor => $synteny{$pair}->{FAM},
-	    -clean => 1,
-	    -score => 1,
-	    -normalize => 1, # also -significance 
-	    -verbose => 0
+	my ($pval, $norm, $rands) = 
+	    $self->syntenic_significance(
+		-gene1 => $x, 
+		-gene2 => $y, 
+		-ancestor => $synteny{$pair}->{FAM},
+		-replicates => 20, 
+		-score => $synteny{$pair}->{SCORE}
 	    );
 
+	print $synteny{$pair}->{FAM},$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
+	$synteny{$pair}->{G1}->sn, $synteny{$pair}->{G2}->sn, $synteny{$pair}->{SCORE},$pval, $norm;
+	
+	next unless $pval <= $args->{'-significance'};
+	
 	# check for a conflict with pre-existing more highly weighted decisions.
 	# For each sister region we want to look at surrounding context and 
 	# see if there is compelling evidence that another region is a better fit. 
@@ -4207,7 +4210,9 @@ sub syntenic_paralogs {
 	    # infer the location of the focal genes and store this. 
 	    # we will center windows on this for later analysis. 
 
-	    foreach my $chr (keys %ohnos) {		
+	    foreach my $chr (keys %ohnos) {
+		print $chr, $#{$ohnos{$chr}{'left'}}, $#{$ohnos{$chr}{'right'}};
+
 		my @center_of_gravity;
 		foreach my $left ( @{$ohnos{$chr}{'left'}} ) {
 		    my $d_left = $o->distance( -object => $left,-nogap => 1 )+1;
@@ -4227,8 +4232,8 @@ sub syntenic_paralogs {
 			my $d_query = $left->distance( -object => $right,-nogap => 1 )+1;
 			my $d_ohno = $left->ohnolog->distance( -object => $right->ohnolog,-nogap => 1 )+1;
 			#next unless abs(log($d_query/$d_ohno)/log(2)) <= 2;
-			map { next unless (($_/$d_query <= 2) || 
-					   ($_ <= $args->{'-window'}*2)) } ($d_anc, $d_ohno);
+			map { next unless ( ($_/$d_query <= 2) || 
+					    ($_ <= $args->{'-window'}*2) ) } ($d_anc, $d_ohno);
 			
 			# Look for implied location of the sister gene and anc 
 			# that will be supplied to syntenic_alignment to conduct test. 
@@ -4236,10 +4241,10 @@ sub syntenic_paralogs {
 			my $cog_anc;
 			if ( $index1 < $index2 ) {
 			    $cog_anc = $index1 + int( ($d_left/$d_query) * $d_anc );
-			    $self->throw unless $cog_anc >= $index1 && $cog_anc =< $index2; 
+			    $self->throw unless $cog_anc >= $index1 && $cog_anc <= $index2; 
 			} else {
 			    $cog_anc =  $index1 - int( ($d_left/$d_query) * $d_anc );
-			    $self->throw unless $cog_anc >= $index2 && $cog_anc =< $index1; 
+			    $self->throw unless $cog_anc >= $index2 && $cog_anc <= $index1; 
 			}
 			
 			# now the sister gene 
@@ -4259,9 +4264,11 @@ sub syntenic_paralogs {
 			    SISTER => $cog_ohno,
 			    ANC => $sp1.'_'.$chr1.'.'.$cog_anc
 			};
+			print $o->name, $cog_ohno->name,  $sp1.'_'.$chr1.'.'.$cog_anc;
 		    }
 		}
-		
+		next unless @center_of_gravity;
+
 		# based on all gene pairs, estimate the best central point. 
 		# we only test once per chr. 
 
@@ -4276,31 +4283,38 @@ sub syntenic_paralogs {
 		$alternatives{ $chr } = $best; # {QUERY => , SISTER => orf, ANC => }
 	    } # Chr 
 	} # Cand1,Cand2
-
+	
+	###########################################	
 	# compare each of the alternatives to proposed sister regions 
+	###########################################	
 
-
-
-
-
-		    my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
-		$ok->syntenic_alignment(
-		    -object => $ok->ohnolog,
-		    -ancestor => $synteny{$pair}->{FAM},
+	foreach my $alt ( keys %alternatives ) {
+	    my ($g1,$g2,$anc) = map { $alternatives{$_} } qw(QUERY SISTER ANC);
+	    my ($alt_align,$alt_score,$alt_hash) = # either an alignment (array of hashes) or hash
+		$g1->syntenic_alignment(
+		    -object => $g2,
+		    -ancestor => $anc,
 		    -clean => 1,
 		    -score => 1,
 		    -verbose => 0
 		);
-	
-
-
-	foreach my $ok ( grep {!$seen{$_->sn}++} ($left, $right) ) {
-
 	    
-	foreach my $chr (keys %alternatives) {
-	    print {$fh} ">$chr", &_calcMeanSD( @{ $alternatives{$chr} } );
+	    my ($alt_pval, $alt_norm, $alt_rands) = ( 
+		$alt_score		
+		? $self->syntenic_significance(
+		    -gene1 => $g1,
+		    -gene2 => $g2,
+		    -ancestor => $anc,
+		    -replicates => 20, 
+		    -score => $alt_score
+		) 
+		: (1, 0, ())
+		);
+	    
+	    print $anc, $g1->sn, $g2->sn, $alt_score, $alt_pval, $alt_norm;
 	}
-
+	
+	
 	next; 
 
 	# this code is used elsewher 
@@ -4323,7 +4337,7 @@ sub syntenic_paralogs {
 	# get randomization based p-values 
 	# method not tested.. abstracted in a hurry.. 
 	
-	my ($pval,$percentile) = $self->_alignSisterRands( 
+	my ($pval,$percentile) = $self->syntenic_significance( 
 	    -gene1 => $g1,
 	    -gene2 => $g2,
 	    -ancestor => $anc, 
@@ -4401,32 +4415,74 @@ sub _print_align {
     return 1;
 }
 
-# execute randomizations for 
+=head2 syntenic_significance( -gene1 => orf, -gene2 => orf,
+    -ancestor =>, -window =>, -replicates =>, -score => )
 
-sub _alignSisterRands {
+    Compute a p-value for the syntenic alignment of two regions
+    centered on -gene1 and -gene2 with a synteny score of -score. 
+
+    We return a p-value and a percentile which can be used as a 
+    normalized score. 
+
+    All arguments are required. 
+
+=cut 
+
+sub syntenic_significance {
     my $self = shift;
     my $args = {@_};
 
-    return (0,100,[]) if $args->{'-replicates'}==-1;
-    
+    ###########################################
+    # default argumentes 
+    ###########################################
+
+    $args->{'-replicates'}=100 unless exists $args->{'-replicates'};
+    $args->{'-window'}=10 unless exists $args->{'-window'};
+    $args->{'-ancestor'}=undef unless exists $args->{'-ancestor'};
+
+    ###########################################
+    # this is just courting danger ...
+    ###########################################
+
+    return (0,100,[]) if $args->{'-replicates'}==-1; # DEBUGGING 
+
+    ###########################################
+    # easy access to key params 
+    ###########################################
+
+    my $data_key = 'OHNO';
     my $g1 = $args->{'-gene1'};
     my $g2 = $args->{'-gene2'};
     my $anc = $args->{'-ancestor'};
-    
-    my $data_key = 'OHNO';
 
+    ###########################################
+    # basic argument checking 
+    ###########################################
+
+    $self->throw unless $g1->up->up eq $self;
+    $self->throw unless ref( $g1 ) eq ref( $g2 );
+    $self->throw unless $args->{'-ancestor'} && $args->{'-ancestor'} =~ /^Anc_\d+\.\d+/;
+    $self->throw unless defined $args->{'-score'};
+    $self->throw unless $args->{'-window'} >= 2;
+    $self->throw unless $args->{'-replicates'} >= 1;
+
+    ###########################################
     # make an index 
-
+    ###########################################
+    
     my %index;
     my $index;
     map { $index{ ++$index }=$_ } grep { $_->ygob } map { $_->stream } $self->stream;
 
+    ###########################################
     # do randomizations 
+    ###########################################
 
-    my ($pval,$percentile)=('NA','NA');
-    
+    my ($pval,$percentile)=('NA','NA');    
+
     my @scores;
     for my $rep ( 1..$args->{'-replicates'} ) {		
+
 	my $sample = int(rand($index))+1;
 	my $dummy = $index{$sample};
 	until ( ($dummy->distance(-object => $g1) > $args->{'-window'}*5) && 
@@ -4435,11 +4491,21 @@ sub _alignSisterRands {
 	    $dummy = $index{$sample};
 	}
 	#$dummy->output;
+
+	###########################################
+	# we swap the regions we randomize to prevent weird asymetries. 
+	###########################################
+
+	my ($constant, $randomized) = ( $rep%2 == 0 ? ($g1,$g2) : ($g2,$g1) );	
 	my $store = $dummy->_data;		
-	$dummy->_data( $g2->_data );
-	
+	$dummy->_data( $randomized->_data );
+
+	###########################################	
+	# do the laignment and get the scores 
+	###########################################
+
 	my ($align,$score,$hash) = # either an alignment (array of hashes) or hash
-	    $g1->syntenic_alignment(
+	    $constant->syntenic_alignment(
 		-sister => $dummy,
 		-ancestor => $anc,
 		-window => $args->{'-window'},
@@ -4447,11 +4513,19 @@ sub _alignSisterRands {
 		-score => 1
 	    );
 	#&_print_align($align);
+
+	###########################################	
+	# store data.. 
+	###########################################
+
 	push @scores, $score;
 	$dummy->_data( $store );		
     }
-    
     #return @scores unless $args->{'-score'};
+
+    ###########################################
+    # wrap it up 
+    ###########################################   
 
     $percentile = &_percentile($args->{'-score'}, \@scores);
     $pval = ( $percentile==100 ? 1/$args->{'-replicates'} : sprintf("%.3f",(100-$percentile)/100) );
