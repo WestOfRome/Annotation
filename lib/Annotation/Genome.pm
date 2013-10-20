@@ -4074,6 +4074,7 @@ sub syntenic_paralogs {
 
     $args->{'-synteny'} = 0 unless exists $args->{'-synteny'};
     $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
+    $args->{'-distance_test'} = 3 unless exists $args->{'-distance_test'};
  
     $args->{'-cutoff'} = ($args->{'-window'} <= 7 ? 2 : 3) unless exists $args->{'-cutoff'};  
     $args->{'-significance'} = 0.05 unless exists $args->{'-significance'};
@@ -4084,21 +4085,17 @@ sub syntenic_paralogs {
     #######################################
     
     my $fh = STDOUT;
+    my $fherr = STDERR;
     my $attr = '_ohno_temp_var'.int(rand(100));
-    my $ohno = scalar( grep { $_->ohnolog } $self->orfs );    
+    my $ohno_count = scalar( grep { $_->ohnolog } $self->orfs );    
     my $data_key = 'OHNO';
     my ($counter, $count_x, $count_y)=(0,0,0);
     
+    my $LOCAL_DEBUG_VAR=0;
+
     #######################################
-    # prep work 
+    # PHASE 0 : Prep work 
     #######################################
-      
-    if ( $args->{'-verbose'} == 2 ) {
-	print 
-	    qw(#Family AncLocus Ohno1 Synteny1 Ohno2 Synteny2 |), 
-	    (grep {!/array/i} sort keys %score_def),
-	    qw(Score | Align_Len Track1_Len Track2_Len); 
-    }
     
     # create indexes
     # %anc stores all orfs with same anc homology 
@@ -4110,24 +4107,26 @@ sub syntenic_paralogs {
     foreach my $orf ( grep { $_->ygob } map { $_->stream } $self->stream ) {
 	$orf->data($attr => undef);
 	if ( my $oh = $orf->ohnolog ) {
-	    $oh->ohnolog(undef) if $index%3 == 0; ## TEMP 
+	    $oh->ohnolog(undef) if 
+		($LOCAL_DEBUG_VAR==0 || $index%$LOCAL_DEBUG_VAR == 0);
 	}
 	push @{ $anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
 	$index{ ++$index }=$orf;
     }
+    print {$fherr} scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
 
-    print scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
-    
     #######################################
-    # Cycle through all Anc families and compute all pairwise synteny.
-    # We use this to do initial prioritization. 
+    # PHASE 1 : Prioritize candidates.
+    # Cycle through all Anc families. 
+    # Compute all possible pairwise synteny scores (no stats-- raw values).
     #######################################
 
     my $tracker;
     my %synteny;   
     foreach my $anc ( grep { $#{$anc{$_}} >= 1 } keys %anc) {
 	next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );
-	# print $anc;
+
+	# compute all pairwise synteny values for every genes in the family 
 
 	my $scores = 
 	    $self->syntenyMatrix(
@@ -4139,13 +4138,21 @@ sub syntenic_paralogs {
 		-symmetric => 1
 	    );
 	
+	# construct a sortable datastructure for all possible pairs (across families).
+	# Modify scores for tandems genes. Do not log into ranking.  
+	# Some silly code to ignore pre-existing ohnologs in debugging mode. 
+
 	my $f_count=0;
       CAND: for my $i (0..($#{$anc{$anc}}-1)) {
 	  for my $j ( ($i+1)..$#{$anc{$anc}}) {
 	      my $x = $anc{$anc}->[$i];
 	      my $y = $anc{$anc}->[$j];
-
-	      next if $x->ohnolog || $y->ohnolog; ## TEMP 
+	      
+	      if ($x->ohnolog || $y->ohnolog) {
+		  if ($LOCAL_DEBUG_VAR) {
+		      next;
+		  } else { $self->throw; }
+	      } 
 
 	      $synteny{ join(':',$x->name, $y->name) } = 
 	      {
@@ -4160,41 +4167,42 @@ sub syntenic_paralogs {
 	  }
       }
 	map {$synteny{$_}->{FAM_TOT}=$f_count } grep { $synteny{$_}->{FAM} eq $anc } keys %synteny;
-	last if ++$tracker >1e2;
+	last if ++$tracker >1e6;
     }
 
     #######################################
-    # descend through stack and test for 
-    # 1. regions that have already been securely assigned as a sister (-> Exclude)  
-    # 2. have compelling statistical support (i.e. p-value) 
+    # PHASE 2 : Descend through stack and test candidate pairs. 
+    # 1. Exclude pairs in regions that have been securely assigned as an incompatible sister.
+    # 2. Include pairs that have compelling statistical support (i.e. p-value) 
     #######################################
     
     my %seen;
   CAND: foreach my $pair ( sort {  $synteny{$b}->{'SCORE'} <=> $synteny{$a}->{'SCORE'} } 
 			   grep { $synteny{$_}->{'SCORE'}>-1 } keys %synteny ) {
       
-      my ($x,$y) = map { $synteny{ $pair }->{$_} } qw(G1 G2);
-
-	# have $x or $y already been placed in an OG ?
-
-	next if exists $seen{ $x->sn } || exists $seen{ $y->sn };
-
-	# now we calculate stats -- we will need them for both 1 and 2 above. 
-
-	my ($pval, $norm, $rands) = 
-	    $self->syntenic_significance(
-		-gene1 => $x, 
-		-gene2 => $y, 
-		-ancestor => $synteny{$pair}->{FAM},
-		-replicates => $args->{'-replicates'}, 
-		-window =>  $args->{'-window'},
-		-score => $synteny{$pair}->{SCORE}
-	    );
+      # get genes x and y. have they already been placed in a pair?
       
-      if ( $args->{'-verbose'} ) {
-	  print "\n##############################\n".
-	      $synteny{$pair}->{FAM},$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
-	      $synteny{$pair}->{G1}->sn, $synteny{$pair}->{G2}->sn, $synteny{$pair}->{SCORE},$pval, $norm;
+      my ($x,$y) = map { $synteny{ $pair }->{$_} } qw(G1 G2);
+      next if exists $seen{ $x->sn } || exists $seen{ $y->sn };
+      
+      # we allow a short-cut to approve any candidate pair
+      # 
+      
+      # now we calculate stats -- we will need them for both 1 and 2 above. 
+      
+      my ($pval, $norm, $rands) = 
+	  $self->syntenic_significance(
+	      -gene1 => $x, 
+	      -gene2 => $y, 
+	      -ancestor => $synteny{$pair}->{FAM},
+	      -replicates => $args->{'-replicates'}, 
+	      -window =>  $args->{'-window'},
+	      -score => $synteny{$pair}->{SCORE}
+	  );
+      
+      if ( $args->{'-verbose'} >= 3 ) {
+	  print $synteny{$pair}->{FAM},$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
+	  $synteny{$pair}->{G1}->sn, $synteny{$pair}->{G2}->sn, $synteny{$pair}->{SCORE}, $pval, $norm;
       }
       
       next unless $pval <= $args->{'-significance'};
@@ -4247,7 +4255,8 @@ sub syntenic_paralogs {
 			next unless $left->ygob && $right->ygob;
 			my ($sp1,$chr1,$index1) = &Annotation::Orf::_decompose_gene_name($left->ygob);
 			my ($sp2,$chr2,$index2) = &Annotation::Orf::_decompose_gene_name($right->ygob);
-			print "SPAN", $left->sn, $left->ygob, $sp1,$chr1,$index1, $right->sn, $right->ygob, $sp2,$chr2,$index2;
+			print "SPAN", $left->sn, $left->ygob, $o->sn."*", $o->ygob."*", $right->sn, $right->ygob, 
+			$left->up->id.'/'.$left->ohnolog->up->id;
 			next unless $chr1==$chr2;
 			my $d_anc = abs( $index1 - $index2 );
 			next unless $d_anc > 0;
@@ -4256,10 +4265,10 @@ sub syntenic_paralogs {
 
 			my $d_query = $left->distance( -object => $right,-nogap => 1 )+1;
 			my $d_ohno = $left->ohnolog->distance( -object => $right->ohnolog,-nogap => 1 )+1;
-			print '-A-', $d_anc, $d_ohno, $d_query, $d_left;
+			#print '-A-', $d_anc, $d_ohno, $d_query, $d_left;
 			#next unless abs(log($d_query/$d_ohno)/log(2)) <= 2;
-			map { next unless ( ($_/$d_query <= 2) || 
-					    ($_ <= $args->{'-window'}*2) ) } ($d_anc, $d_ohno);
+			map { next unless ( ($_/$d_query <= $args->{'-distance_test'}) || 
+					    ($_ <= $args->{'-window'}*$args->{'-distance_test'}) ) } ($d_anc, $d_ohno);
 			
 			# Look for implied location of the sister gene and anc 
 			# that will be supplied to syntenic_alignment to conduct test. 
@@ -4288,9 +4297,10 @@ sub syntenic_paralogs {
 			push @center_of_gravity, {
 			    QUERY => $o,
 			    SISTER => $cog_ohno,
+			    SIS_CHR => $cog_ohno->up->id,
 			    ANC => 'Anc_'.$chr1.'.'.$cog_anc
 			};
-			print '-B-', $o->name, $cog_ohno->name,  $sp1.'_'.$chr1.'.'.$cog_anc;
+			# print '-B-', $o->name, $cog_ohno->name,  $sp1.'_'.$chr1.'.'.$cog_anc;
 		    }
 		}
 		next unless @center_of_gravity;
@@ -4299,12 +4309,12 @@ sub syntenic_paralogs {
 		# we only test once per chr. 
 
 		my (%count, %count2);
-		map { $count{ $_->{ANC} }++ } @center_of_gravity;
+		map { $count{ $_->{SIS_CHR} }++ } @center_of_gravity;
 		my ($best_anc) = sort { $count{$b} <=> $count{$a} } keys %count;
-		map { $count2{ $_->{SISTER} }++ } grep { $_->{ANC} eq $best_anc } @center_of_gravity;
+		map { $count2{ $_->{ANC} }++ } grep { $_->{SIS_CHR} eq $best_anc } @center_of_gravity;
 		my ($best_orf) = sort { $count2{$b} <=> $count2{$a} } keys %count2;
-		my ($best) = grep { $_->{SISTER} eq $best_orf } 
-		grep { $_->{ANC} eq $best_anc } @center_of_gravity;
+		my ($best) = grep { $_->{ANC} eq $best_orf } 
+		grep { $_->{SIS_CHR} eq $best_anc } @center_of_gravity;
 		
 		$alternatives{ $chr } = $best; # {QUERY => , SISTER => orf, ANC => }
 	    } # Chr 
@@ -4325,31 +4335,29 @@ sub syntenic_paralogs {
 		    -window => $args->{'-window'},
 		    -verbose => 0
 		);
-	    
-	    my ($alt_pval, $alt_norm, $alt_rands) = ( 
-		$alt_score		
-		? $self->syntenic_significance(
+	    next unless $alt_score > 0;
+
+	    my ($alt_pval, $alt_norm, $alt_rands) =
+		$self->syntenic_significance(
 		    -gene1 => $a1,
 		    -gene2 => $a2,
 		    -ancestor => $anc,
 		    -replicates =>  $args->{'-replicates'}, 
 		    -window =>  $args->{'-window'},
 		    -score => $alt_score
-		) 
-		: (1, 0, ())
 		);
 	    
-	    print 'ALT', $alt, $anc, $a1->sn, $a1->ygob, $a2->sn, $a2->ygob, $score, $alt_score, 
-	    $alt_pval, $alt_norm, $norm, ($norm>$alt_norm);
-	    
+	    print 'ALT:'.$alt, $a1->sn, $a1->ygob, $anc."*", $a2->sn, $a2->ygob, $alt_pval, 
+	    $synteny{$pair}->{SCORE}.' > '.$alt_score, 
+	    $norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
 	    next CAND unless $norm > $alt_norm;
 	}
-	
-	# 
-
-    # store the evidence even if we do not designate an ohnolog 
-    # actual ohnologs are stored on $self->{OHNOLOG}
-    # hope this doesn't break evidence routines ... 
+      
+      # 
+      
+      # store the evidence even if we do not designate an ohnolog 
+      # actual ohnologs are stored on $self->{OHNOLOG}
+      # hope this doesn't break evidence routines ... 
 
       my $g1=$x;
       my $g2=$y;
@@ -4367,6 +4375,10 @@ sub syntenic_paralogs {
       map { $seen{ $_->sn }++ } ($g1,$g2);  
       print 'OHNO',$g1->sn, $g2->sn;
       next; 
+  }
+
+    map { $_->data($attr => 'delete') } $self->orfs;
+    return $self;
 
       ######################################	
       # 
@@ -4395,12 +4407,8 @@ sub syntenic_paralogs {
 	  $g1->name, int($g1->hypergob), 
 	  $g2->name, int($g2->hypergob), 
 	  $sisters{$best}->{SCR}, $percentile, $pval;	    
-      }
-      
-  }
+      }      
     
-    map { $_->data($attr => 'delete') } $self->orfs;
-    return $self;
 }
 
 sub _percentile {
@@ -4436,7 +4444,7 @@ sub _print_align {
     -ancestor =>, -window =>, -replicates =>, -score => )
 
     Compute a p-value for the syntenic alignment of two regions
-    centered on -gene1 and -gene2 with a synteny score of -score. 
+    centered on -gene1 and -gene2 that have a synteny score of -score. 
 
     We return a p-value and a percentile which can be used as a 
     normalized score. 
