@@ -4113,7 +4113,8 @@ sub syntenic_paralogs {
 	push @{ $anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
 	$index{ ++$index }=$orf;
     }
-    print {$fherr} scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
+
+    print {$fherr} 'INITIAL:',scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
 
     #######################################
     # PHASE 1 : Prioritize candidates.
@@ -4167,8 +4168,10 @@ sub syntenic_paralogs {
 	  }
       }
 	map {$synteny{$_}->{FAM_TOT}=$f_count } grep { $synteny{$_}->{FAM} eq $anc } keys %synteny;
-	last if ++$tracker >1e6;
+	last if ++$tracker > ($LOCAL_DEBUG_VAR ? 1e2 : 1e6);
     }
+
+    print {$fherr} 'PRIORITIZE:', scalar(keys %synteny);
 
     #######################################
     # PHASE 2 : Descend through stack and test candidate pairs. 
@@ -4180,15 +4183,31 @@ sub syntenic_paralogs {
   CAND: foreach my $pair ( sort {  $synteny{$b}->{'SCORE'} <=> $synteny{$a}->{'SCORE'} } 
 			   grep { $synteny{$_}->{'SCORE'}>-1 } keys %synteny ) {
       
-      # get genes x and y. have they already been placed in a pair?
+      # get genes x and y. have they (specific genes ) already been placed in a pair?
       
       my ($x,$y) = map { $synteny{ $pair }->{$_} } qw(G1 G2);
       next if exists $seen{ $x->sn } || exists $seen{ $y->sn };
       
-      # we allow a short-cut to approve any candidate pair
-      # 
+      # we allow a short-cut to approve any candidate pair.
+      # we look at the first ohnologs on both sides. 
+      # if they are close and congruent with x and y we snap approve. 
       
-      # now we calculate stats -- we will need them for both 1 and 2 above. 
+      if ( $synteny{$_}->{'SCORE'}>0 ) {
+	  my @params = (-distance => $args->{'-window'}*2, -self => -1);
+	  my ($left_ohno) = grep {defined} map {$_->ohnolog} reverse($x->context(-direction => 'left',   @params));
+	  my ($right_ohno) = grep {defiend} map {$_->ohnolog} $x->context(-direction => 'right', @params);
+	  if ( $left_ohno->distance(-object => $y) <= $args->{'-window'}*2 && 
+	       $right_ohno->distance(-object => $y) <= $args->{'-window'}*2 ) {
+	      my @inter = grep {$_->assign ne 'GAP'} grep {defined} $left_ohno->intervening( $right_ohno );
+	      if ( $#inter >= 0 && $#inter <= $args->{'-window'}*2 ) {
+		  print {$fherr} 'Shortcut', $x->sn, $y->sn, $left_ohno->sn, $right_ohno->sn, scalar(@inter);
+		  goto ACCEPTOHNO;
+	      }
+	  }
+      }
+      
+      # if we do not succeed with shortcut we take the established process of 
+      # comparing candidate to null and cross-validating agaisnt all alternative sisters. 
       
       my ($pval, $norm, $rands) = 
 	  $self->syntenic_significance(
@@ -4200,8 +4219,8 @@ sub syntenic_paralogs {
 	      -score => $synteny{$pair}->{SCORE}
 	  );
       
-      if ( $args->{'-verbose'} >= 3 ) {
-	  print $synteny{$pair}->{FAM},$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
+      if ( $args->{'-verbose'} >= 2 ) {
+	  print 'CAND:',$synteny{$pair}->{FAM},$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
 	  $synteny{$pair}->{G1}->sn, $synteny{$pair}->{G2}->sn, $synteny{$pair}->{SCORE}, $pval, $norm;
       }
       
@@ -4255,7 +4274,7 @@ sub syntenic_paralogs {
 			next unless $left->ygob && $right->ygob;
 			my ($sp1,$chr1,$index1) = &Annotation::Orf::_decompose_gene_name($left->ygob);
 			my ($sp2,$chr2,$index2) = &Annotation::Orf::_decompose_gene_name($right->ygob);
-			print "SPAN", $left->sn, $left->ygob, $o->sn."*", $o->ygob."*", $right->sn, $right->ygob, 
+			# print "SPAN", $left->sn, $left->ygob, $o->sn."*", $o->ygob."*", $right->sn, $right->ygob, 
 			$left->up->id.'/'.$left->ohnolog->up->id;
 			next unless $chr1==$chr2;
 			my $d_anc = abs( $index1 - $index2 );
@@ -4346,10 +4365,12 @@ sub syntenic_paralogs {
 		    -window =>  $args->{'-window'},
 		    -score => $alt_score
 		);
-	    
-	    print 'ALT:'.$alt, $a1->sn, $a1->ygob, $anc."*", $a2->sn, $a2->ygob, $alt_pval, 
-	    $synteny{$pair}->{SCORE}.' > '.$alt_score, 
-	    $norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
+
+	    if ( $args->{'-verbose'} ) {
+		print 'ALT:',$alt, $a1->sn, $a1->ygob, $anc."*", $a2->sn, $a2->ygob, $alt_pval, 
+		$synteny{$pair}->{SCORE}.' > '.$alt_score, 
+		$norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
+	    }
 	    next CAND unless $norm > $alt_norm;
 	}
       
@@ -4359,6 +4380,7 @@ sub syntenic_paralogs {
       # actual ohnologs are stored on $self->{OHNOLOG}
       # hope this doesn't break evidence routines ... 
 
+    ACCEPTOHNO:
       my $g1=$x;
       my $g2=$y;
       foreach my $o ($g1,$g2) {
@@ -4372,8 +4394,8 @@ sub syntenic_paralogs {
 	      );
       }
       $g1->ohnolog( $g2 ); # we set reciprocals automatically	    
-      map { $seen{ $_->sn }++ } ($g1,$g2);  
-      print 'OHNO',$g1->sn, $g2->sn;
+      map { $seen{ $_->sn }++ } ($g1,$g2);
+      print {$fh} ++$ohno_counter, $synteny{$pair}->{FAM}, $g1->sn, $g2->sn,$synteny{$pair}->{SCORE},$pval,$norm if $args->{'-verbose'};
       next; 
   }
 
