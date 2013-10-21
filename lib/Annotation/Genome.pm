@@ -4072,10 +4072,10 @@ sub syntenic_paralogs {
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
 
-    $args->{'-synteny'} = 0 unless exists $args->{'-synteny'};
     $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
     $args->{'-distance_test'} = 3 unless exists $args->{'-distance_test'};
- 
+    $args->{'-shortcut'} = 0 unless exists $args->{'-shortcut'};
+    
     $args->{'-cutoff'} = ($args->{'-window'} <= 7 ? 2 : 3) unless exists $args->{'-cutoff'};  
     $args->{'-significance'} = 0.05 unless exists $args->{'-significance'};
     $args->{'-replicates'} = 20 unless exists $args->{'-replicates'};
@@ -4181,7 +4181,7 @@ sub syntenic_paralogs {
     
     my %seen;
   CAND: foreach my $pair ( sort {  $synteny{$b}->{'SCORE'} <=> $synteny{$a}->{'SCORE'} } 
-			   grep { $synteny{$_}->{'SCORE'}>-1 } keys %synteny ) {
+			   grep { $synteny{$_}->{'SCORE'}>0 } keys %synteny ) {
       
       # get genes x and y. have they (specific genes ) already been placed in a pair?
       
@@ -4192,15 +4192,17 @@ sub syntenic_paralogs {
       # we look at the first ohnologs on both sides. 
       # if they are close and congruent with x and y we snap approve. 
       
-      if ( $synteny{$_}->{'SCORE'}>0 ) {
+      if ($args->{'-shortcut'}) {
 	  my @params = (-distance => $args->{'-window'}*2, -self => -1);
 	  my ($left_ohno) = grep {defined} map {$_->ohnolog} reverse($x->context(-direction => 'left',   @params));
 	  my ($right_ohno) = grep {defined} map {$_->ohnolog} $x->context(-direction => 'right', @params);
-	  if ( $left_ohno->distance(-object => $y) <= $args->{'-window'}*2 && 
+	  if ( ($left_ohno && $right_ohno) && 
+	       $left_ohno->distance(-object => $y) <= $args->{'-window'}*2 && 
 	       $right_ohno->distance(-object => $y) <= $args->{'-window'}*2 ) {
 	      my @inter = grep {$_->assign ne 'GAP'} grep {defined} $left_ohno->intervening( $right_ohno );
 	      if ( $#inter >= 0 && $#inter <= $args->{'-window'}*2 ) {
-		  map { print {$_} 'Shortcut', $x->sn, $y->sn, $left_ohno->sn, $right_ohno->sn, scalar(@inter) } ($fh, $fherr);
+		  map { print {$_} 'Shortcut',$synteny{$pair}->{FAM}, 
+			$x->sn, $y->sn, $left_ohno->sn, $right_ohno->sn, scalar(@inter) } ($fh, $fherr);
 		  goto ACCEPTOHNO;
 	      }
 	  }
