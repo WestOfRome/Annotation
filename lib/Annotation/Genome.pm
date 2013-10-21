@@ -4195,12 +4195,12 @@ sub syntenic_paralogs {
       if ( $synteny{$_}->{'SCORE'}>0 ) {
 	  my @params = (-distance => $args->{'-window'}*2, -self => -1);
 	  my ($left_ohno) = grep {defined} map {$_->ohnolog} reverse($x->context(-direction => 'left',   @params));
-	  my ($right_ohno) = grep {defiend} map {$_->ohnolog} $x->context(-direction => 'right', @params);
+	  my ($right_ohno) = grep {defined} map {$_->ohnolog} $x->context(-direction => 'right', @params);
 	  if ( $left_ohno->distance(-object => $y) <= $args->{'-window'}*2 && 
 	       $right_ohno->distance(-object => $y) <= $args->{'-window'}*2 ) {
 	      my @inter = grep {$_->assign ne 'GAP'} grep {defined} $left_ohno->intervening( $right_ohno );
 	      if ( $#inter >= 0 && $#inter <= $args->{'-window'}*2 ) {
-		  print {$fherr} 'Shortcut', $x->sn, $y->sn, $left_ohno->sn, $right_ohno->sn, scalar(@inter);
+		  map { print {$_} 'Shortcut', $x->sn, $y->sn, $left_ohno->sn, $right_ohno->sn, scalar(@inter) } ($fh, $fherr);
 		  goto ACCEPTOHNO;
 	      }
 	  }
@@ -4367,7 +4367,7 @@ sub syntenic_paralogs {
 		);
 
 	    if ( $args->{'-verbose'} ) {
-		print 'ALT:',$alt, $a1->sn, $a1->ygob, $anc."*", $a2->sn, $a2->ygob, $alt_pval, 
+		print {$fh} 'ALT:',$alt, $a1->sn, $a1->ygob, $anc."*", $a2->sn, $a2->ygob, $alt_pval, 
 		$synteny{$pair}->{SCORE}.' > '.$alt_score, 
 		$norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
 	    }
@@ -4395,7 +4395,14 @@ sub syntenic_paralogs {
       }
       $g1->ohnolog( $g2 ); # we set reciprocals automatically	    
       map { $seen{ $_->sn }++ } ($g1,$g2);
-      print {$fh} ++$ohno_counter, $synteny{$pair}->{FAM}, $g1->sn, $g2->sn,$synteny{$pair}->{SCORE},$pval,$norm if $args->{'-verbose'};
+
+      if ( $args->{'-verbose'} ) {
+	  foreach my $fx ( $fh, $fherr ) {
+	      print {$fx} scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ), 
+	      $synteny{$pair}->{FAM}, $g1->sn, $g2->sn,$synteny{$pair}->{SCORE},$pval,$norm;
+	  }
+      }
+
       next; 
   }
 
