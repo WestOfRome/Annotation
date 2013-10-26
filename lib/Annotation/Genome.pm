@@ -3112,6 +3112,32 @@ sub printFamily {
     return $self;
 }
 
+=head2 indexCandidateSisterRegions()
+=cut 
+
+sub indexCandidateSisterRegions {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
+
+    #######################################
+    # 
+    #######################################
+
+    my %index;    
+    foreach my $o ( grep {$_->ygob} $self->orfs ) {
+	my @context = $o->context(
+	    -distance => $args->{'-window'}*2,
+	    -self => -1
+	    );
+	
+    }
+
+    return \%index;
+}
+
+
 =head2 syntenyMatrix(-orfs => [], -ancestor => 'Anc_1.23', 
     -mode => 'o[rtholog]|p[aralog]', -verbose => 0)
     
@@ -4097,25 +4123,38 @@ sub syntenic_paralogs {
     # PHASE 0 : Prep work 
     #######################################
     
-    # create indexes
-    # %anc stores all orfs with same anc homology 
-    # %index provides a unique numeric id access to orfs in genome
+    # %anc stores all orfs with same anc homology. 
+    # it is the primary structuring data for the search 
 
     my %anc;
-    my %index;
-    my $index;
     foreach my $orf ( grep { $_->ygob } map { $_->stream } $self->stream ) {
 	$orf->data($attr => undef);
+
+	# the goal here is to strip out any old results 
+	# but for debugging we build two specific alternatives : 
+	# Partial stripping (e.g. 30%) 
+	# Targeted stripping i.e. a specific Anc 
+
 	if ( my $oh = $orf->ohnolog ) {
-	    $oh->ohnolog(undef) if 
-		($LOCAL_DEBUG_VAR==0 || $index%$LOCAL_DEBUG_VAR == 0);
+	    if ( $args->{'-debug'} ) {
+		$oh->ohnolog(undef) if $oh->ygob eq $args->{'-debug'};
+	    } else {
+		$oh->ohnolog(undef) if 
+		    ($LOCAL_DEBUG_VAR==0 || $index%$LOCAL_DEBUG_VAR == 0);
+	    }
 	}
 	push @{ $anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
-	$index{ ++$index }=$orf;
+	#$index{ ++$index }=$orf;
     }
 
     print {$fherr} 'INITIAL:',scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
 
+    # we need to know where all the potential sister regions are in the genome. 
+    # this is done using ohnologs below but we need a set of regions that does not
+    # make this assumption.
+
+    my %index = $self->indexCandidateSisterRegions();
+    
     #######################################
     # PHASE 1 : Prioritize candidates.
     # Cycle through all Anc families. 
@@ -4321,7 +4360,6 @@ sub syntenic_paralogs {
 			    SIS_CHR => $cog_ohno->up->id,
 			    ANC => 'Anc_'.$chr1.'.'.$cog_anc
 			};
-			# print '-B-', $o->name, $cog_ohno->name,  $sp1.'_'.$chr1.'.'.$cog_anc;
 		    }
 		}
 		next unless @center_of_gravity;
@@ -4401,7 +4439,9 @@ sub syntenic_paralogs {
       if ( $args->{'-verbose'} ) {
 	  foreach my $fx ( $fh, $fherr ) {
 	      print {$fx} scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ), 
-	      $synteny{$pair}->{FAM}, $g1->sn, $g2->sn,$synteny{$pair}->{SCORE},$pval,$norm;
+	      $synteny{$pair}->{FAM}, $g1->sn, $g2->sn, 
+	      $g1->left->ygob, $g1->right->ygob, $g2->left->ygob, $g2->right->ygob, 
+	      $synteny{$pair}->{SCORE},$pval,$norm;
 	  }
       }
 
@@ -4428,8 +4468,7 @@ sub syntenic_paralogs {
 	      my $ori = $y->direction( -object => $ohno );
 	      push @{$span{ join(':', $dir,$ori) }}, [$test, $ohno];
 	  }
-      }
-      
+      }      
       
       # output 
       
