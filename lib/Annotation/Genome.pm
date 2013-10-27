@@ -3113,26 +3113,72 @@ sub printFamily {
 }
 
 =head2 indexCandidateSisterRegions()
+
+    Use very approximate methods to find a list 
+    of candidate sister regions for each gene. 
+
 =cut 
 
 sub indexCandidateSisterRegions {
     my $self = shift;
     my $args = {@_};
 
-    $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
+    $args->{'-window'} = 7 unless exists $args->{'-window'}; 
+    
+    my $attr = '_sister_temp_var'.int(rand(100));
 
     #######################################
     # 
     #######################################
 
-    my %index;    
+    my %hash;    
     foreach my $o ( grep {$_->ygob} $self->orfs ) {
-	my @context = $o->context(
-	    -distance => $args->{'-window'}*2,
-	    -self => -1
+	$o->ygob =~ /Anc_(\d+)\.(\d+)/ || $self->throw; 
+	my $ref_chr = $1;
+	my $ref_q = $2;
+
+	my @context = grep {$_->ygob} $self->context(
+	    -distance => $args->{'-window'},
 	    );
+	my @syn = grep { abs($_->data($attr)->[1] - $req_q) <= $args->{'-window'} } 
+	    grep { $_->data($attr)->[0] eq $ref_chr } 	    
+	map {$_->ygob =~ /Anc_(\d+)\.(\d+)/; $_->data($attr => [$1,$2])} @context;  
+	next unless scalar(@syn)>=2;
 	
+	push @{ $hash{ $ref_chr }}, [$o, $ref_q, $o->ancestralSyntenyDensity()];
     }
+    
+    #######################################
+    # 
+    ####################################### 
+
+    my %newHash;
+    foreach my $chr ( keys %hash ) {
+	for (my $i=0; $i< $#{$hash{$chr}}; $i++) {
+	    for (my $j=$i+1; $j <= $#{$hash{$chr}}; $j++) {
+		my $dist = abs($hash{$chr}->[$i]->[1] -  $hash{$chr}->[$j]->[1]);
+		my $metric = $dist/($hash{$chr}->[$i]->[2]*$hash{$chr}->[$j]->[2]);
+		push @{ $newHash{ $hash{$chr}->[$i]->[0]->unique } }, [$metric, $hash{$chr}->[$j]->[0]];
+		push @{ $newHash{ $hash{$chr}->[$j]->[0]->unique } }, [$metric, $hash{$chr}->[$i]->[0]];
+	    }
+	}
+    }
+
+    #######################################
+    # 
+    ####################################### 
+
+    my %index;
+    for my $key ( keys %newHash ) {
+	my @sort = sort { $a->[0] <=> $b->[0] } @{$newHash{$key}};
+	$index{ $key } = @sort[0..4];
+    }
+
+    #######################################
+    # 
+    ####################################### 
+    
+    map { $_->data($attr => 'delete') } $self->orfs;
 
     return \%index;
 }
@@ -4105,7 +4151,10 @@ sub syntenic_paralogs {
     $args->{'-cutoff'} = ($args->{'-window'} <= 7 ? 2 : 3) unless exists $args->{'-cutoff'};  
     $args->{'-significance'} = 0.05 unless exists $args->{'-significance'};
     $args->{'-replicates'} = 20 unless exists $args->{'-replicates'};
-    
+
+    my %index = $self->indexCandidateSisterRegions();
+    exit;
+
     #######################################
     # make some vars for the next phase 
     #######################################
@@ -4113,10 +4162,8 @@ sub syntenic_paralogs {
     my $fh = STDOUT;
     my $fherr = STDERR;
     my $attr = '_ohno_temp_var'.int(rand(100));
-    my $ohno_count = scalar( grep { $_->ohnolog } $self->orfs );    
     my $data_key = 'OHNO';
-    my ($counter, $count_x, $count_y)=(0,0,0);
-    
+
     my $LOCAL_DEBUG_VAR=0;
 
     #######################################
@@ -4450,35 +4497,6 @@ sub syntenic_paralogs {
 
     map { $_->data($attr => 'delete') } $self->orfs;
     return $self;
-
-      ######################################	
-      # 
-      ######################################	
-	# this code can be used for the synteny first phase .. 
-	
-      foreach my $dir ( qw(left right) ) {
-	  my @orfs = $x->context(
-	      -direction => $dir,
-	      -distance => $args->{'-window'}*2,
-	      -self => -1
-	      );
-	  foreach my $test ( grep {$_->ohnolog} @orfs ) {
-	      my $ohno = $test->ohnolog;
-	      next unless $y->distance(-object => $ohno ) <=  $args->{'-window'}*2;
-	      my $ori = $y->direction( -object => $ohno );
-	      push @{$span{ join(':', $dir,$ori) }}, [$test, $ohno];
-	  }
-      }      
-      
-      # output 
-      
-      if ( $args->{'-verbose'} ) {
-	  print ++$count_x, $anc, 
-	  $g1->name, int($g1->hypergob), 
-	  $g2->name, int($g2->hypergob), 
-	  $sisters{$best}->{SCR}, $percentile, $pval;	    
-      }      
-    
 }
 
 sub _percentile {
