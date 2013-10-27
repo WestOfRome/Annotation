@@ -3124,6 +3124,7 @@ sub indexCandidateSisterRegions {
     my $args = {@_};
 
     $args->{'-window'} = 7 unless exists $args->{'-window'}; 
+    $args->{'-syn_min'} = .3 unless exists $args->{'-syn_min'}; 
     
     my $attr = '_sister_temp_var'.int(rand(100));
 
@@ -3137,15 +3138,17 @@ sub indexCandidateSisterRegions {
 	my $ref_chr = $1;
 	my $ref_q = $2;
 
-	my @context = grep {$_->ygob} $self->context(
-	    -distance => $args->{'-window'},
+	next unless my @context = grep {$_->ygob} grep {defined} $o->context(
+	    -distance => $args->{'-window'}
 	    );
 	my @syn = grep { abs($_->data($attr)->[1] - $req_q) <= $args->{'-window'} } 
 	    grep { $_->data($attr)->[0] eq $ref_chr } 	    
-	map {$_->ygob =~ /Anc_(\d+)\.(\d+)/; $_->data($attr => [$1,$2])} @context;  
+	map {$_->ygob =~ /Anc_(\d+)\.(\d+)/; $_->data($attr => [$1,$2]); $_} @context;  
 	next unless scalar(@syn)>=2;
-	
-	push @{ $hash{ $ref_chr }}, [$o, $ref_q, $o->ancestralSyntenyDensity()];
+	my ($asd) = $o->ancestralSyntenyDensity();
+	#print $ref_chr, $o->name, $ref_q, $asd, $args->{'-syn_min'}; 
+	push @{ $hash{ $ref_chr }}, [$o, $ref_q, $asd] 
+	    if $asd >= $args->{'-syn_min'};
     }
     
     #######################################
@@ -3154,12 +3157,13 @@ sub indexCandidateSisterRegions {
 
     my %newHash;
     foreach my $chr ( keys %hash ) {
+	
 	for (my $i=0; $i< $#{$hash{$chr}}; $i++) {
 	    for (my $j=$i+1; $j <= $#{$hash{$chr}}; $j++) {
 		my $dist = abs($hash{$chr}->[$i]->[1] -  $hash{$chr}->[$j]->[1]);
 		my $metric = $dist/($hash{$chr}->[$i]->[2]*$hash{$chr}->[$j]->[2]);
-		push @{ $newHash{ $hash{$chr}->[$i]->[0]->unique } }, [$metric, $hash{$chr}->[$j]->[0]];
-		push @{ $newHash{ $hash{$chr}->[$j]->[0]->unique } }, [$metric, $hash{$chr}->[$i]->[0]];
+		push @{ $newHash{ $hash{$chr}->[$i]->[0]->unique_id } }, [$metric, $hash{$chr}->[$j]->[0]];
+		push @{ $newHash{ $hash{$chr}->[$j]->[0]->unique_id } }, [$metric, $hash{$chr}->[$i]->[0]];
 	    }
 	}
     }
@@ -3170,8 +3174,13 @@ sub indexCandidateSisterRegions {
 
     my %index;
     for my $key ( keys %newHash ) {
-	my @sort = sort { $a->[0] <=> $b->[0] } @{$newHash{$key}};
-	$index{ $key } = @sort[0..4];
+      CAND: foreach my $x ( sort { $a->[0] <=> $b->[0] } @{$newHash{$key}} ) {
+	  foreach my $prev ( @{$index{$key}} ) {
+	      next CAND if $x->[1]->distance( -object => $prev ) <= $args->{'-window'};
+	  } 
+	  push @{$index{$key}}, $x->[1]; 
+	  last if scalar( @{$index{$key}} ) >= 1000;
+      }
     }
 
     #######################################
@@ -4152,9 +4161,6 @@ sub syntenic_paralogs {
     $args->{'-significance'} = 0.05 unless exists $args->{'-significance'};
     $args->{'-replicates'} = 20 unless exists $args->{'-replicates'};
 
-    my %index = $self->indexCandidateSisterRegions();
-    exit;
-
     #######################################
     # make some vars for the next phase 
     #######################################
@@ -4190,7 +4196,7 @@ sub syntenic_paralogs {
 		    ($LOCAL_DEBUG_VAR==0 || $index%$LOCAL_DEBUG_VAR == 0);
 	    }
 	}
-	push @{ $anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
+	push @{$anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
 	#$index{ ++$index }=$orf;
     }
 
@@ -4295,8 +4301,8 @@ sub syntenic_paralogs {
       }
       
       # if we do not succeed with shortcut we take the established process of 
-      # comparing candidate to null and cross-validating agaisnt all alternative sisters. 
-      
+      # comparing candidate to null and cross-validating agaisnt all alternative sisters.
+
       my ($pval, $norm, $rands) = 
 	  $self->syntenic_significance(
 	      -gene1 => $x, 
@@ -4333,16 +4339,33 @@ sub syntenic_paralogs {
 		  );
 	      push @{ $ohnos{$o->up->id}{$dir} }, grep {$_->ohnolog} @context;
 	  }
-	  
-	  # look at each CHR to see if there are ohnologs spanning the 
+
+	  # 2 Methods. 
+	  # 1. look at each CHR to see if there are ohnologs spanning the 
 	  # focal genes. If yes, and meet proximity criteria, then 
 	  # infer the location of the focal genes and store this. 
 	  # we will center windows on this for later analysis. 
-	  
+	  # 2. use indexCandidateSisterRegions() to find regsions 
+          # with high P of being related. does not rely on ohnologs. 
+
 	    foreach my $chr (keys %ohnos) {
-		#print '>>>'.$chr, $#{$ohnos{$chr}{'left'}}, $#{$ohnos{$chr}{'right'}};
+	   #print '>>>'.$chr, $#{$ohnos{$chr}{'left'}}, $#{$ohnos{$chr}{'right'}};
 		
 		my @center_of_gravity;
+
+                # consider candidates from indexCandidateSisterRegions().
+
+foreach my $cx ( grep { $_->up->id eq $chr } @{ $index{$o->unique_id} }) {
+	 push @center_of_gravity, {
+			    QUERY => $o,
+			    SISTER => $cx,
+			    SIS_CHR =>  $cx->up->id,
+			    ANC => $o->ygob
+			};
+}
+
+# canddaiets from ohnologs 
+
 		foreach my $left ( @{$ohnos{$chr}{'left'}} ) {
 		    my $d_left = $o->distance( -object => $left,-nogap => 1 )+1;
 		    
