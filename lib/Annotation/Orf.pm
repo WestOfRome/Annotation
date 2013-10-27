@@ -3999,6 +3999,105 @@ sub synteny_conserved {
     return sprintf("%.1f", -1*(log($dhyper)/log(10)) );
 }
 
+=head2 ancestralSyntenyDensity( -window => 7 )
+
+    Another synteny scoring method. Requires only a single
+    parameter and returns nice smooth values from 0 - 1. 
+
+    Unlike other synteny methods it is fairly graceful in 
+    how it handles missing data (e.g. at contig ends etc).  
+    Should probably be merged with synteny() method and used
+    to improve synteny(). 
+    
+=cut 
+
+sub ancestralSyntenyDensity {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-window'} = 7 unless exists $args->{'-window'};   
+    
+    $self->throw unless my $win = $args->{'-window'};
+    
+    #######################################
+    # 
+    #######################################
+
+    return 0 unless $self->ygob;
+    $self->ygob =~ /Anc_(\d+)\.(\d+)/ || $self->throw; 
+    my $ref_chr = $1;
+    my $ref_q = $2;
+
+    #######################################
+    # 
+    #######################################
+
+    my $factor = ( $self->up->up->wgd ? 2 : 1 );
+    my $limit = $win*$factor;
+    my $min = $limit*($win + 1);
+    my $max = $limit*$win*2;
+    my $scaleF = $limit*($win - 1); # max - min
+    my @best = map { $_*$factor } (1..$win);
+    
+    #######################################
+    # 
+    #######################################
+
+    my $raw;
+    my @raw;
+    foreach my $dir ( qw(left right) ) {
+
+	my @context = grep {$_->ygob} $self->context(
+	    -distance => $args->{'-window'},
+	    -direction => $dir,
+	    -self => -1
+	    );
+	splice(@context, 0, $#context, reverse(@context)) if $dir eq 'left';
+
+	my @dist;
+	foreach my $pos ( 1..$win ) {
+	    my $index = $pos-1;	    
+	    my $dist=undef;
+	    if ( exists $context[$index] ) {
+		$context[$index]->ygob =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+		my ($chr,$q)=($1,$2);
+		$dist = ( ($ref_chr eq $chr) && (abs($q-$ref_q) <= $limit) ? abs($q-$ref_q) : $limit);
+		$dist = $best[$index] if $dist < $best[$index]; # && $factor==1; # non-WGD cannot be better than best
+	    } 
+	    push @dist, $dist;
+	}
+
+	my @exp;
+	foreach my $pos ( 1..$win ) {
+	    my $index = $pos-1;	
+	    next unless defined $dist[$index];
+	    push @exp, ( $dist[$index] > $best[$index] ? $dist[$index]/$best[$index] : 1);
+	} 
+	my ($exp) = ( $#exp>1 ? &_calcMeanSD( @exp ) : undef);
+
+	foreach my $pos ( 1..$win ) {
+	    my $index = $pos-1;	
+	    next if defined $dist[$index];
+	    $dist[$index] = $limit and next unless $exp;
+	    $dist[$index] = ( $exp*$best[$index] < $limit ? $exp*$best[$index] : $limit);	    
+	}
+	map { $raw += $_ } @dist;
+	push @raw,@dist;
+	print $dir, sprintf("%.2f",$exp), @dist;
+    }
+
+    # normalize to a linear score 
+
+    my $norm = $max - $raw; # higher is better 
+    my $scaled = $norm / $scaleF;
+    
+    print $self->name, map { sprintf("%.1f", $_) } ($min, $raw, $max, $norm, $scaled);
+    
+    return wantarray ? ($scaled,$norm,$raw) : $scale;
+}
+
+##########################################
+##########################################
 
 =head2 quality
 
