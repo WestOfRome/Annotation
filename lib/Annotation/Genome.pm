@@ -4353,16 +4353,16 @@ sub syntenic_paralogs {
 	      
 	      my ($alt_pval, $alt_norm, $alt_rands) =
 		  $self->syntenic_significance(
-		      -gene1 => $a1,
-		      -gene2 => $a2,
-		      -ancestor => $anc,
+		      -gene1 => $o,
+		      -gene2 => $cand,
+		      -ancestor => $ax,
 		      -replicates =>  $args->{'-replicates'}, 
 		      -window =>  $args->{'-window'},
 		      -score => $alt_score
 		  );
 
 	      if ( $args->{'-verbose'} ) {
-		  print {$fh} 'ALT:',$alt, $a1->sn, $a1->ygob, $anc."*", $a2->sn, $a2->ygob, $alt_pval, 
+		  print {$fh} 'ALT:',$alt, $o->sn, $o->ygob, $ax."*", $cand->sn, $cand->ygob, $alt_pval, 
 		  $synteny{$pair}->{SCORE}.' > '.$alt_score, 
 		  $norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
 	      }
