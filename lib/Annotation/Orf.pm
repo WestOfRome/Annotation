@@ -1088,43 +1088,97 @@ sub _prune_from_ends {
     return splice(@x, $i, $#x-$i-$j+1)
 }
 
-=head2 sister(-window => 10)
+=head2 sisters(-window => 10)
 
-    Returns a contig (sister region). Not a candidate ohnolog. 
-
-    Infer the sister region to the one centered on the calling ORF. 
-    Is intended to be quick-and-dirty. Do not use for serious work.
-    Requires YGOB HMM data.
-
-    NB: The inferred sister region is not necessarily that of the *contig*
-    on which the ORF resides - there can be many of these - it is the contig
-    having most ancestors in the region of the calling gene that is NOT 
-    the same as the contig on which the caller resides. 
-
-    -window : region to consider when inferring ancestral genome contents.
+    Return candidate sister regions by looking at neighbouring
+    ohnologs. Each candidate returned is centered on a 
+    specific gene which is the return value.
 
 =cut
 
-sub sister {
+sub sisters {
     my $self = shift;
     my $args = {@_};
 
     $args->{'-window'} = 10 unless exists $args->{'-window'};
-
-    return undef unless $self->ygob  =~ /Anc_(\d+)\.(\d+)/;
-    my ($chr, $pos) = ($1, $2);
-
-    my %contigs;
-    foreach my $o ( grep { $_->ygob =~ /Anc_$chr\./ } $self->up->up->orfs ) {	
-	$o->ygob =~ /Anc_$chr\.(\d+)/;
-	next if $1 eq $pos;
-	$contigs{$o->up->id} += 1/abs($1-$pos) if abs($1-$pos) <= $args->{'-window'};
+    $args->{'-distance_test'} = 3 unless exists $args->{'-distance_test'};    
+    
+    # get all the genes with ohnologs left and right 
+	  
+    my %ohnos;
+    foreach my $dir ( qw(left right) ) {
+	my @context = $o->context(
+	    -direction => $dir,
+	    -distance => $args->{'-window'},
+	    -self => -1
+	    );
+	push @{ $ohnos{$o->up->id}{$dir} }, grep {$_->ohnolog} @context;
     }
 
-    delete $contigs{$self->up->id};
-    my ($max) = sort { $contigs{$b} <=> $contigs{$a} } keys %contigs;
+    # look at each CHR to see if there are ohnologs spanning the 
+    # focal genes. If yes, and meet proximity criteria, then 
+    # infer the location of the focal genes and store this. 
+    # we will center windows on this for later analysis. 
+
+    my @center_of_gravity;
+    foreach my $chr (keys %ohnos) {
+	foreach my $left ( @{$ohnos{$chr}{'left'}} ) {
+	    my $d_left = $o->distance( -object => $left,-nogap => 1 )+1;		    
+	    foreach my $right ( @{$ohnos{$chr}{'right'}} ) {
+
+		# basic sanity checks -- ohnologs must be on same chr 
+		
+		next unless $left->ohnolog->up == $right->ohnolog->up;
+		
+		# require the linkage between the two ohno pairs 
+		# goes through same anc genome 
+		
+		next unless $left->ygob && $right->ygob;
+		my ($sp1,$chr1,$index1) = &Annotation::Orf::_decompose_gene_name($left->ygob);
+		my ($sp2,$chr2,$index2) = &Annotation::Orf::_decompose_gene_name($right->ygob);
+		# print "SPAN", $left->sn, $left->ygob, $o->sn."*", $o->ygob."*", $right->sn, $right->ygob, 
+		$left->up->id.'/'.$left->ohnolog->up->id;
+		next unless $chr1==$chr2;
+		my $d_anc = abs( $index1 - $index2 );
+		next unless $d_anc > 0;
+		
+		# deploy basic criteria to ensure the distances makes sense 
+		
+		my $d_query = $left->distance( -object => $right,-nogap => 1 )+1;
+		my $d_ohno = $left->ohnolog->distance( -object => $right->ohnolog,-nogap => 1 )+1;
+		#next unless abs(log($d_query/$d_ohno)/log(2)) <= 2;
+		map { next unless ( ($_/$d_query <= $args->{'-distance_test'}) || 
+				    ($_ <= $args->{'-window'}*$args->{'-distance_test'}) ) } ($d_anc, $d_ohno);
+		
+		# Look for implied location of the sister gene and anc 
+		
+		my $cog_anc;
+		if ( $index1 < $index2 ) {
+		    $cog_anc = $index1 + int( ($d_left/$d_query) * $d_anc );
+		    $self->throw unless $cog_anc >= $index1 && $cog_anc <= $index2; 
+		} else {
+		    $cog_anc =  $index1 - int( ($d_left/$d_query) * $d_anc );
+		    $self->throw unless $cog_anc >= $index2 && $cog_anc <= $index1; 
+		}
+		
+		# now the sister gene 
+			
+		my $cog_ohno; 
+		my @int = grep { $_->assign ne 'GAP' }  # always ordered low .. high id 
+		$left->ohnolog->intervening( -object => $right->ohnolog );
+		
+		my $cog_index = int( ($d_left/$d_query) * scalar(@int) );
+		$self->throw( join(':',$#int, $cog_index) ) if $cog_index < 0 || $cog_index > $#int;
+		$cog_ohno = $int[$cog_index*( $left->ohnolog->index < $right->ohnolog->index ? 1 : -1)];
+		
+		# store options for this chromosome 
+		
+		push @center_of_gravity, [$cog_ohno, 'Anc_'.$chr1.'.'.$cog_anc]; 
+	    }
+	}
+    }	
     
-    return $self->up->up->find(-contig => $max);
+    return @center_of_gravity;
 }
 
 =head2 intervening(-object => $orf) 
