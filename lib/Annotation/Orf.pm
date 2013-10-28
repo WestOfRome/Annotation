@@ -4053,6 +4053,16 @@ sub synteny_conserved {
     return sprintf("%.1f", -1*(log($dhyper)/log(10)) );
 }
 
+=head2 density( -window => 7 ) 
+    
+    Wrapper for ancestralSyntenyDensity that returns the scaled (0-1)
+    value only i.e. the density of syntenic ancestral homologs in the 
+    region. 
+
+=cut 
+
+sub density { my $self = shift; return $self->ancestralSyntenyDensity( @_ )+0; }
+
 =head2 ancestralSyntenyDensity( -window => 7 )
 
     Another synteny scoring method. Requires only a single
@@ -4147,7 +4157,7 @@ sub ancestralSyntenyDensity {
     
     #print $self->name, map { sprintf("%.1f", $_) } ($min, $raw, $max, $norm, $scaled);
     
-    return wantarray ? ($scaled,$norm,$raw) : $scale;
+    return ( wantarray ? ($scaled,$norm,$raw) : $scaled );
 }
 
 ##########################################
