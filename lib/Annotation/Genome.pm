@@ -3159,6 +3159,8 @@ sub indexCandidateSisterRegions {
     foreach my $chr ( keys %hash ) {	
 	for (my $i=0; $i< $#{$hash{$chr}}; $i++) {
 	    for (my $j=$i+1; $j <= $#{$hash{$chr}}; $j++) {
+		next if $hash{$chr}->[$j]->[0]->distance( -object => $hash{$chr}->[$i]->[0] ) 
+		    <= 2*$args->{'-window'};
 		my $dist = abs($hash{$chr}->[$i]->[1] -  $hash{$chr}->[$j]->[1]);
 		my $metric = $dist/($hash{$chr}->[$i]->[2]*$hash{$chr}->[$j]->[2]);
 		push @{ $newHash{ $hash{$chr}->[$i]->[0]->unique_id } }, [$metric, $hash{$chr}->[$j]->[0]];
@@ -4153,7 +4155,6 @@ sub syntenic_paralogs {
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
 
     $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
-    $args->{'-distance_test'} = 3 unless exists $args->{'-distance_test'};
     $args->{'-shortcut'} = 0 unless exists $args->{'-shortcut'};
     
     $args->{'-cutoff'} = ($args->{'-window'} <= 7 ? 2 : 3) unless exists $args->{'-cutoff'};  
@@ -4199,7 +4200,7 @@ sub syntenic_paralogs {
 	#$index{ ++$index }=$orf;
     }
 
-    print {$fherr} 'INITIAL:',scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
+    print {$fherr} 'INITIALIZE:',scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
 
     # we need to know where all the potential sister regions are in the genome. 
     # this is done using ohnologs below but we need a set of regions that does not
@@ -4322,204 +4323,83 @@ sub syntenic_paralogs {
       # check for a conflict with pre-existing more highly weighted decisions.
       # For each sister region we want to look at surrounding context and 
       # see if there is compelling evidence that another region is a better fit. 
-      
-      my %alternatives;
+      # We use 2 sources : 
+      # orf->sisters() which queries neighbouring ohnologs 
+      # genome->candidateSisterRegions which does NOT use ohnologs. 
+
       foreach my $o ( $x, $y ) {
-	  my $other = ( $o eq $x ? $y : $x );
-	  
-	  # get all the genes with ohnologs left and right 
-	  
-	  my %ohnos;
-	  foreach my $dir ( qw(left right) ) {
-	      my @context = $o->context(
-		  -direction => $dir,
-		  -distance => $args->{'-window'}*2,
-		  -self => -1
+          my @sisters = ( 
+		    $o->sisters,  # [orf, AncLocus]
+		    ( map { [ $_,$o->ygob ] } @{ $sisterIndex->{$o->unique_id} }) 
+	      );
+		
+	  foreach my $sister ( @sisters ) {
+	      my ($cand, $ax) = @{$sister}; 
+	      print $o->name, $cand->name, $cand->ygob, $cand->density;		    
+	      map { next if $cand->distance( -object => $_ ) <= $args->{'-window'}*5 } ($x,$y);
+
+	      # align and score 
+
+	      my ($alt_align,$alt_score,$alt_hash) = # either an alignment (array of hashes) or hash
+		  $o->syntenic_alignment(
+		      -object => $cand,
+		      -ancestor => $ax,
+		      -clean => 1,
+		      -score => 1,
+		      -window => $args->{'-window'},
+		      -verbose => 0
 		  );
-	      push @{ $ohnos{$o->up->id}{$dir} }, grep {$_->ohnolog} @context;
+	      next unless $alt_score > 0;
+	      
+	      my ($alt_pval, $alt_norm, $alt_rands) =
+		  $self->syntenic_significance(
+		      -gene1 => $a1,
+		      -gene2 => $a2,
+		      -ancestor => $anc,
+		      -replicates =>  $args->{'-replicates'}, 
+		      -window =>  $args->{'-window'},
+		      -score => $alt_score
+		  );
+
+	      if ( $args->{'-verbose'} ) {
+		  print {$fh} 'ALT:',$alt, $a1->sn, $a1->ygob, $anc."*", $a2->sn, $a2->ygob, $alt_pval, 
+		  $synteny{$pair}->{SCORE}.' > '.$alt_score, 
+		  $norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
+	      }
+	      next CAND unless $norm > $alt_norm;
 	  }
+      }
 
-	  # 2 Methods. 
-	  # 1. look at each CHR to see if there are ohnologs spanning the 
-	  # focal genes. If yes, and meet proximity criteria, then 
-	  # infer the location of the focal genes and store this. 
-	  # we will center windows on this for later analysis. 
-	  # 2. use indexCandidateSisterRegions() to find regsions 
-          # with high P of being related. does not rely on ohnologs. 
-
-	    foreach my $chr (keys %ohnos) {
-	   #print '>>>'.$chr, $#{$ohnos{$chr}{'left'}}, $#{$ohnos{$chr}{'right'}};
-		
-		my @center_of_gravity;
-
-                # consider candidates from indexCandidateSisterRegions().
-
-print map {$_->name} @{$sisterIndex->{ $o->unique_id }};
-
-foreach my $cx ( grep { $_->up->id eq $chr } @{ $sisterIndex->{$o->unique_id} }) {
-
-print $o->name, $cx->name, $cx->ygob, $cx->ancestralSyntenyDensity;
-
-	 push @center_of_gravity, {
-			    QUERY => $o,
-			    SISTER => $cx,
-			    SIS_CHR =>  $cx->up->id,
-			    ANC => $o->ygob
-			};
-}
-
-# canddaiets from ohnologs 
-
-		foreach my $left ( @{$ohnos{$chr}{'left'}} ) {
-		    my $d_left = $o->distance( -object => $left,-nogap => 1 )+1;
-		    
-		    foreach my $right ( @{$ohnos{$chr}{'right'}} ) {
-
-			# basic sanity checks -- ohnologs must be on same chr 
-			# we do not penalize ohno pairs that support the pair being tested
-
-			next unless $left->ohnolog->up == $right->ohnolog->up;
-			next if $left->ohnolog->up == $other->up && 
-			    ($left->ohnolog->distance( -object => $other ) <= 50 ||
-			     $right->ohnolog->distance( -object => $other ) <= 50);
-
-			# require the linkage between the two ohno pairs 
-			# goes through same anc genome 
-			
-			next unless $left->ygob && $right->ygob;
-			my ($sp1,$chr1,$index1) = &Annotation::Orf::_decompose_gene_name($left->ygob);
-			my ($sp2,$chr2,$index2) = &Annotation::Orf::_decompose_gene_name($right->ygob);
-			# print "SPAN", $left->sn, $left->ygob, $o->sn."*", $o->ygob."*", $right->sn, $right->ygob, 
-			$left->up->id.'/'.$left->ohnolog->up->id;
-			next unless $chr1==$chr2;
-			my $d_anc = abs( $index1 - $index2 );
-			next unless $d_anc > 0;
-			
-			# deploy basic criteria to ensure the distances makes sense 
-
-			my $d_query = $left->distance( -object => $right,-nogap => 1 )+1;
-			my $d_ohno = $left->ohnolog->distance( -object => $right->ohnolog,-nogap => 1 )+1;
-			#print '-A-', $d_anc, $d_ohno, $d_query, $d_left;
-			#next unless abs(log($d_query/$d_ohno)/log(2)) <= 2;
-			map { next unless ( ($_/$d_query <= $args->{'-distance_test'}) || 
-					    ($_ <= $args->{'-window'}*$args->{'-distance_test'}) ) } ($d_anc, $d_ohno);
-			
-			# Look for implied location of the sister gene and anc 
-			# that will be supplied to syntenic_alignment to conduct test. 
-			
-			my $cog_anc;
-			if ( $index1 < $index2 ) {
-			    $cog_anc = $index1 + int( ($d_left/$d_query) * $d_anc );
-			    $self->throw unless $cog_anc >= $index1 && $cog_anc <= $index2; 
-			} else {
-			    $cog_anc =  $index1 - int( ($d_left/$d_query) * $d_anc );
-			    $self->throw unless $cog_anc >= $index2 && $cog_anc <= $index1; 
-			}
-			
-			# now the sister gene 
-			
-			my $cog_ohno; 
-			my @int = grep { $_->assign ne 'GAP' }  # always ordered low .. high id 
-			$left->ohnolog->intervening( -object => $right->ohnolog );
-			
-			my $cog_index = int( ($d_left/$d_query) * scalar(@int) );
-			$self->throw( join(':',$#int, $cog_index) ) if $cog_index < 0 || $cog_index > $#int;
-			$cog_ohno = $int[$cog_index*( $left->ohnolog->index < $right->ohnolog->index ? 1 : -1)];
-			
-			# store options for this chromosome 
-			
-			push @center_of_gravity, {
-			    QUERY => $o,
-			    SISTER => $cog_ohno,
-			    SIS_CHR => $cog_ohno->up->id,
-			    ANC => 'Anc_'.$chr1.'.'.$cog_anc
-			};
-		    }
-		}
-		next unless @center_of_gravity;
-
-		# based on all gene pairs, estimate the best central point. 
-		# we only test once per chr. 
-
-		my (%count, %count2);
-		map { $count{ $_->{SIS_CHR} }++ } @center_of_gravity;
-		my ($best_anc) = sort { $count{$b} <=> $count{$a} } keys %count;
-		map { $count2{ $_->{ANC} }++ } grep { $_->{SIS_CHR} eq $best_anc } @center_of_gravity;
-		my ($best_orf) = sort { $count2{$b} <=> $count2{$a} } keys %count2;
-		my ($best) = grep { $_->{ANC} eq $best_orf } 
-		grep { $_->{SIS_CHR} eq $best_anc } @center_of_gravity;
-		
-		$alternatives{ $chr } = $best; # {QUERY => , SISTER => orf, ANC => }
-	    } # Chr 
-	} # Cand1,Cand2
-	
-      ###########################################	
-      # compare each of the alternatives to proposed sister regions 
-      ###########################################	
-
-	foreach my $alt ( keys %alternatives ) {
-	    my ($a1,$a2,$anc) = map { $alternatives{$alt}->{$_} } qw(QUERY SISTER ANC);
-	    my ($alt_align,$alt_score,$alt_hash) = # either an alignment (array of hashes) or hash
-		$a1->syntenic_alignment(
-		    -object => $a2,
-		    -ancestor => $anc,
-		    -clean => 1,
-		    -score => 1,
-		    -window => $args->{'-window'},
-		    -verbose => 0
-		);
-	    next unless $alt_score > 0;
-
-	    my ($alt_pval, $alt_norm, $alt_rands) =
-		$self->syntenic_significance(
-		    -gene1 => $a1,
-		    -gene2 => $a2,
-		    -ancestor => $anc,
-		    -replicates =>  $args->{'-replicates'}, 
-		    -window =>  $args->{'-window'},
-		    -score => $alt_score
-		);
-
-	    if ( $args->{'-verbose'} ) {
-		print {$fh} 'ALT:',$alt, $a1->sn, $a1->ygob, $anc."*", $a2->sn, $a2->ygob, $alt_pval, 
-		$synteny{$pair}->{SCORE}.' > '.$alt_score, 
-		$norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
-	    }
-	    next CAND unless $norm > $alt_norm;
-	}
-      
       # 
       
       # store the evidence even if we do not designate an ohnolog 
       # actual ohnologs are stored on $self->{OHNOLOG}
       # hope this doesn't break evidence routines ... 
 
-    ACCEPTOHNO:
-      my $g1=$x;
-      my $g2=$y;
-      foreach my $o ($g1,$g2) {
+  ACCEPTOHNO: {
+      foreach my $o ($x,$y) {
 	  $o->accept(
 	      $data_key, 		    
 	      {
-		  HIT => ( $o eq $g1 ? $g2 : $g1 ), 
+		  HIT => ( $o eq $x ? $y : $x ), 
 		  EVALUE => $pval, 
 		  SCORE => $synteny{$pair}->{SCORE}
 	      }
 	      );
       }
-      $g1->ohnolog( $g2 ); # we set reciprocals automatically	    
-      map { $seen{ $_->sn }++ } ($g1,$g2);
+      $x->ohnolog( $y ); # we set reciprocals automatically	    
+      map { $seen{ $_->sn }++ } ($x,$y);      
 
       if ( $args->{'-verbose'} ) {
 	  foreach my $fx ( $fh, $fherr ) {
 	      print {$fx} scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ), 
-	      $synteny{$pair}->{FAM}, $g1->sn, $g2->sn, 
-	      $g1->left->ygob, $g1->right->ygob, $g2->left->ygob, $g2->right->ygob, 
+	      $synteny{$pair}->{FAM}, $x->sn, $y->sn, 
+	      $x->left->ygob, $x->right->ygob, $y->left->ygob, $y->right->ygob, 
 	      $synteny{$pair}->{SCORE},$pval,$norm;
 	  }
       }
-
-      next; 
+    }
+    
   }
 
     map { $_->data($attr => 'delete') } $self->orfs;
