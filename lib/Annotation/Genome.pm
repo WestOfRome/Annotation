@@ -3138,11 +3138,11 @@ sub indexCandidateSisterRegions {
 	my $ref_chr = $1;
 	my $ref_q = $2;
 
-	next unless my @context = grep {$_->ygob} grep {defined} $o->context(
+	next unless my @context = grep {$_->ygob} $o->context(
 	    -distance => $args->{'-window'}
 	    );
-	my @syn = grep { abs($_->data($attr)->[1] - $req_q) <= $args->{'-window'} } 
-	    grep { $_->data($attr)->[0] eq $ref_chr } 	    
+	my @syn = grep { abs($_->data($attr)->[1] - $ref_q) <= $args->{'-window'} } 
+	    grep { $_->data($attr)->[0] == $ref_chr } 	    
 	map {$_->ygob =~ /Anc_(\d+)\.(\d+)/; $_->data($attr => [$1,$2]); $_} @context;  
 	next unless scalar(@syn)>=2;
 	my ($asd) = $o->ancestralSyntenyDensity();
@@ -3150,14 +3150,13 @@ sub indexCandidateSisterRegions {
 	push @{ $hash{ $ref_chr }}, [$o, $ref_q, $asd] 
 	    if $asd >= $args->{'-syn_min'};
     }
-    
+
     #######################################
     # 
     ####################################### 
 
     my %newHash;
-    foreach my $chr ( keys %hash ) {
-	
+    foreach my $chr ( keys %hash ) {	
 	for (my $i=0; $i< $#{$hash{$chr}}; $i++) {
 	    for (my $j=$i+1; $j <= $#{$hash{$chr}}; $j++) {
 		my $dist = abs($hash{$chr}->[$i]->[1] -  $hash{$chr}->[$j]->[1]);
@@ -3178,8 +3177,8 @@ sub indexCandidateSisterRegions {
 	  foreach my $prev ( @{$index{$key}} ) {
 	      next CAND if $x->[1]->distance( -object => $prev ) <= $args->{'-window'};
 	  } 
-	  push @{$index{$key}}, $x->[1]; 
-	  last if scalar( @{$index{$key}} ) >= 1000;
+	  push @{$index{$key}}, $x->[1]; # Orf only 
+	  last if scalar( @{$index{$key}} ) >= 5;
       }
     }
 
@@ -4206,8 +4205,8 @@ sub syntenic_paralogs {
     # this is done using ohnologs below but we need a set of regions that does not
     # make this assumption.
 
-    my %index = $self->indexCandidateSisterRegions();
-    
+    my $sisterIndex = $self->indexCandidateSisterRegions();
+
     #######################################
     # PHASE 1 : Prioritize candidates.
     # Cycle through all Anc families. 
@@ -4355,7 +4354,12 @@ sub syntenic_paralogs {
 
                 # consider candidates from indexCandidateSisterRegions().
 
-foreach my $cx ( grep { $_->up->id eq $chr } @{ $index{$o->unique_id} }) {
+print map {$_->name} @{$sisterIndex->{ $o->unique_id }};
+
+foreach my $cx ( grep { $_->up->id eq $chr } @{ $sisterIndex->{$o->unique_id} }) {
+
+print $o->name, $cx->name, $cx->ygob, $cx->ancestralSyntenyDensity;
+
 	 push @center_of_gravity, {
 			    QUERY => $o,
 			    SISTER => $cx,
