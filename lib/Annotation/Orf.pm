@@ -4015,7 +4015,7 @@ sub ancestralSyntenyDensity {
     my $self = shift;
     my $args = {@_};
 
-    $args->{'-window'} = 7 unless exists $args->{'-window'};   
+    $args->{'-window'} = 10 unless exists $args->{'-window'};   
     
     $self->throw unless my $win = $args->{'-window'};
     
@@ -4083,7 +4083,7 @@ sub ancestralSyntenyDensity {
 	}
 	map { $raw += $_ } @dist;
 	push @raw,@dist;
-	print $dir, sprintf("%.2f",$exp), @dist;
+	#print $dir, sprintf("%.2f",$exp), @dist;
     }
 
     # normalize to a linear score 
@@ -4091,7 +4091,7 @@ sub ancestralSyntenyDensity {
     my $norm = $max - $raw; # higher is better 
     my $scaled = $norm / $scaleF;
     
-    print $self->name, map { sprintf("%.1f", $_) } ($min, $raw, $max, $norm, $scaled);
+    #print $self->name, map { sprintf("%.1f", $_) } ($min, $raw, $max, $norm, $scaled);
     
     return wantarray ? ($scaled,$norm,$raw) : $scale;
 }
