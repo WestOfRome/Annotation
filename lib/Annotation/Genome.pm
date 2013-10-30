@@ -4329,8 +4329,8 @@ sub syntenic_paralogs {
 
       foreach my $o ( $x, $y ) {
           my @sisters = ( 
-		    $o->sisters,  # [orf, AncLocus]
-		    ( map { [ $_,$o->ygob ] } @{ $sisterIndex->{$o->unique_id} }) 
+	      $o->sisters,  # [orf, AncLocus]
+	      # ( map { [ $_,$o->ygob ] } @{ $sisterIndex->{$o->unique_id} }) 
 	      );
 		
 	  foreach my $sister ( @sisters ) {
