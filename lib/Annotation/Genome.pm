@@ -246,6 +246,39 @@ sub annotate {
     return $self;
 }
 
+############################################################
+# OUTPUT ROUTINES
+############################################################
+
+=head2 dump_ohnologs()
+=cut 
+
+sub dump_ohnologs {
+    my $self = shift;
+    my $args = {@_};
+    
+    my $fh = STDOUT;
+    my $fherr = STDERR;
+
+	my %seen;
+    my @oh = grep { !$seen{$_->sn}++; $seen{$_->ohnolog->sn} } grep { $_->ohnolog } $self->orfs;
+    
+    foreach my $x ( sort { $b->score('ohno') <=> $a->score('ohno') } @oh ) {
+	print {$fh}
+	    $x->ygob, ($x->_debug ? $x->_debug->gene : 'na'), 
+	    ($x->ohnolog->_debug ? $x->ohnolog->_debug->gene : 'na'), 
+	    $x->sn, $x->ohnolog->sn,
+	    $x->length, $x->ohnolog->length, 
+	    $x->hypergob, $x->ohnolog->hypergob, 
+	    $x->logscore('ygob'), $x->ohnolog->logscore('ygob'), 
+	    scalar($x->orthogroup), scalar($x->ohnolog->orthogroup),
+	    $x->score('ohno'), $x->evalue('ohno');
+    }
+    
+    print {$fherr} scalar(@oh)*2;
+    return $self;
+}
+
 
 =head2 dumpOrthogroups(-all => 0, -clade => 'Stricto')
 
@@ -3125,9 +3158,17 @@ sub indexCandidateSisterRegions {
 
     $args->{'-window'} = 7 unless exists $args->{'-window'}; 
     $args->{'-syn_min'} = .3 unless exists $args->{'-syn_min'}; 
-    
-    my $attr = '_sister_temp_var'.int(rand(100));
+    $args->{'limit'} = 30 unless exists  $args->{'limit'};
 
+    my ($debug_chr);
+    if ( $args->{'-debug'} ) {
+	$args->{'-debug'} =~ /Anc_(\d+)\.\d+/ || $self->throw;
+	$debug_chr=$1;
+    }
+
+    my $fherr = STDOUT;
+    my $attr = '_sister_temp_var'.int(rand(100));
+    
     #######################################
     # 
     #######################################
@@ -3138,11 +3179,13 @@ sub indexCandidateSisterRegions {
 	my $ref_chr = $1;
 	my $ref_q = $2;
 
+	next unless ! $args->{'-debug'} || $ref_chr == $debug_chr;
+
 	next unless my @context = grep {$_->ygob} $o->context(
 	    -distance => $args->{'-window'}
 	    );
 	my @syn = grep { abs($_->data($attr)->[1] - $ref_q) <= $args->{'-window'} } 
-	    grep { $_->data($attr)->[0] == $ref_chr } 	    
+	grep { $_->data($attr)->[0] == $ref_chr } 	    
 	map {$_->ygob =~ /Anc_(\d+)\.(\d+)/; $_->data($attr => [$1,$2]); $_} @context;  
 	next unless scalar(@syn)>=2;
 	my ($asd) = $o->ancestralSyntenyDensity();
@@ -3163,26 +3206,100 @@ sub indexCandidateSisterRegions {
 		    <= 2*$args->{'-window'};
 		my $dist = abs($hash{$chr}->[$i]->[1] -  $hash{$chr}->[$j]->[1]);
 		my $metric = $dist/($hash{$chr}->[$i]->[2]*$hash{$chr}->[$j]->[2]);
-		push @{ $newHash{ $hash{$chr}->[$i]->[0]->unique_id } }, [$metric, $hash{$chr}->[$j]->[0]];
-		push @{ $newHash{ $hash{$chr}->[$j]->[0]->unique_id } }, [$metric, $hash{$chr}->[$i]->[0]];
+		next unless $metric <= $args->{'limit'};
+		push @{ $newHash{ $hash{$chr}->[$i]->[0]->unique_id } }, {
+		    METRIC => $metric, 
+		    SELF => $hash{$chr}->[$i]->[0],
+		    HIT => $hash{$chr}->[$j]->[0],
+		};
+		push @{ $newHash{ $hash{$chr}->[$j]->[0]->unique_id } }, {
+		    METRIC => $metric, 
+		    SELF => $hash{$chr}->[$j]->[0],
+		    HIT => $hash{$chr}->[$i]->[0],
+		};
 	    }
 	}
     }
-
+    
     #######################################
-    # 
+    # we should now have a bunch of candidates in chr region.
+    # lets try isolate regions and then find the most approprite 
+    # point within each one to represent. 
     ####################################### 
 
     my %index;
     for my $key ( keys %newHash ) {
-      CAND: foreach my $x ( sort { $a->[0] <=> $b->[0] } @{$newHash{$key}} ) {
-	  foreach my $prev ( @{$index{$key}} ) {
-	      next CAND if $x->[1]->distance( -object => $prev ) <= $args->{'-window'};
-	  } 
-	  push @{$index{$key}}, $x->[1]; # Orf only 
-	  last if scalar( @{$index{$key}} ) >= 5;
-      }
+	# sort orfs onto chromosomes 
+	my %chr;
+	foreach my $res ( @{ $newHash{$key} } ) {
+	    my $orf = $res->{HIT}; 
+	    $orf->data($attr => $res->{METRIC});
+	    push @{ $chr{$orf->up->id} }, $orf;
+	}	
+	
+	my $queryAnc =  $newHash{$key}->[0]->{SELF}->ygob;
+	$queryAnc =~ /(\d+\.\d+)/;
+	my $short = $1;
+
+	# sort into segments using crude window method 
+	foreach my $chr ( keys %chr ) { 
+	    next if $#{$chr{$chr}} == 0 ; # require > 1
+	    
+	    my @cluster;
+	    foreach my $orf ( sort { $a->id <=> $b->id } @{$chr{$chr}} ) {
+		if ( ! @cluster ) {
+		    push @cluster, $orf;
+		} elsif ( $orf->distance( -object => $cluster[$#cluster] ) <= $args->{'-window'}*2 ) {
+		    push @cluster, $orf;
+		} else {
+		    my $rep;
+		    if ( $#cluster>0 ){		    
+			my $delta_min_i=[1e9,undef];
+			foreach my $cluster_i ( 0..$#cluster ) {
+			    my $newdelta = &Annotation::Orf::_compute_gene_distance( 
+				$queryAnc, 
+				$cluster[$cluster_i]->ygob 
+				);
+			    $delta_min_i = [abs($newdelta), $cluster_i] if abs($newdelta) <= $delta_min_i->[0];
+			}
+			$self->throw unless defined $delta_min_i->[1] 
+			    && $delta_min_i->[1]>=0 
+			    && $delta_min_i->[1]<=$#cluster;
+			$rep = $cluster[$delta_min_i->[1]];
+			push @{ $index{$key} }, $rep; ### <-- this is it. 
+		    }
+		    if ( $args->{'-verbose'} >= 1 ) {
+			print {$fherr} $short, ($rep ? $rep->sn : $rep),
+			map { $_->sn } sort { $a->id <=> $b->id } @cluster;
+			print {$fherr} undef, undef,
+			map {s/Anc_//; $_} map { $_->ygob } sort { $a->id <=> $b->id } @cluster;
+			print {$fherr} undef, undef,
+			map { '*' x sprintf("%i",($args->{'limit'}-int($_->data($attr)))/10) } 
+			sort { $a->id <=> $b->id } @cluster;
+		    }
+		    undef(@cluster);
+		    @cluster=($orf);
+		}
+	    }
+	} 
     }
+    
+    #######################################
+    # Old code: brute force rank of individual Orfs. Not cool. 
+    ####################################### 
+
+    if ( 1==0 ) {
+	my %index;
+	for my $key ( keys %newHash ) {
+	  CAND: foreach my $x ( sort { $a->[0] <=> $b->[0] } @{$newHash{$key}} ) {
+	      foreach my $prev ( @{$index{$key}} ) {
+		  next CAND if $x->[1]->distance( -object => $prev ) <= $args->{'-window'};
+	      } 
+	      push @{$index{$key}}, $x->[1]; # Orf only 
+	      last if scalar( @{$index{$key}} ) >= 5;
+	  }
+	}
+    }    
 
     #######################################
     # 
@@ -4169,9 +4286,10 @@ sub syntenic_paralogs {
     my $fherr = STDERR;
     my $attr = '_ohno_temp_var'.int(rand(100));
     my $data_key = 'OHNO';
+    my $time=time;
 
     my $LOCAL_DEBUG_VAR=0;
-
+    
     #######################################
     # PHASE 0 : Prep work 
     #######################################
@@ -4180,8 +4298,10 @@ sub syntenic_paralogs {
     # it is the primary structuring data for the search 
 
     my %anc;
+    my $orf_c;
     foreach my $orf ( grep { $_->ygob } map { $_->stream } $self->stream ) {
 	$orf->data($attr => undef);
+	$orf_c++;
 
 	# the goal here is to strip out any old results 
 	# but for debugging we build two specific alternatives : 
@@ -4193,20 +4313,29 @@ sub syntenic_paralogs {
 		$oh->ohnolog(undef) if $oh->ygob eq $args->{'-debug'};
 	    } else {
 		$oh->ohnolog(undef) if 
-		    ($LOCAL_DEBUG_VAR==0 || $index%$LOCAL_DEBUG_VAR == 0);
+		    ($LOCAL_DEBUG_VAR==0 || $orf_c%$LOCAL_DEBUG_VAR == 0);
 	    }
 	}
 	push @{$anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
-	#$index{ ++$index }=$orf;
     }
-
-    print {$fherr} 'INITIALIZE:',scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
+    
+    print {$fherr} 'INITIALIZE('.(time-$time).'):',scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
+    $time=time;
 
     # we need to know where all the potential sister regions are in the genome. 
     # this is done using ohnologs below but we need a set of regions that does not
     # make this assumption.
 
-    my $sisterIndex = $self->indexCandidateSisterRegions();
+    my $sisterIndex = $self->indexCandidateSisterRegions(
+	-syn_min => 0.5,
+	-debug => $args->{'-debug'},
+	-verbose => 1
+	);
+    
+    #
+
+    print {$fherr} 'INDEX('.(time-$time).'):',scalar( keys %{$sisterIndex} ); 
+    $time=time;
 
     #######################################
     # PHASE 1 : Prioritize candidates.
@@ -4218,9 +4347,10 @@ sub syntenic_paralogs {
     my %synteny;   
     foreach my $anc ( grep { $#{$anc{$_}} >= 1 } keys %anc) {
 	next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );
-
+	next if $LOCAL_DEBUG_VAR && (grep {$_->ohnolog} @{$anc{$anc}}); # ignore families that got a pass above 
+	
 	# compute all pairwise synteny values for every genes in the family 
-
+	
 	my $scores = 
 	    $self->syntenyMatrix(
 		-orfs => $anc{$anc},
@@ -4234,19 +4364,15 @@ sub syntenic_paralogs {
 	# construct a sortable datastructure for all possible pairs (across families).
 	# Modify scores for tandems genes. Do not log into ranking.  
 	# Some silly code to ignore pre-existing ohnologs in debugging mode. 
-
+	
 	my $f_count=0;
       CAND: for my $i (0..($#{$anc{$anc}}-1)) {
 	  for my $j ( ($i+1)..$#{$anc{$anc}}) {
 	      my $x = $anc{$anc}->[$i];
-	      my $y = $anc{$anc}->[$j];
+	      my $y = $anc{$anc}->[$j];	
 	      
-	      if ($x->ohnolog || $y->ohnolog) {
-		  if ($LOCAL_DEBUG_VAR) {
-		      next;
-		  } else { $self->throw; }
-	      } 
-
+	      $self->throw if ($x->ohnolog || $y->ohnolog);
+	      
 	      $synteny{ join(':',$x->name, $y->name) } = 
 	      {
 		  G1 => $x, 
@@ -4261,10 +4387,10 @@ sub syntenic_paralogs {
       }
 	map {$synteny{$_}->{FAM_TOT}=$f_count } grep { $synteny{$_}->{FAM} eq $anc } keys %synteny;
 	last if ++$tracker > ($LOCAL_DEBUG_VAR ? 1e2 : 1e6);
-    }
-
-    print {$fherr} 'PRIORITIZE:', scalar(keys %synteny);
-
+    }	
+    print {$fherr} 'PRIORITIZE:('.(time-$time).'):', scalar(keys %synteny);
+    $time=time;
+	
     #######################################
     # PHASE 2 : Descend through stack and test candidate pairs. 
     # 1. Exclude pairs in regions that have been securely assigned as an incompatible sister.
@@ -4293,7 +4419,7 @@ sub syntenic_paralogs {
 	       $right_ohno->distance(-object => $y) <= $args->{'-window'}*2 ) {
 	      my @inter = grep {$_->assign ne 'GAP'} grep {defined} $left_ohno->intervening( $right_ohno );
 	      if ( $#inter >= 0 && $#inter <= $args->{'-window'}*2 ) {
-		  map { print {$_} 'Shortcut',$synteny{$pair}->{FAM}, 
+		  map { print {$_} 'SHORT',$synteny{$pair}->{FAM}, 
 			$x->sn, $y->sn, $left_ohno->sn, $right_ohno->sn, scalar(@inter) } ($fh, $fherr);
 		  goto ACCEPTOHNO;
 	      }
@@ -4328,15 +4454,18 @@ sub syntenic_paralogs {
       # genome->candidateSisterRegions which does NOT use ohnologs. 
 
       foreach my $o ( $x, $y ) {
-          my @sisters = ( 
-	      $o->sisters,  # [orf, AncLocus]
-	      # ( map { [ $_,$o->ygob ] } @{ $sisterIndex->{$o->unique_id} }) 
-	      );
-		
+          my @ohno_match = $o->sisters;  # [orf, AncLocus]
+	  my @anc_match = ( map { [ $_,$o->ygob ] } @{ $sisterIndex->{$o->unique_id} }); 
+
+	  my @sisters = (@ohno_match, @anc_match);
+	  
+	  print 'ALT:',$o->name, $#anc_match, $#ohno_match; #DEBUG 
+
 	  foreach my $sister ( @sisters ) {
 	      my ($cand, $ax) = @{$sister}; 
-	      print $o->name, $cand->name, $cand->ygob, $cand->density;		    
+	      #print $o->name, $cand->name, $cand->ygob, $cand->density, $ax;		    
 	      map { next if $cand->distance( -object => $_ ) <= $args->{'-window'}*5 } ($x,$y);
+	      print '->'.$o->name, $cand->name, $cand->ygob, $cand->density, $ax;		    
 
 	      # align and score 
 
@@ -4347,7 +4476,7 @@ sub syntenic_paralogs {
 		      -clean => 1,
 		      -score => 1,
 		      -window => $args->{'-window'},
-		      -verbose => 0
+		      -verbose => 1
 		  );
 	      next unless $alt_score > 0;
 	      
@@ -4362,7 +4491,7 @@ sub syntenic_paralogs {
 		  );
 
 	      if ( $args->{'-verbose'} ) {
-		  print {$fh} 'ALT:',$alt, $o->sn, $o->ygob, $ax."*", $cand->sn, $cand->ygob, $alt_pval, 
+		  print {$fh} 'ALTX:', $o->sn, $o->ygob, $ax."*", $cand->sn, $cand->ygob, $alt_pval, 
 		  $synteny{$pair}->{SCORE}.' > '.$alt_score, 
 		  $norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
 	      }
@@ -4392,7 +4521,7 @@ sub syntenic_paralogs {
 
       if ( $args->{'-verbose'} ) {
 	  foreach my $fx ( $fh, $fherr ) {
-	      print {$fx} scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ), 
+	      print {$fx} 'OHNO',scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ), 
 	      $synteny{$pair}->{FAM}, $x->sn, $y->sn, 
 	      $x->left->ygob, $x->right->ygob, $y->left->ygob, $y->right->ygob, 
 	      $synteny{$pair}->{SCORE},$pval,$norm;
@@ -4464,7 +4593,7 @@ sub syntenic_significance {
     # this is just courting danger ...
     ###########################################
 
-    return (0,100,[]) if $args->{'-replicates'}==-1; # DEBUGGING 
+    return (0,100,[]) if $args->{'-replicates'} <= 0; # DEBUGGING 
 
     ###########################################
     # easy access to key params 
