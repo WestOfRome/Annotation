@@ -3170,16 +3170,20 @@ sub indexCandidateSisterRegions {
     my $attr = '_sister_temp_var'.int(rand(100));
     
     #######################################
-    # 
+    # Develop score for each gene and sort by Anc chr. 
     #######################################
 
     my %hash;    
     foreach my $o ( grep {$_->ygob} $self->orfs ) {
+
+	# get the anc chr and index on the chr 
+
 	$o->ygob =~ /Anc_(\d+)\.(\d+)/ || $self->throw; 
 	my $ref_chr = $1;
 	my $ref_q = $2;
-
 	next unless ! $args->{'-debug'} || $ref_chr == $debug_chr;
+
+	# screen all neighbouring genes and look for basic synteny support 
 
 	next unless my @context = grep {$_->ygob} $o->context(
 	    -distance => $args->{'-window'}
@@ -3188,6 +3192,9 @@ sub indexCandidateSisterRegions {
 	grep { $_->data($attr)->[0] == $ref_chr } 	    
 	map {$_->ygob =~ /Anc_(\d+)\.(\d+)/; $_->data($attr => [$1,$2]); $_} @context;  
 	next unless scalar(@syn)>=2;
+
+	# calcualte and store synteny density based on ancestor chr. 
+
 	my ($asd) = $o->ancestralSyntenyDensity();
 	#print $ref_chr, $o->name, $ref_q, $asd, $args->{'-syn_min'}; 
 	push @{ $hash{ $ref_chr }}, [$o, $ref_q, $asd] 
@@ -3195,66 +3202,88 @@ sub indexCandidateSisterRegions {
     }
 
     #######################################
-    # 
+    # Compare gene pairs on same anc and develop distance matrix. 
     ####################################### 
 
-    my %newHash;
+    my %pairMatrix;
     foreach my $chr ( keys %hash ) {	
 	for (my $i=0; $i< $#{$hash{$chr}}; $i++) {
 	    for (my $j=$i+1; $j <= $#{$hash{$chr}}; $j++) {
+
+		# ignore if super close together-- not candidate sisters 
+
 		next if $hash{$chr}->[$j]->[0]->distance( -object => $hash{$chr}->[$i]->[0] ) 
 		    <= 2*$args->{'-window'};
+
+		# creat and apply our super odd-ball metric 
+
 		my $dist = abs($hash{$chr}->[$i]->[1] -  $hash{$chr}->[$j]->[1]);
 		my $metric = $dist/($hash{$chr}->[$i]->[2]*$hash{$chr}->[$j]->[2]);
 		next unless $metric <= $args->{'limit'};
-		push @{ $newHash{ $hash{$chr}->[$i]->[0]->unique_id } }, {
-		    METRIC => $metric, 
-		    SELF => $hash{$chr}->[$i]->[0],
-		    HIT => $hash{$chr}->[$j]->[0],
-		};
-		push @{ $newHash{ $hash{$chr}->[$j]->[0]->unique_id } }, {
-		    METRIC => $metric, 
-		    SELF => $hash{$chr}->[$j]->[0],
-		    HIT => $hash{$chr}->[$i]->[0],
-		};
+
+		# make the data structure 
+		
+		foreach my $ij ($i,$j) {
+		    push @{ $pairMatrix{ $hash{$chr}->[$ij]->[0]->unique_id } }, {
+			METRIC => $metric, 
+			SELF => $hash{$chr}->[$ij]->[0],
+			HIT => $hash{$chr}->[($ij eq $i ? $j : $i)]->[0],
+		    };
+		}
 	    }
 	}
     }
     
     #######################################
-    # we should now have a bunch of candidates in chr region.
+    # we should now have a bunch of candidate orf relations.
     # lets try isolate regions and then find the most approprite 
-    # point within each one to represent. 
+    # point within each one to represent the relationship. 
     ####################################### 
 
     my %index;
-    for my $key ( keys %newHash ) {
-	# sort orfs onto chromosomes 
+    for my $key ( keys %pairMatrix ) {
+
+	# get basic info on anc 
+
+	my $queryAnc =  $pairMatrix{$key}->[0]->{SELF}->ygob;
+	$queryAnc =~ /(\d+\.\d+)/;
+	my $short = $1;
+
+	# for each Orf, look at compelling hits
+	# and regroup these by the species chr (ie. not the anc) 
+	
 	my %chr;
-	foreach my $res ( @{ $newHash{$key} } ) {
+	foreach my $res ( @{ $pairMatrix{$key} } ) {
 	    my $orf = $res->{HIT}; 
 	    $orf->data($attr => $res->{METRIC});
 	    push @{ $chr{$orf->up->id} }, $orf;
 	}	
-	
-	my $queryAnc =  $newHash{$key}->[0]->{SELF}->ygob;
-	$queryAnc =~ /(\d+\.\d+)/;
-	my $short = $1;
 
 	# sort into segments using crude window method 
+
 	foreach my $chr ( keys %chr ) { 
 	    next if $#{$chr{$chr}} == 0 ; # require > 1
 	    
+	    # walk along the chromosome....
+
 	    my @cluster;
 	    foreach my $orf ( sort { $a->id <=> $b->id } @{$chr{$chr}} ) {
-		if ( ! @cluster ) {
+
+		if ( ! @cluster ) { # start a new cluster !
 		    push @cluster, $orf;
-		} elsif ( $orf->distance( -object => $cluster[$#cluster] ) <= $args->{'-window'}*2 ) {
+
+		} elsif ( $orf->distance( -object => $cluster[$#cluster] ) <= $args->{'-window'}*2 ) { # extend cluster
 		    push @cluster, $orf;
-		} else {
+
+		} else { # finalize the cluster existing 
+
 		    my $rep;
-		    if ( $#cluster>0 ){		    
-			my $delta_min_i=[1e9,undef];
+		    if ( $#cluster>0 ){
+
+			# find the orf in the cluster that is "closest" to the query
+			# in Anc chromosome space 
+
+			my $delta_min_i=[$INFINITY,undef]; # distance, index in @cluster 
 			foreach my $cluster_i ( 0..$#cluster ) {
 			    my $newdelta = &Annotation::Orf::_compute_gene_distance( 
 				$queryAnc, 
@@ -3262,13 +3291,23 @@ sub indexCandidateSisterRegions {
 				);
 			    $delta_min_i = [abs($newdelta), $cluster_i] if abs($newdelta) <= $delta_min_i->[0];
 			}
+
+			# ensure the data are updated and sane 
+			
+			$self->throw if $delta_min_i->[0] == $INFINITY;
 			$self->throw unless defined $delta_min_i->[1] 
 			    && $delta_min_i->[1]>=0 
 			    && $delta_min_i->[1]<=$#cluster;
+			
+			# OK, what is the actual proposed candidate? store it. 
+
 			$rep = $cluster[$delta_min_i->[1]];
 			push @{ $index{$key} }, $rep; ### <-- this is it. 
 		    }
-		    if ( $args->{'-verbose'} >= 1 ) {
+
+		    # screen output 
+
+		    if ( $args->{'-verbose'} >= 1 && @cluster>5 ) {
 			print {$fherr} $short, ($rep ? $rep->sn : $rep),
 			map { $_->sn } sort { $a->id <=> $b->id } @cluster;
 			print {$fherr} undef, undef,
@@ -3277,6 +3316,9 @@ sub indexCandidateSisterRegions {
 			map { '*' x sprintf("%i",($args->{'limit'}-int($_->data($attr)))/10) } 
 			sort { $a->id <=> $b->id } @cluster;
 		    }
+
+		    # zero the cluster + start a new one 
+
 		    undef(@cluster);
 		    @cluster=($orf);
 		}
@@ -3290,8 +3332,8 @@ sub indexCandidateSisterRegions {
 
     if ( 1==0 ) {
 	my %index;
-	for my $key ( keys %newHash ) {
-	  CAND: foreach my $x ( sort { $a->[0] <=> $b->[0] } @{$newHash{$key}} ) {
+	for my $key ( keys %pairMatrix ) {
+	  CAND: foreach my $x ( sort { $a->[0] <=> $b->[0] } @{$pairMatrix{$key}} ) {
 	      foreach my $prev ( @{$index{$key}} ) {
 		  next CAND if $x->[1]->distance( -object => $prev ) <= $args->{'-window'};
 	      } 
