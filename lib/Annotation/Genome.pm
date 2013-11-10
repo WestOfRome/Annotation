@@ -3160,10 +3160,10 @@ sub indexCandidateSisterRegions {
     $args->{'-syn_min'} = .3 unless exists $args->{'-syn_min'}; 
     $args->{'limit'} = 30 unless exists  $args->{'limit'};
 
-    my ($debug_chr);
+    my ($debug_chr, $debug_q);
     if ( $args->{'-debug'} ) {
-	$args->{'-debug'} =~ /Anc_(\d+)\.\d+/ || $self->throw;
-	$debug_chr=$1;
+	$args->{'-debug'} =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+	($debug_chr,$debug_q)=($1,$2);
     }
 
     my $fherr = STDOUT;
@@ -3181,7 +3181,8 @@ sub indexCandidateSisterRegions {
 	$o->ygob =~ /Anc_(\d+)\.(\d+)/ || $self->throw; 
 	my $ref_chr = $1;
 	my $ref_q = $2;
-	next unless ! $args->{'-debug'} || $ref_chr == $debug_chr;
+	next unless ! $args->{'-debug'} || 
+	    ( $ref_chr == $debug_chr &&  abs($ref_q-$debug_q) <= 30 );
 
 	# screen all neighbouring genes and look for basic synteny support 
 
@@ -3196,7 +3197,7 @@ sub indexCandidateSisterRegions {
 	# calcualte and store synteny density based on ancestor chr. 
 
 	my ($asd) = $o->ancestralSyntenyDensity();
-	#print $ref_chr, $o->name, $ref_q, $asd, $args->{'-syn_min'}; 
+	#print $o->name, $o->ygob, $ref_chr, $ref_q, $asd, $args->{'-syn_min'} if $args->{'-debug'}; 
 	push @{ $hash{ $ref_chr }}, [$o, $ref_q, $asd] 
 	    if $asd >= $args->{'-syn_min'};
     }
@@ -3220,7 +3221,13 @@ sub indexCandidateSisterRegions {
 		my $dist = abs($hash{$chr}->[$i]->[1] -  $hash{$chr}->[$j]->[1]);
 		my $metric = $dist/($hash{$chr}->[$i]->[2]*$hash{$chr}->[$j]->[2]);
 		next unless $metric <= $args->{'limit'};
+		
+		# print .. 
 
+		#print $hash{$chr}->[$i]->[0]->name, $hash{$chr}->[$j]->[0]->name,
+		#$hash{$chr}->[$i]->[0]->ygob, $hash{$chr}->[$j]->[0]->ygob,
+		#$dist, sprintf("%.2f",$metric) if $args->{'-debug'} && $dist <= 5; 		
+		
 		# make the data structure 
 		
 		foreach my $ij ($i,$j) {
@@ -3245,6 +3252,7 @@ sub indexCandidateSisterRegions {
 
 	# get basic info on anc 
 
+	my $query_name = $pairMatrix{$key}->[0]->{SELF}->name;
 	my $queryAnc =  $pairMatrix{$key}->[0]->{SELF}->ygob;
 	$queryAnc =~ /(\d+\.\d+)/;
 	my $short = $1;
@@ -3259,70 +3267,68 @@ sub indexCandidateSisterRegions {
 	    push @{ $chr{$orf->up->id} }, $orf;
 	}	
 
-	# sort into segments using crude window method 
+	# walk along the chromosome and break up ito clusters. 
 
 	foreach my $chr ( keys %chr ) { 
 	    next if $#{$chr{$chr}} == 0 ; # require > 1
-	    
-	    # walk along the chromosome....
 
-	    my @cluster;
+	    # walk along the chromosome and break up ito clusters. 
+
+	    my (@cluster, @cluster_set);
 	    foreach my $orf ( sort { $a->id <=> $b->id } @{$chr{$chr}} ) {
-
 		if ( ! @cluster ) { # start a new cluster !
 		    push @cluster, $orf;
-
 		} elsif ( $orf->distance( -object => $cluster[$#cluster] ) <= $args->{'-window'}*2 ) { # extend cluster
 		    push @cluster, $orf;
-
 		} else { # finalize the cluster existing 
-
-		    my $rep;
-		    if ( $#cluster>0 ){
-
-			# find the orf in the cluster that is "closest" to the query
-			# in Anc chromosome space 
-
-			my $delta_min_i=[$INFINITY,undef]; # distance, index in @cluster 
-			foreach my $cluster_i ( 0..$#cluster ) {
-			    my $newdelta = &Annotation::Orf::_compute_gene_distance( 
-				$queryAnc, 
-				$cluster[$cluster_i]->ygob 
-				);
-			    $delta_min_i = [abs($newdelta), $cluster_i] if abs($newdelta) <= $delta_min_i->[0];
-			}
-
-			# ensure the data are updated and sane 
-			
-			$self->throw if $delta_min_i->[0] == $INFINITY;
-			$self->throw unless defined $delta_min_i->[1] 
-			    && $delta_min_i->[1]>=0 
-			    && $delta_min_i->[1]<=$#cluster;
-			
-			# OK, what is the actual proposed candidate? store it. 
-
-			$rep = $cluster[$delta_min_i->[1]];
-			push @{ $index{$key} }, $rep; ### <-- this is it. 
-		    }
-
-		    # screen output 
-
-		    if ( $args->{'-verbose'} >= 1 && @cluster>5 ) {
-			print {$fherr} $short, ($rep ? $rep->sn : $rep),
-			map { $_->sn } sort { $a->id <=> $b->id } @cluster;
-			print {$fherr} undef, undef,
-			map {s/Anc_//; $_} map { $_->ygob } sort { $a->id <=> $b->id } @cluster;
-			print {$fherr} undef, undef,
-			map { '*' x sprintf("%i",($args->{'limit'}-int($_->data($attr)))/10) } 
-			sort { $a->id <=> $b->id } @cluster;
-		    }
-
-		    # zero the cluster + start a new one 
-
-		    undef(@cluster);
-		    @cluster=($orf);
+		    push @cluster_set, [splice(@cluster, 0, $#cluster, $orf)];
 		}
 	    }
+	    push @cluster_set, [splice(@cluster, 0, $#cluster)];
+	    
+	    # find best represuentative in each cluster 
+	    
+	    foreach my $cluster ( grep { $#{$_} >= 1 } @cluster_set ) {
+
+		# find the orf in the cluster that is "closest" to the query
+		# in Anc chromosome space 
+		
+		my $delta_min_i=[$INFINITY,undef]; # distance, index in @cluster 
+		foreach my $cluster_i ( 0..$#{$cluster} ) {
+		    my $newdelta = &Annotation::Orf::_compute_gene_distance( 
+			$queryAnc, 
+			$cluster->[$cluster_i]->ygob 
+			);
+		    $delta_min_i = [abs($newdelta), $cluster_i] if abs($newdelta) <= $delta_min_i->[0];
+		}
+		
+		# ensure the data are updated and sane 
+		
+		$self->throw if $delta_min_i->[0] == $INFINITY;
+		$self->throw unless defined $delta_min_i->[1] 
+		    && $delta_min_i->[1]>=0 
+		    && $delta_min_i->[1]<=$#{$cluster};
+		
+		# OK, what is the actual proposed candidate? store it. 
+		
+		my $rep = $cluster->[$delta_min_i->[1]];
+		# print $key, $query_name, $queryAnc, $rep->name, $rep->ygob, $delta_min_i->[0];
+		push @{ $index{$key} }, $rep; ### <-- this is it. 
+		
+		# screen output 
+		
+		if ( $args->{'-verbose'} >= 1 && $rep ) {
+		    my $best_score = sprintf("%i",($args->{'limit'}-int($rep->data($attr)))/10);
+		    print {$fherr} "\n>>>".$pairMatrix{$key}->[0]->{SELF}->sn, $rep->sn, 
+		    $pairMatrix{$key}->[0]->{SELF}->ygob, $rep->ygob, $best_score;
+		    if ( @{$cluster}>=2 ) { 
+			print {$fherr} map { $_->sn } sort { $a->id <=> $b->id } @{$cluster};
+			print {$fherr} map {s/Anc_//; $_} map { $_->ygob } sort { $a->id <=> $b->id } @{$cluster};
+			print {$fherr} map { '*' x sprintf("%i",($args->{'limit'}-int($_->data($attr)))/10) } 			
+			sort { $a->id <=> $b->id } @{$cluster};
+		    }
+		}
+	    }	    
 	} 
     }
     
@@ -4369,10 +4375,12 @@ sub syntenic_paralogs {
     # make this assumption.
 
     my $sisterIndex = $self->indexCandidateSisterRegions(
-	-syn_min => 0.5,
+	-syn_min => 0.3,
 	-debug => $args->{'-debug'},
-	-verbose => 1
+	-verbose => 0
 	);
+    
+    print scalar( keys %{$sisterIndex} );
     
     #
 
