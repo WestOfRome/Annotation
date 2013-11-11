@@ -3328,8 +3328,8 @@ sub indexCandidateSisterRegions {
 			sort { $a->id <=> $b->id } @{$cluster};
 		    }
 		}
-	    }	    
-	} 
+	    }
+	}
     }
     
     #######################################
@@ -3429,7 +3429,7 @@ sub syntenyMatrix {
 			-window => $args->{'-window'},
 			-clean => 1,
 			-score => 1,
-			-verbose => 0
+			-verbose => 1
 		    );
 	    } elsif ( $args->{'-mode'} =~ /^o/i ) {
 		$score = 
@@ -4367,7 +4367,8 @@ sub syntenic_paralogs {
 	push @{$anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
     }
     
-    print {$fherr} 'INITIALIZE('.(time-$time).'):',scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ); 
+    print {$fherr} 'INITIALIZE('.(time-$time).'):',
+    (scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream )/2)." ohnolog pairs already identified"; 
     $time=time;
 
     # we need to know where all the potential sister regions are in the genome. 
@@ -4380,11 +4381,10 @@ sub syntenic_paralogs {
 	-verbose => 0
 	);
     
-    print scalar( keys %{$sisterIndex} );
-    
     #
-
-    print {$fherr} 'INDEX('.(time-$time).'):',scalar( keys %{$sisterIndex} ); 
+    
+    print {$fherr} 'INDEX('.(time-$time).'):',scalar( keys %{$sisterIndex} )
+	." genes with candidate sister regions"; 
     $time=time;
 
     #######################################
@@ -4396,7 +4396,7 @@ sub syntenic_paralogs {
     my $tracker;
     my %synteny;   
     foreach my $anc ( grep { $#{$anc{$_}} >= 1 } keys %anc) {
-	next unless ( ! $args->{'-debug'} || $anc eq $args->{'-debug'} );
+	next unless (! $args->{'-debug'} || $anc eq $args->{'-debug'});
 	next if $LOCAL_DEBUG_VAR && (grep {$_->ohnolog} @{$anc{$anc}}); # ignore families that got a pass above 
 	
 	# compute all pairwise synteny values for every genes in the family 
@@ -4407,7 +4407,7 @@ sub syntenic_paralogs {
 		-mode => 'paralog',
 		-ancestor => $anc,
 		-window =>  $args->{'-window'},
-		-verbose => 0,
+		-verbose => 3,
 		-symmetric => 1
 	    );
 	
@@ -4438,7 +4438,7 @@ sub syntenic_paralogs {
 	map {$synteny{$_}->{FAM_TOT}=$f_count } grep { $synteny{$_}->{FAM} eq $anc } keys %synteny;
 	last if ++$tracker > ($LOCAL_DEBUG_VAR ? 1e2 : 1e6);
     }	
-    print {$fherr} 'PRIORITIZE:('.(time-$time).'):', scalar(keys %synteny);
+    print {$fherr} 'PRIORITIZE('.(time-$time).'):', scalar(keys %synteny)." candidate pairs";
     $time=time;
 	
     #######################################
@@ -4475,6 +4475,20 @@ sub syntenic_paralogs {
 	      }
 	  }
       }
+
+      # recreate the alignment in order to get the span and ohno variables 
+      # span = does the alignment span the ancestral gene of inteest 
+      # ohno = are ohnologs aligned at the ancestral gene of interest 
+
+      my ($hyp_align,$hyp_score,$hyp_hash,$hyp_span,$hyp_ohno) = 
+	  $x->syntenic_alignment(
+	      -object => $y,
+	      -ancestor => $synteny{$pair}->{FAM},
+	      -clean => 1,
+	      -score => 1,
+	      -window => $args->{'-window'},
+	      -verbose => 1
+	  );
       
       # if we do not succeed with shortcut we take the established process of 
       # comparing candidate to null and cross-validating agaisnt all alternative sisters.
@@ -4488,7 +4502,7 @@ sub syntenic_paralogs {
 	      -window =>  $args->{'-window'},
 	      -score => $synteny{$pair}->{SCORE}
 	  );
-      
+        
       if ( $args->{'-verbose'} >= 2 ) {
 	  print 'CAND:',$synteny{$pair}->{FAM},$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
 	  $synteny{$pair}->{G1}->sn, $synteny{$pair}->{G2}->sn, $synteny{$pair}->{SCORE}, $pval, $norm;
@@ -4506,20 +4520,17 @@ sub syntenic_paralogs {
       foreach my $o ( $x, $y ) {
           my @ohno_match = $o->sisters;  # [orf, AncLocus]
 	  my @anc_match = ( map { [ $_,$o->ygob ] } @{ $sisterIndex->{$o->unique_id} }); 
-
 	  my @sisters = (@ohno_match, @anc_match);
-	  
-	  print 'ALT:',$o->name, $#anc_match, $#ohno_match; #DEBUG 
+	  # print 'ALT:',$o->name, $#anc_match, $#ohno_match; #DEBUG 
 
 	  foreach my $sister ( @sisters ) {
 	      my ($cand, $ax) = @{$sister}; 
 	      #print $o->name, $cand->name, $cand->ygob, $cand->density, $ax;		    
 	      map { next if $cand->distance( -object => $_ ) <= $args->{'-window'}*5 } ($x,$y);
-	      print '->'.$o->name, $cand->name, $cand->ygob, $cand->density, $ax;		    
 
 	      # align and score 
 
-	      my ($alt_align,$alt_score,$alt_hash) = # either an alignment (array of hashes) or hash
+	      my ($alt_align,$alt_score,$alt_hash, $alt_span, $alt_ohno) = # an alignment (array of hashes) or hash
 		  $o->syntenic_alignment(
 		      -object => $cand,
 		      -ancestor => $ax,
@@ -4528,8 +4539,18 @@ sub syntenic_paralogs {
 		      -window => $args->{'-window'},
 		      -verbose => 1
 		  );
-	      next unless $alt_score > 0;
+
+	      # Promptly ignore the alignment unless the score is >0.
+	      # Ensure the alignment spans the gene of interest OR
+	      # the alignment includes aligned ohnologs of interest. 
+	      # This is to exclude scenarios where there is a rearrangment 
+	      # very close to the Ohnolog. 
 	      
+	      next unless $alt_score > 0;
+	      next if ($hyp_ohno && $hyp_span) && ! ($alt_ohno || $alt_span); 
+
+	      # generate statistics to enable comparison to candidate pair 
+
 	      my ($alt_pval, $alt_norm, $alt_rands) =
 		  $self->syntenic_significance(
 		      -gene1 => $o,
@@ -4539,13 +4560,14 @@ sub syntenic_paralogs {
 		      -window =>  $args->{'-window'},
 		      -score => $alt_score
 		  );
-
+	      
 	      if ( $args->{'-verbose'} ) {
-		  print {$fh} 'ALTX:', $o->sn, $o->ygob, $ax."*", $cand->sn, $cand->ygob, $alt_pval, 
-		  $synteny{$pair}->{SCORE}.' > '.$alt_score, 
+		  print {$fh} "ALTX: $ax", $o->sn, $cand->sn, $o->ygob, $cand->ygob, 
+		  $alt_pval, $synteny{$pair}->{SCORE}.' > '.$alt_score, 		  
 		  $norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
 	      }
 	      next CAND unless $norm > $alt_norm;
+              #next CAND unless $score > $alt_score;
 	  }
       }
 
