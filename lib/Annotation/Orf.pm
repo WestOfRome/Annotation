@@ -956,7 +956,7 @@ sub syntenic_alignment {
     my ($span,$ohno) = 
 	$self->_testOhnoSpan(-align => \@clean, %{ $args } );
 
-    return (\@clean,$score,$hash);
+    return (\@clean,$score,$hash,$span,$ohno);
 }
 
 sub _testOhnoSpan {
