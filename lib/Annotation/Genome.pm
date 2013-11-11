@@ -3429,7 +3429,7 @@ sub syntenyMatrix {
 			-window => $args->{'-window'},
 			-clean => 1,
 			-score => 1,
-			-verbose => 1
+			-verbose => 0
 		    );
 	    } elsif ( $args->{'-mode'} =~ /^o/i ) {
 		$score = 
@@ -4407,7 +4407,7 @@ sub syntenic_paralogs {
 		-mode => 'paralog',
 		-ancestor => $anc,
 		-window =>  $args->{'-window'},
-		-verbose => 3,
+		-verbose => 0,
 		-symmetric => 1
 	    );
 	
@@ -4487,7 +4487,7 @@ sub syntenic_paralogs {
 	      -clean => 1,
 	      -score => 1,
 	      -window => $args->{'-window'},
-	      -verbose => 1
+	      -verbose => 0
 	  );
       
       # if we do not succeed with shortcut we take the established process of 
@@ -4537,7 +4537,7 @@ sub syntenic_paralogs {
 		      -clean => 1,
 		      -score => 1,
 		      -window => $args->{'-window'},
-		      -verbose => 1
+		      -verbose => 0
 		  );
 
 	      # Promptly ignore the alignment unless the score is >0.
@@ -4556,8 +4556,8 @@ sub syntenic_paralogs {
 		      -gene1 => $o,
 		      -gene2 => $cand,
 		      -ancestor => $ax,
-		      -replicates =>  $args->{'-replicates'}, 
-		      -window =>  $args->{'-window'},
+		      -replicates => $args->{'-replicates'}, 
+		      -window => $args->{'-window'},
 		      -score => $alt_score
 		  );
 	      
