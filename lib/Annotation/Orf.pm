@@ -952,8 +952,62 @@ sub syntenic_alignment {
     
     my ($score,$hash) = 
 	$self->_scoreSisterAlignment(-align => \@clean, @_);
-    
+ 
+    my ($span,$ohno) = 
+	$self->_testOhnoSpan(-align => \@clean, %{ $args } );
+
     return (\@clean,$score,$hash);
+}
+
+sub _testOhnoSpan {
+    my $self = shift @_;
+    my $args = {@_};
+
+    # 
+
+    $self->throw unless ref( $args->{'-align'} ) eq 'ARRAY';
+    $self->throw unless ref( $args->{'-align'}->[0] ) eq 'HASH';
+    
+    my $key0 = 'ANC';
+    my ($span, $ohno)=(0,0);
+
+    # 
+
+    my @clean = @{$args->{'-align'}};
+    my ($key1,$key2) = grep {!/$key0/} keys %{ $clean[0] };
+    
+    # 
+
+    my $special_K;
+    foreach my $k ( 0..$#clean ) {
+	if ( $clean[$k]->{$key0} && 
+	     $clean[$k]->{$key0}->data( $args->{'-homology'} ) eq $args->{'-ancestor'} ) {
+	    $special_K = $k;
+	    if ( $clean[$k]->{$key1} && $clean[$k]->{$key2} ) {
+		$ohno=1;
+	    }
+	}
+    }
+
+    my @before = @clean[ 0 .. ($special_K-1) ];
+    my @after =  @clean[ ($special_K+1) .. $#clean ] if $#clean >= $special_K+1;
+    #&_print_align( [ keys %{ $clean[0] } ], \@before, 2 );
+    #&_print_align( [ keys %{ $clean[0] } ], \@after, 2 );
+
+    #
+
+    my $total=0;
+    foreach my $seg ( \@before, \@after ) {
+	foreach my $quay ( $key1, $key2 ) {
+	    $total++ if grep { $_->{$quay} } @{$seg}; 
+	}
+    }
+    $span=1 if $total == 4;
+    # print $total, $span;
+
+    #
+
+    return ($span, $ohno)
 }
 
 sub _scoreSisterAlignment {
@@ -1107,12 +1161,12 @@ sub sisters {
 	  
     my %ohnos;
     foreach my $dir ( qw(left right) ) {
-	my @context = $o->context(
+	my @context = $self->context(
 	    -direction => $dir,
 	    -distance => $args->{'-window'},
 	    -self => -1
 	    );
-	push @{ $ohnos{$o->up->id}{$dir} }, grep {$_->ohnolog} @context;
+	push @{ $ohnos{$self->up->id}{$dir} }, grep {$_->ohnolog} @context;
     }
 
     # look at each CHR to see if there are ohnologs spanning the 
@@ -1123,7 +1177,7 @@ sub sisters {
     my @center_of_gravity;
     foreach my $chr (keys %ohnos) {
 	foreach my $left ( @{$ohnos{$chr}{'left'}} ) {
-	    my $d_left = $o->distance( -object => $left,-nogap => 1 )+1;		    
+	    my $d_left = $self->distance( -object => $left,-nogap => 1 )+1;		    
 	    foreach my $right ( @{$ohnos{$chr}{'right'}} ) {
 
 		# basic sanity checks -- ohnologs must be on same chr 
@@ -1136,7 +1190,7 @@ sub sisters {
 		next unless $left->ygob && $right->ygob;
 		my ($sp1,$chr1,$index1) = &Annotation::Orf::_decompose_gene_name($left->ygob);
 		my ($sp2,$chr2,$index2) = &Annotation::Orf::_decompose_gene_name($right->ygob);
-		# print "SPAN", $left->sn, $left->ygob, $o->sn."*", $o->ygob."*", $right->sn, $right->ygob, 
+		# print "SPAN", $left->sn, $left->ygob, $self->sn."*", $o->ygob."*", $right->sn, $right->ygob, 
 		$left->up->id.'/'.$left->ohnolog->up->id;
 		next unless $chr1==$chr2;
 		my $d_anc = abs( $index1 - $index2 );
@@ -4061,9 +4115,9 @@ sub synteny_conserved {
 
 =cut 
 
-sub density { my $self = shift; return $self->ancestralSyntenyDensity( @_ )+0; }
+sub density { my $self = shift; return sprintf("%.2f", $self->ancestralSyntenyDensity( @_ )+0); }
 
-=head2 ancestralSyntenyDensity( -window => 7 )
+=head2 ancestralSyntenyDensity( -window => 10 )
 
     Another synteny scoring method. Requires only a single
     parameter and returns nice smooth values from 0 - 1. 
@@ -4118,6 +4172,8 @@ sub ancestralSyntenyDensity {
 	    );
 	splice(@context, 0, $#context, reverse(@context)) if $dir eq 'left';
 
+	# compute distances 
+
 	my @dist;
 	foreach my $pos ( 1..$win ) {
 	    my $index = $pos-1;	    
@@ -4131,6 +4187,8 @@ sub ancestralSyntenyDensity {
 	    push @dist, $dist;
 	}
 
+	# compute expected ratio across all actual data 
+
 	my @exp;
 	foreach my $pos ( 1..$win ) {
 	    my $index = $pos-1;	
@@ -4138,6 +4196,8 @@ sub ancestralSyntenyDensity {
 	    push @exp, ( $dist[$index] > $best[$index] ? $dist[$index]/$best[$index] : 1);
 	} 
 	my ($exp) = ( $#exp>1 ? &_calcMeanSD( @exp ) : undef);
+
+	# estimate the missing distances based on observed data 
 
 	foreach my $pos ( 1..$win ) {
 	    my $index = $pos-1;	
