@@ -1183,11 +1183,13 @@ sub sisters {
 		# basic sanity checks -- ohnologs must be on same chr 
 		
 		next unless $left->ohnolog->up == $right->ohnolog->up;
+		next unless $left->ygob && $right->ygob;
+		next unless my @int = grep { $_->assign ne 'GAP' }  # always ordered low .. high id 
+		$left->ohnolog->intervening( -object => $right->ohnolog );
 		
 		# require the linkage between the two ohno pairs 
 		# goes through same anc genome 
-		
-		next unless $left->ygob && $right->ygob;
+
 		my ($sp1,$chr1,$index1) = &Annotation::Orf::_decompose_gene_name($left->ygob);
 		my ($sp2,$chr2,$index2) = &Annotation::Orf::_decompose_gene_name($right->ygob);
 		# print "SPAN", $left->sn, $left->ygob, $self->sn."*", $o->ygob."*", $right->sn, $right->ygob, 
@@ -1217,13 +1219,9 @@ sub sisters {
 		
 		# now the sister gene 
 			
-		my $cog_ohno; 
-		my @int = grep { $_->assign ne 'GAP' }  # always ordered low .. high id 
-		$left->ohnolog->intervening( -object => $right->ohnolog );
-		
 		my $cog_index = int( ($d_left/$d_query) * scalar(@int) );
 		$self->throw( join(':',$#int, $cog_index) ) if $cog_index < 0 || $cog_index > $#int;
-		$cog_ohno = $int[$cog_index*( $left->ohnolog->index < $right->ohnolog->index ? 1 : -1)];
+		my $cog_ohno = $int[$cog_index*( $left->ohnolog->index < $right->ohnolog->index ? 1 : -1)];
 		
 		# store options for this chromosome 
 		
