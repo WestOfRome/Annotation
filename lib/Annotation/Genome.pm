@@ -4595,7 +4595,8 @@ sub syntenic_paralogs {
 	  foreach my $fx ( $fh, $fherr ) {
 	      print {$fx} 'OHNO',scalar(  grep { $_->ohnolog } map { $_->stream } $self->stream ), 
 	      $synteny{$pair}->{FAM}, $x->sn, $y->sn, 
-	      $x->left->ygob, $x->right->ygob, $y->left->ygob, $y->right->ygob, 
+	      ($x->left ? $x->left->ygob : undef), ($x->right ? $x->right->ygob : undef), 	      
+	      ($y->left ? $y->left->ygob : undef), ($y->right ? $y->right->ygob : undef),
 	      $synteny{$pair}->{SCORE},$pval,$norm;
 	  }
       }
