@@ -4358,12 +4358,14 @@ sub syntenic_paralogs {
 
 	if ( my $oh = $orf->ohnolog ) {
 	    if ( $args->{'-debug'} ) {
-		$oh->ohnolog(undef) if $oh->ygob eq $args->{'-debug'};
+		$oh->ohnolog(undef) if $orf->ygob eq $args->{'-debug'};
 	    } else {
 		$oh->ohnolog(undef) if 
 		    ($LOCAL_DEBUG_VAR==0 || $orf_c%$LOCAL_DEBUG_VAR == 0);
 	    }
 	}
+	next unless $orf->ygob eq $args->{'-debug'};
+	$orf->output;
 	push @{$anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
     }
     
@@ -4395,10 +4397,11 @@ sub syntenic_paralogs {
 
     my $tracker;
     my %synteny;   
-    foreach my $anc ( grep { $#{$anc{$_}} >= 1 } keys %anc) {
+    foreach my $anc ( keys %anc) {
 	next unless (! $args->{'-debug'} || $anc eq $args->{'-debug'});
+	next unless $#{$anc{$anc}} >= 1;	
 	next if $LOCAL_DEBUG_VAR && (grep {$_->ohnolog} @{$anc{$anc}}); # ignore families that got a pass above 
-	
+
 	# compute all pairwise synteny values for every genes in the family 
 	
 	my $scores = 
@@ -4407,7 +4410,7 @@ sub syntenic_paralogs {
 		-mode => 'paralog',
 		-ancestor => $anc,
 		-window =>  $args->{'-window'},
-		-verbose => 0,
+		-verbose => 0, # $args->{'-verbose'}-1,
 		-symmetric => 1
 	    );
 	
@@ -4487,7 +4490,7 @@ sub syntenic_paralogs {
 	      -clean => 1,
 	      -score => 1,
 	      -window => $args->{'-window'},
-	      -verbose => 0
+	      #-verbose => $args->{'-verbose'}-1
 	  );
       
       # if we do not succeed with shortcut we take the established process of 
@@ -4500,12 +4503,15 @@ sub syntenic_paralogs {
 	      -ancestor => $synteny{$pair}->{FAM},
 	      -replicates => $args->{'-replicates'}, 
 	      -window =>  $args->{'-window'},
-	      -score => $synteny{$pair}->{SCORE}
+	      -score => $synteny{$pair}->{SCORE},
+	      -verbose => $args->{'-verbose'}-1
 	  );
         
       if ( $args->{'-verbose'} >= 2 ) {
-	  print 'CAND:',$synteny{$pair}->{FAM},$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
+	  print  {$fh} "\n".('=' x 50);
+	  print  {$fh} 'CAND:',$synteny{$pair}->{FAM},#$synteny{$pair}->{FAM_N}.'/'.$synteny{$pair}->{FAM_TOT},
 	  $synteny{$pair}->{G1}->sn, $synteny{$pair}->{G2}->sn, $synteny{$pair}->{SCORE}, $pval, $norm;
+	  &Annotation::Orf::_print_align([qw(SCER1 ANC SCER2)], $hyp_align);
       }
       
       next unless $pval <= $args->{'-significance'};
@@ -4536,8 +4542,7 @@ sub syntenic_paralogs {
 		      -ancestor => $ax,
 		      -clean => 1,
 		      -score => 1,
-		      -window => $args->{'-window'},
-		      -verbose => 0
+		      -window => $args->{'-window'}
 		  );
 
 	      # Promptly ignore the alignment unless the score is >0.
@@ -4561,10 +4566,12 @@ sub syntenic_paralogs {
 		      -score => $alt_score
 		  );
 	      
-	      if ( $args->{'-verbose'} ) {
-		  print {$fh} "ALTX: $ax", $o->sn, $cand->sn, $o->ygob, $cand->ygob, 
-		  $alt_pval, $synteny{$pair}->{SCORE}.' > '.$alt_score, 		  
-		  $norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);	    
+	      if ( $args->{'-verbose'} >=2 ) {
+		  print {$fh} "ALTX:", $ax, $o->sn, $cand->sn, 
+		  $alt_score, $alt_pval, $alt_norm, 
+		  $o->ygob, $cand->ygob, $synteny{$pair}->{SCORE}.' > '.$alt_score, 		  
+		  $norm.' > '.$alt_norm, ($norm>$alt_norm ? 1 : 0);
+		  &Annotation::Orf::_print_align([qw(SCER1 ANC SCER2)], $alt_align);	    
 	      }
 	      next CAND unless $norm > $alt_norm;
               #next CAND unless $score > $alt_score;
@@ -4603,6 +4610,8 @@ sub syntenic_paralogs {
     }
     
   }
+
+    print {$fh} "" if  $args->{'-verbose'} >=2;
 
     map { $_->data($attr => 'delete') } $self->orfs;
     return $self;
