@@ -4410,7 +4410,7 @@ sub syntenic_paralogs {
 		-mode => 'paralog',
 		-ancestor => $anc,
 		-window =>  $args->{'-window'},
-		-verbose => 0, # $args->{'-verbose'}-1,
+		-verbose => 5, # $args->{'-verbose'}-1,
 		-symmetric => 1
 	    );
 	
@@ -4455,10 +4455,10 @@ sub syntenic_paralogs {
 			   grep { $synteny{$_}->{'SCORE'}>0 } keys %synteny ) {
       
       # get genes x and y. have they (specific genes ) already been placed in a pair?
-      
+
       my ($x,$y) = map { $synteny{ $pair }->{$_} } qw(G1 G2);
       next if exists $seen{ $x->sn } || exists $seen{ $y->sn };
-      
+
       # we allow a short-cut to approve any candidate pair.
       # we look at the first ohnologs on both sides. 
       # if they are close and congruent with x and y we snap approve. 
@@ -4546,14 +4546,18 @@ sub syntenic_paralogs {
 		  );
 
 	      # Promptly ignore the alignment unless the score is >0.
+	      
+	      next unless $alt_score > 0;
+
+	      #############
 	      # Ensure the alignment spans the gene of interest OR
 	      # the alignment includes aligned ohnologs of interest. 
 	      # This is to exclude scenarios where there is a rearrangment 
 	      # very close to the Ohnolog. 
+	      # This is NOT a bad-ass way of doing it. But it looks OK in spot-checks. 
+	      next if $hyp_ohno && ! $alt_ohno && ! $alt_span; 
+	      #############
 	      
-	      next unless $alt_score > 0;
-	      next if ($hyp_ohno && $hyp_span) && ! ($alt_ohno || $alt_span); 
-
 	      # generate statistics to enable comparison to candidate pair 
 
 	      my ($alt_pval, $alt_norm, $alt_rands) =
