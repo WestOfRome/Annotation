@@ -4364,8 +4364,7 @@ sub syntenic_paralogs {
 		    ($LOCAL_DEBUG_VAR==0 || $orf_c%$LOCAL_DEBUG_VAR == 0);
 	    }
 	}
-	next unless $orf->ygob eq $args->{'-debug'};
-	$orf->output;
+
 	push @{$anc{ ( $orf->assign =~ /RNA/ ? $orf->data('GENE') :  $orf->ygob ) } }, $orf;
     }
     
@@ -4410,7 +4409,7 @@ sub syntenic_paralogs {
 		-mode => 'paralog',
 		-ancestor => $anc,
 		-window =>  $args->{'-window'},
-		-verbose => 5, # $args->{'-verbose'}-1,
+		-verbose => 0, # $args->{'-verbose'}-1,
 		-symmetric => 1
 	    );
 	
@@ -4555,6 +4554,7 @@ sub syntenic_paralogs {
 	      # This is to exclude scenarios where there is a rearrangment 
 	      # very close to the Ohnolog. 
 	      # This is NOT a bad-ass way of doing it. But it looks OK in spot-checks. 
+	      # Not that hard to ro it right if needed. 
 	      next if $hyp_ohno && ! $alt_ohno && ! $alt_span; 
 	      #############
 	      
