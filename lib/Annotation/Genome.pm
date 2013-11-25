@@ -4417,7 +4417,7 @@ sub syntenic_paralogs {
 		-mode => 'paralog',
 		-ancestor => $anc,
 		-window =>  $args->{'-window'},
-		-verbose => 0, # $args->{'-verbose'}-1,
+		-verbose =>  $args->{'-verbose'}-1,
 		-symmetric => 1
 	    );
 	
