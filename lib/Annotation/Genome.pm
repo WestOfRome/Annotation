@@ -4450,7 +4450,6 @@ sub syntenic_paralogs {
     }	
     print {$fherr} 'PRIORITIZE('.(time-$time).'):', scalar(keys %synteny)." candidate pairs";
     $time=time;
-    exit;
 
     #######################################
     # PHASE 2 : Descend through stack and test candidate pairs. 
