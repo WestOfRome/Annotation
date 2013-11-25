@@ -11,6 +11,11 @@ use GD::SVG;
 @ISA = qw(Annotation);
 
 use Annotation::Exon;                   
+
+# Memory leakage ...  
+# use constant HAS_LEAKTRACE => eval{ require Test::LeakTrace };
+# use Test::More HAS_LEAKTRACE ? (tests => 1) : (skip_all => 'require Test::LeakTrace');
+# use Test::LeakTrace;
          
 #########################################
 #########################################
@@ -850,13 +855,13 @@ sub syntenic_alignment {
     ######################################	
     # 
     ######################################	
-    
+ 
     my $genome = $self->up->up->clone;
     $genome->organism( $key0 );
     my $contig = ref($self->up)->new(SEQUENCE => 1e5 x 'ATGC', ID => 1);
     $genome->add(-object => $contig);
-    #print $genome->organism, $min, $anc, $max;
-    
+     #print $genome->organism, $min, $anc, $max;
+
     my @anc_gene_order;
     for my $pos ( $min_anc .. $max_anc ) {
 	my $homol = 'Anc_'.$chr.'.'.$pos;
@@ -903,7 +908,7 @@ sub syntenic_alignment {
     }
 
     # align two regions to the ancestor 
-    
+
     my $align = $self->dpalign(
 	# alignment 
 	-hash => \%hash, 
@@ -919,9 +924,16 @@ sub syntenic_alignment {
 	# 
 	-verbose => undef
 	);
+
+    # strip the anc track and destroy objects 
     
-    return ($align,undef) if 
-	$args->{'-clean'}==0 && $args->{'-score'}==0;
+    if ( $args->{'-clean'}==0 && $args->{'-score'}==0 ) {
+	delete $hash{ $key0 };
+	undef( @anc_gene_order );
+	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
+	$genome->DESTROY();
+	return ($align,undef);
+    }
     
     ######################################	
     # trim back to only regions in YGOB ancestor 
@@ -936,25 +948,52 @@ sub syntenic_alignment {
 		delete $q->{$k};
 	    }		  
 	    push @clean, $q;
-	}    
+	}
 	shift(@clean) until ( ! @clean || $clean[0]->{$keys[0]} || $clean[0]->{$keys[1]} );
 	pop(@clean) until ( ! @clean || $clean[-1]->{$keys[0]} || $clean[-1]->{$keys[1]} );
     } else { @clean = @{$align}; } 
-    return undef unless @clean;
+
+    # 
+
+    unless ( @clean ) {
+	delete $hash{ $key0 };
+	undef( @anc_gene_order );
+	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
+	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @clean;
+	$genome->DESTROY();
+	return undef;
+    }
     
     &_print_align( [keys %hash], \@clean, 2 ) if $args->{'-verbose'};
     
-    return (\@clean,undef) unless $args->{'-score'};
-    
+    unless ( $args->{'-score'} ) {
+	delete $hash{ $key0 };
+	undef( @anc_gene_order );
+	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
+	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @clean;
+	$genome->DESTROY();
+	return (\@clean,undef);
+    }
+
     ######################################	
     # trim back to only regions in YGOB ancestor 
     ######################################	
     
     my ($score,$hash) = 
 	$self->_scoreSisterAlignment(-align => \@clean, @_);
- 
+
     my ($span,$ohno) = 
 	$self->_testOhnoSpan(-align => \@clean, %{ $args } );
+
+    # final scrubbing ...
+    
+    SCRUB : {
+	delete $hash{ $key0 };
+	undef( @anc_gene_order );
+	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
+	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @clean;
+	$genome->DESTROY();
+    }
 
     return (\@clean,$score,$hash,$span,$ohno);
 }
