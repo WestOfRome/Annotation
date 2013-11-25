@@ -140,53 +140,52 @@ sub DESTROY {
 
 	# recurse through daughter objects
 
-	map { $_->DESTROY } $self->stream;
+	map { $_->DESTROY } grep {defined} 
+	($self->stream, $self->_down); # base must be last
+	$self->throw if $self->_down || $self->down;
 
-	###########################
-	# for features and features on contigs.
-	# beware of asymmetric links and inaccesible
-	# objects that point back to self. 
-	#if (my $link = $self->link) { 		
-	#    $link->link(undef) if $link->link eq $self;
-	#    $self->link(undef);
-	#}
-	#$self->_initialise_features;
-	#map { $_->DESTROY } grep {defined} $self->_get_features;	
-	###########################
-	
-	# MAIN 
 	# what do I need to deal with ?
 	
 	my $up = $self->up;
 	my $left = $self->left;
-	my $right = $self->right;
-	
+	my $right = $self->right;	
+
 	# remove from parent object.
 	
-	if ($up && ($left || $right)) {
+	if ( $up && $up->_down eq $self ) { # base objects (object 0)
+	    # we can only remove base from an object as 
+	    # part of ultimate destruction. all other 
+	    # dependent objects must be removed first
+	    $self->throw if $left || $right; 
+	    $up->{'DOWN'}=undef;
+	    
+	} elsif ( $up && ! ($self->left || $self->right) &&
+		  $up->_down && $up->_down->left eq $self ) { # object 1
+	    $self->throw unless $up->_down->right eq $self; 
+	    # remove from parent .. 
+	    $up->remove(-object => $self, -warn => 0);
+
+	} elsif ($up && ($left || $right)) { # objects 2 ... N 
 	    # will be tested in remove whether 
 	    # left/right have same parent 
 	    $up->remove(-object => $self, -warn => 0);
-	} elsif ($up) {
+
+	} elsif ($up) { # other odd objects -- 
 	    # pseudos/features may look like this
 	    # know their parent (maybe to get access to sequence)
-	    # but have no siblings 
+	    # but have no siblings. 
+	    
 	} elsif ($left || $right) {
 	    $self->throw("Objects MUST know parent");			
-	}
+	} else {}  # no up, no left, no right == genome
 	
 	# destroy
 	
 	$self->up(undef);
 	$self->left(undef);
 	$self->right(undef);
-	
-	# finally ensure self and base are not 
-	# preserving each other. 
-
-	if (my $base = $self->_down) {$base->up(undef);}
 	$self->{'DOWN'} = undef; # no setter for 'DOWN'
-
+	
 	# shoudl be clear ....
 
 	undef $self;
@@ -271,6 +270,12 @@ sub stream {
     my $self = shift;
 	return () unless $self->_down;     # Features || Exons
 	return($self->_down->traverse(@_));
+}
+
+sub _stream {
+    my $self = shift;
+    return () unless $self->_down;     # Features || Exons
+    return($self->_down, $self->_down->traverse(@_));
 }
 
 =head2 index(-method => 'start')
@@ -411,7 +416,7 @@ sub remove {
     $self->throw("$obj not attached to $self")
     	unless $obj->up eq $self;			
     $self->throw("Not attached to self") 
-	unless $self->contains($obj);
+	unless $self->_down eq $obj || $self->contains($obj);
     $self->throw("Cannot remove base from an object")
     	if $obj->id == 0;
 
@@ -447,7 +452,7 @@ sub remove {
 	    unless $args->{'-warn'}==0;
     }
     
-    # destroy pointer to parent and neighbours 
+    # destroy pointer to parent and neighbours. 
     # descendants, orthologs, ohnologs unaffected 
     # -> we might still want to do somethign with object 
 
