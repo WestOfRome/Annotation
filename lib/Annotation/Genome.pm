@@ -36,6 +36,11 @@ $Storable::canonical=1;
 use Annotation::Contig;
 use Annotation::Orf;
 
+# Memory leakage ...  
+#use constant HAS_LEAKTRACE => eval{ require Test::LeakTrace };
+#use Test::More HAS_LEAKTRACE ? (tests => 1) : (skip_all => 'require Test::LeakTrace');
+#use Test::LeakTrace;
+
 #########################################
 #########################################
 
@@ -3422,7 +3427,7 @@ sub syntenyMatrix {
 
 	    my ($align,$score,$hash);
 	    if ( $args->{'-mode'} =~ /^p/i ) {
-	        ($align,$score,$hash) = # either an alignment (array of hashes) or hash
+		($align,$score,$hash) = # either an alignment (array of hashes) or hash
 		    $orfs[$i]->syntenic_alignment(
 			-sister => $orfs[$j],
 			-ancestor => $args->{'-ancestor'},
@@ -4310,6 +4315,7 @@ sub ohnologs2 {
 }
 
 =head2 syntenic_paralogs() 
+
 =cut 
 
 sub syntenic_paralogs {
@@ -4376,6 +4382,7 @@ sub syntenic_paralogs {
     # this is done using ohnologs below but we need a set of regions that does not
     # make this assumption.
 
+
     my $sisterIndex = $self->indexCandidateSisterRegions(
 	-syn_min => 0.3,
 	-debug => $args->{'-debug'},
@@ -4402,7 +4409,8 @@ sub syntenic_paralogs {
 	next if $LOCAL_DEBUG_VAR && (grep {$_->ohnolog} @{$anc{$anc}}); # ignore families that got a pass above 
 
 	# compute all pairwise synteny values for every genes in the family 
-	
+
+
 	my $scores = 
 	    $self->syntenyMatrix(
 		-orfs => $anc{$anc},
@@ -4442,7 +4450,8 @@ sub syntenic_paralogs {
     }	
     print {$fherr} 'PRIORITIZE('.(time-$time).'):', scalar(keys %synteny)." candidate pairs";
     $time=time;
-	
+    exit;
+
     #######################################
     # PHASE 2 : Descend through stack and test candidate pairs. 
     # 1. Exclude pairs in regions that have been securely assigned as an incompatible sister.
@@ -7463,10 +7472,10 @@ sub _guide_mode {
 sub _allObjectStream {
     my $self = shift;
     return( 
-	$self, 
-	$self->stream,
-	(map { $_->stream } $self->stream),
-	(map {$_->stream} map { $_->stream } $self->stream)
+	$self, # genome
+	$self->stream, # contigs
+	(map { $_->stream } $self->stream), # orfs 
+	(map {$_->stream} map { $_->stream } $self->stream) # exons 
 	);
 }
 
