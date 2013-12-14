@@ -2427,6 +2427,7 @@ sub quality {
     ##############################    
 
     my $key = 'QUALITY';
+    my $fh = *STDOUT;
 
     ##############################    
     # P2-ICEB-ULUR-AHUC-ALAK
@@ -2471,6 +2472,7 @@ sub quality {
 	    # consistency on YGOB hit... 	    
 
 	    map { next unless $_->ygob eq $o->ygob } $o->orthogroup;
+	    #map { next unless $_->telomereDistance >= 20 } $o->orthogroup;
 
 	    # look like complete genes... 
 
@@ -2486,11 +2488,11 @@ sub quality {
 	    ######################################### 
 	    
 	    # synteny 	    
-
+	    
 	    my ( $score_syn, $mean_syn, $sd_syn ) = 
-		$self->syntenyMatrix(
+		$self->synteny_matrix(
 		    -orfs => [ $o->_orthogroup ],
-		    -mode => 'ortho',
+		    -mode => 'nonaligned',
 		    -score => 1
 		);
 	    push @{ $hash{'SYN'} }, $score_syn;
@@ -2498,14 +2500,14 @@ sub quality {
 	    # homology 
 
 	    my ($mean_ygob,$sd_ygob) = &_calcMeanSD( map { $_->logscore('ygob') } $o->_orthogroup );
-	    $sd_ygob=1 unless $sd_ygob >0;
+	    $sd_ygob=1 unless $sd_ygob >1;
 	    my $score_ygob = sprintf("%.1f", $mean_ygob/$sd_ygob);
 	    push @{ $hash{'YGOB'} }, -1*$score_ygob; # make +ve -- needed for Qnorm below 
 
 	    #print STDERR $mean_len, $score_syn, $score_ygob;
 	    last if ++$count >= $args->{'-nulldist'};
 	}
-	
+
 	######################################### 
 	# normalize data and create data structure 
 	######################################### 
@@ -2529,7 +2531,7 @@ sub quality {
 	# quantile normalize YGOB data to match synteny 
 	######################################### 
 	# Synteny data is almost normal so we normalize to that 
-
+	
 	@{$hash{ 'YGOB_QN' }} = &quantileNormalize( $hash{'SYN'}, $hash{'YGOB'} );
 	
 	my (@temp);
@@ -2537,7 +2539,7 @@ sub quality {
 	    push @temp, { YGOB => $hash{'YGOB'}->[$i], YGOB_QN => $hash{'YGOB_QN'}->[$i] };
 	}
 	$self->{$key}->{MAP} = [ sort {$a->{YGOB} <=> $b->{YGOB}} @temp ];
-
+	
 	######################################### 	
 	# create a unified quality metric to use as a null distribution 
 	######################################### 
@@ -2552,11 +2554,11 @@ sub quality {
 	# output for analysis 
 	######################################### 
 
-	if ( $args->{'-verbose'} >= 2 || 1 ) {
-	    my @head =  qw(LEN LEN_Z YGOB YGOB_Z YGOB_QN SYN SYN_Z QUAL);
-	    print {STDERR} 'N', @head;
+	if ( $args->{'-verbose'} >= 2 ) {
+	    my @head =  qw(LEN LEN_Z YGOB YGOB_Z YGOB_QN SYN SYN_Z NULL);
+	    print {$fh} 'N', @head;
 	    foreach my $i ( 0..$#{ $hash{'SYN'} } ) {
-		print {STDERR} $i, (map { $hash{$_}->[$i] } @head);
+		print {$fh} $i, (map { $hash{$_}->[$i] } @head);
 	    }
 	}
 
@@ -2588,9 +2590,9 @@ sub quality {
 	# synteny 
 
 	my ( $score_syn, $mean_syn, $sd_syn ) = 
-	    $self->syntenyMatrix(
+	    $self->synteny_matrix(
 		-orfs => [ $o->_orthogroup ],
-		-mode => 'ortho',
+		-mode => 'nonaligned',
 		-score => 1
 	    );
 	
@@ -2783,7 +2785,7 @@ sub ohnologComparative2 {
       ########################################################     
       
       # create all possible combinations of genes 
-      # if the OGs are correct we willl reover them
+      # if the OGs are correct we willl recover them
       # but we do not want to assume that they are right 
       
       my @hypoth = $self->combinations( 
@@ -2803,10 +2805,10 @@ sub ohnologComparative2 {
       
       my (@scores,@data,@ok);
       foreach my $i ( 0..$#hypoth ) {
-	  my ($scr,$m,$sd) =  $self->syntenyMatrix(
+	  my ($scr,$m,$sd) =  $self->synteny_matrix(
 	      -orfs => $hypoth[$i],
 	      -ancestor => $fam,
-	      -mode => 'ortho',
+	      -mode => 'nonaligned',
 	      -score => 1
 	      );
 	  push @scores, $scr;
@@ -2883,7 +2885,7 @@ sub ohnologComparative2 {
 			-sister => $hypoth[$j_ind]->[$x],
 			-ancestor => $fam,
 			-clean => 1,
-			-score => 1,
+			-score => 'paralog',
 			-verbose => 0
 		    );
 
@@ -2899,7 +2901,7 @@ sub ohnologComparative2 {
 		# Should be doing randomizations differently. 
 		# when I sum these I am averaging out any rand signal 
 		# and inflating the pvalues. 
-		# revering to just collecting the species level stats. 
+		# reverting to just collecting the species level stats. 
 		# grr. #################################################
 		
 		my ($pval, $perc, $rands) = $self->syntenic_significance(	    
@@ -3364,8 +3366,8 @@ sub indexCandidateSisterRegions {
 }
 
 
-=head2 syntenyMatrix(-orfs => [], -ancestor => 'Anc_1.23', 
-    -mode => 'o[rtholog]|p[aralog]', -verbose => 0)
+=head2 synteny_matrix(-orfs => [], -ancestor => 'Anc_1.23', 
+    -mode => 'o[rtholog]|p[aralog]|n[onaligned]', -verbose => 0)
     
     Create a matrix of sysnteny scores between all pairs of 
     genes using syntenic_alignment. Alignments are built around
@@ -3375,16 +3377,15 @@ sub indexCandidateSisterRegions {
     
 =cut 
 
-sub syntenyMatrix {
+sub synteny_matrix {
     my $self = shift;
     my $args = {@_};
     
-    # ortholog / conserved => synteny_conserved 
-    # paralog / sister => syntenic_alignment
-    
-    $args->{'-mode'} = 'o' unless exists $args->{'-mode'};
-    $args->{'-mode'} = 'ortho' if  $args->{'-mode'} =~ /^[o|c]/i;
-    $args->{'-mode'} = 'para' if  $args->{'-mode'} =~ /^[p|s]/i;
+    # nonaligned => synteny_conserved 
+    # ortholog   => syntenic_alignment + orhtolog 
+    # paralog    => syntenic_alignment + paralog 
+
+    $args->{'-mode'} = 'nonaligned' unless exists $args->{'-mode'};
     $args->{'-sort'} = 'ogid' unless exists $args->{'-sort'};
     $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
 
@@ -3392,7 +3393,7 @@ sub syntenyMatrix {
     # teast args 
     ########################################
 
-    $self->throw unless $args->{'-mode'} =~ /^o/i || 
+    $self->throw unless $args->{'-mode'} =~ /^n/i || 
 	(defined $args->{'-ancestor'} && $args->{'-ancestor'} =~ /^Anc_/);
     $self->throw unless defined $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;
 
@@ -3426,20 +3427,20 @@ sub syntenyMatrix {
 	    #next if $orfs[$i]->organism eq $orfs[$j]->organism;
 
 	    my ($align,$score,$hash);
-	    if ( $args->{'-mode'} =~ /^p/i ) {
+	    if ( $args->{'-mode'} =~ /^n/i ) {
+		$score = 
+		    $orfs[$i]->synteny_conserved(
+			-object => $orfs[$j]
+		    );
+	    } elsif ( $args->{'-mode'} =~ /^[op]/i ) {
 		($align,$score,$hash) = # either an alignment (array of hashes) or hash
 		    $orfs[$i]->syntenic_alignment(
 			-sister => $orfs[$j],
 			-ancestor => $args->{'-ancestor'},
 			-window => $args->{'-window'},
 			-clean => 1,
-			-score => 1,
+			-score => $args->{'-mode'},
 			-verbose => 0
-		    );
-	    } elsif ( $args->{'-mode'} =~ /^o/i ) {
-		$score = 
-		    $orfs[$i]->synteny_conserved(
-			-object => $orfs[$j]
 		    );
 	    } else {$self->throw;}
 	    
@@ -3508,7 +3509,7 @@ sub _hypergob_ascii_visual {
     Take a list of orfs and place into putative orthogroups
     based on synteny (hypergob). Returns : ([], [], []...)
 
-    We use syntenyMatrix() to do the hard work (with syteny_conserved) 
+    We use synteny_matrix() to do the hard work (with syteny_conserved) 
     and build orthogroups if suitable groups are returned. We are 
     implicitly building towards sets of size N so this shoule be checked
     if large assumptions are being made. 
@@ -3552,9 +3553,10 @@ sub groupBySynteny {
 	my %best;
 	foreach my $cand_gene ( @{$org{$org}} ) {
 	    foreach my $cluster_id ( 0..$#cand ) {
-		my $syn = $self->syntenyMatrix(
+		my $syn = $self->synteny_matrix(
 		    -orfs => [$cand_gene, @{$cand[$cluster_id]}], 
 		    -symmetrical => 1,
+		    -mode => 'nonaligned'
 		    );
 		my $score;
 		map { $score += $syn->{$cand_gene->name}->{$_->name} } @{$cand[$cluster_id]};
@@ -3582,9 +3584,9 @@ sub groupBySynteny {
     
     foreach my $cand ( @cand ) {
 	#print map { $_->name }  @{$cand};
-	$self->syntenyMatrix(
+	$self->synteny_matrix(
 	    -orfs =>  $cand,
-	    -mode => 'ortho',
+	    -mode => 'nonaligned',
 	    -verbose => 1,
 	    -sort => 'hypergob',
 	    -ascii => 1
@@ -4228,7 +4230,7 @@ sub ohnologs2 {
 		      -ancestor => $anc,
 		      -window => $args->{'-window'},
 		      -clean => 1,
-		      -score => 1
+		      -score => 'paralog'
 		  );
 	      
 	      $sisters{ $i.$j } = {
@@ -4412,7 +4414,7 @@ sub syntenic_paralogs {
 
 
 	my $scores = 
-	    $self->syntenyMatrix(
+	    $self->synteny_matrix(
 		-orfs => $anc{$anc},
 		-mode => 'paralog',
 		-ancestor => $anc,
@@ -4495,7 +4497,7 @@ sub syntenic_paralogs {
 	      -object => $y,
 	      -ancestor => $synteny{$pair}->{FAM},
 	      -clean => 1,
-	      -score => 1,
+	      -score => 'paralog',
 	      -window => $args->{'-window'},
 	      #-verbose => $args->{'-verbose'}-1
 	  );
@@ -4548,7 +4550,7 @@ sub syntenic_paralogs {
 		      -object => $cand,
 		      -ancestor => $ax,
 		      -clean => 1,
-		      -score => 1,
+		      -score => 'paralog',
 		      -window => $args->{'-window'}
 		  );
 
@@ -4753,7 +4755,7 @@ sub syntenic_significance {
 		-ancestor => $anc,
 		-window => $args->{'-window'},
 		-clean => 1,
-		-score => 1
+		-score => 'paralog'
 	    );
 	#&_print_align($align);
 
@@ -6661,16 +6663,16 @@ sub consistentFamilies {
     @all;
     
     # map { print $_->organism, scalar( grep {$_->ohnolog } $_->orfs ) } $self->iterate;
-
+    
     #########################################
     # build %family hash from @orfs -- in multiple stages. 
     #########################################
-
+    
     # Greedily construct families. group() pulls in OGs/Ohnos etc.
     # Identify all orfs that are in >1 family. Construct matricx of linked families. 
     
     my ($family,$index) = $self->group( -orfs => \@orfs, -by => 'family', -verbose => 1);        
-
+    
     #######################################
     # TEMP / DEBUG / DEVIN 
     if ( 1==2 ) {
