@@ -822,7 +822,7 @@ sub syntenic_alignment {
     $args->{'-window'} = 7 unless exists $args->{'-window'};
     $args->{'-homology'} = 'YGOB' unless exists $args->{'-homology'};
     $args->{'-clean'} = 1 unless exists $args->{'-clean'};
-    $args->{'-score'} = 1 unless exists $args->{'-score'};
+    $args->{'-score'} = 'paralog' unless exists $args->{'-score'};
     
     ######################################	
     # prepare variables 
@@ -929,7 +929,7 @@ sub syntenic_alignment {
     # all this destruction may not be necessary since fixing the 
     # problems in the DESTROY method. Mayne enough to go out of scope.. 
 
-    if ( $args->{'-clean'}==0 && $args->{'-score'}==0 ) {
+    if ( ! $args->{'-clean'} && 1 $args->{'-score'} ) {
 	delete $hash{ $key0 };
 	undef( @anc_gene_order );
 	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
@@ -982,7 +982,7 @@ sub syntenic_alignment {
     ######################################	
     
     my ($score,$hash) = 
-	$self->_scoreSisterAlignment(-align => \@clean, @_);
+	$self-> _score_syntenic_alignment(-align => \@clean, %{ $args } );
 
     my ($span,$ohno) = 
 	$self->_testOhnoSpan(-align => \@clean, %{ $args } );
@@ -1051,7 +1051,7 @@ sub _testOhnoSpan {
     return ($span, $ohno)
 }
 
-sub _scoreSisterAlignment {
+sub _score_syntenic_alignment {
     my $self = shift @_;
     my $args = {@_};
     my $align = $args->{'-align'};
@@ -1060,7 +1060,8 @@ sub _scoreSisterAlignment {
     
     $self->throw unless ref($align) eq 'ARRAY';
     $self->throw unless ref($align->[0]) eq 'HASH';
-    
+    $self->throw unless $args->{'-score'} && $args->{'-score'} =~ /^[op]/i;
+
     $args->{'-penalty'} = 20  unless exists $args->{'-penalty'};
 
     my $key0 = 'ANC';
@@ -1070,7 +1071,7 @@ sub _scoreSisterAlignment {
     
     my %scoring_matrix = (
 	'OHNO' => 1,
-	'CROSS' => 1,
+	'CROSS' => ($args->{'-score'} =~ /p/i ? 1 : 0),
 	'SAME' => 0,
 	'GAP' => 0,
 	'DELTA' => 0,
@@ -1080,7 +1081,7 @@ sub _scoreSisterAlignment {
     # 
     
     my %count = (
-	'OHNO' => -1,
+	'OHNO' => -1, # I guess this OK ... 
 	'KC' => 0,
 	'GAP' => 0,
 	'CROSS' => 0,
@@ -4269,7 +4270,7 @@ sub ancestralSyntenyDensity {
     to genomewide statistics. 
 
     Returns:
-    Percentile, overall quality (synteny+quality), synteny, homology.
+    Percentile, overall quality (synteny+homology), synteny, homology.
     
 =cut 
 
