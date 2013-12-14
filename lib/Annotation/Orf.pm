@@ -925,8 +925,10 @@ sub syntenic_alignment {
 	-verbose => undef
 	);
 
-    # strip the anc track and destroy objects 
-    
+    # strip the anc track and destroy objects. 
+    # all this destruction may not be necessary since fixing the 
+    # problems in the DESTROY method. Mayne enough to go out of scope.. 
+
     if ( $args->{'-clean'}==0 && $args->{'-score'}==0 ) {
 	delete $hash{ $key0 };
 	undef( @anc_gene_order );
@@ -4267,15 +4269,24 @@ sub ancestralSyntenyDensity {
     to genomewide statistics. 
 
     Returns:
-    Total, %ID, SyntenyConservation, LengthConsistency
+    Percentile, overall quality (synteny+quality), synteny, homology.
     
 =cut 
 
 sub quality {
     my $self = shift;
+    my $args = {@_};
+
     return undef unless $self->orthogroup;
-    my $G = $self->up->up;    
-    return $G->quality(-object => $self); # Ugly! 
+    
+    unless ( $args->{'-calculate'} || $args->{'-force'} ) {
+	return (wantarray ? @{$self->{QUALITY}} : $self->{QUALITY}->[0]) if 
+	    defined  $self->{QUALITY} && ref($self->{QUALITY}) =~ /ARRAY/;   
+    }
+    
+    my $G = $self->up->up;
+    $self->{QUALITY} = [$G->quality(-object => $self)];
+    return (wantarray ? @{$self->{QUALITY}} : $self->{QUALITY}->[0]);
 }
 
 =head2 direction( -object => orf, -numeric => 0|1)
@@ -5917,7 +5928,7 @@ sub output {
 	    $self->sgd, $self->logscore('sgd'),
 	    $self->loss, $self->hypergob, $self->pillarscore,
 	    ($self->ohnolog ? ('*'.$self->ohnolog->sn, $self->score('ohno'),$self->ohnolog->ogid) : (('NoOhno')x3) ),
-	    ($self->quality ? ($self->quality) : (('NoOG')x4) )
+	    (defined $self->quality ? ($self->quality) : (('NoOG')x4) )
 	    );
 	
     } elsif ( $args->{'-dump'} ) {
