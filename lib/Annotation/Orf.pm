@@ -794,6 +794,121 @@ sub _filter_tandems {
     return @uniq;
 }
 
+=head2 diagnose()
+
+    This method will look at an orthogroup and attempt to 
+    identity the gene(s) responsible for at a low quality 
+    score
+
+=cut
+
+sub diagnose {
+  my $self = shift;
+  my $args = {@_};
+  
+  my $anc = $args->{'-ancestor'};
+  $args->{'-window'} = 7 unless exists $args->{'-window'};
+  $args->{'-homology'} = 'YGOB' unless exists $args->{'-homology'};
+
+  return () unless $self->_orthogroup;
+  my @orfs = $self->_orthogroup;
+
+  #####################################################
+  # Baseline 
+  #####################################################
+
+  if ( 1==2 ) {
+      my %hash = map { uc($_->organism) 
+			   => [ $_->context(-self =>1,-distance=>$args->{'-window'}) ] } @orfs;
+      my @keys = map { uc($_->organism) } @orfs;
+      #print map { $_.":$#{$hash{$_}}"} @keys;
+      
+      my ($align,$og,$scr) = $self->dpalign(
+	  # alignment 
+	  -hash => \%hash, 
+	  #-order => [ @keys ], #$key0 must be first 
+	  -reference => $keys[0],
+	  -global => 1,
+	  # scoring 
+	  -match => $args->{'-homology'},
+	  -mismatch => -1e6,
+	  -gap => 0,
+	  -inversion => -100,
+	  -trna => 100,
+	  # 
+	  -verbose => undef
+	  );            
+      print ">$scr";
+      &_print_align( [keys %hash], $align );
+  }
+
+  #####################################################
+  # Baseline 
+  #####################################################
+
+  for (my $i = 0; $i <= $#orfs; $i++ ) {
+      my @set = (
+	  ( $i == 0 ? () : @orfs[0..$i-1] ), 
+	  ( $i == $#orfs ? () : @orfs[($i+1)..$#orfs])
+	  );
+      
+      my %hash = map { uc($_->organism) 
+			   => [ $_->context(-self =>1,-distance=>$args->{'-window'}) ] } @set;
+      my @keys = map { uc($_->organism) } @set;
+      print map { $_.":$#{$hash{$_}}"} @keys;
+      
+      my ($align,$og,$scr) = $self->dpalign(
+	  # alignment 
+	  -hash => \%hash, 
+	  #-order => [ @keys ], #$key0 must be first 
+	  -reference => $keys[0],
+	  -global => 1,
+	  # scoring 
+	  -match => $args->{'-homology'},
+	  -mismatch => -1e6,
+	  -gap => 0,
+	  -inversion => -100,
+	  -trna => 100,
+	  # 
+	  -verbose => undef
+	  );         
+
+      my ($simple_scr,$denom) = $self->_score_multiple_alignment_simple($align);
+
+      print ">$align, $scr,$simple_scr,$denom";
+      &_print_align( [keys %hash], $align );
+  }
+
+  exit;
+
+  return @issues;
+}
+
+sub _score_multiple_alignment_simple {
+    my $self = shift;
+    my $align = shift;
+    
+    my @keys = keys %{$align->[0]};
+    my $unit = 1/scalar(@keys);
+
+    my %counts;
+    foreach my $k (@keys) {
+	$counts{ $k } = scalar( grep { $self->isa( ref($_->{$k}) ) } @{$align} ); 
+	print $k, $counts{$k};
+    }
+    my ($min) = sort { $a <=> $b } values %counts;
+
+    my $scr=0;
+    foreach my $h ( @{$align} ) {
+	my $lscore;
+	map { $lscore+=$unit if $self->isa( ref($h->{$_}) ) } @keys;
+	$scr++ if $lscore==1;
+    }
+
+    return($scr, $min);
+}
+
+
 =head2 syntenic_alignment(-object => Orf, -ancestor => Anc_x.y|[Anc_x.y,Anc_w.z], 
     -homology => 'YGOB', -window => 7, -clean => 1, -score => 1)
     
@@ -929,7 +1044,7 @@ sub syntenic_alignment {
     # all this destruction may not be necessary since fixing the 
     # problems in the DESTROY method. Mayne enough to go out of scope.. 
 
-    if ( ! $args->{'-clean'} && 1 $args->{'-score'} ) {
+    if ( ! $args->{'-clean'} && ! $args->{'-score'} ) {
 	delete $hash{ $key0 };
 	undef( @anc_gene_order );
 	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
