@@ -922,7 +922,8 @@ sub phyml {
     # phyml params 
     $args->{'-speed'} = 2 unless exists $args->{'-speed'};
     $args->{'-boots'} = 0 unless exists $args->{'-boots'}; 
-    $args->{'-params'} = " -d nt -b $args->{'-boots'} -m HKY85 -f m -t e --quiet " 
+    #$args->{'-params'} = " -d nt -b $args->{'-boots'} -m HKY85 -f m -t e --quiet " 
+    $args->{'-params'} = " 0 i 1 $args->{'-boots'} HKY e e 4 e " 
 	unless exists $args->{'-params'};
     # tree params 
     $args->{'-topology'} = $self->up->up->tree unless exists $args->{'-topology'};
@@ -947,11 +948,11 @@ sub phyml {
 	$self->_external_app(-application => $args->{'-application'});
 
     if ( $args->{'-speed'} == 1 ) {
-	$args->{'-params'} .= " --pinv e --nclasses 4 --alpha e --search BEST --n_rand_starts 10 ";
+	#$args->{'-params'} .= " --pinv e --nclasses 4 --alpha e --search BEST --n_rand_starts 10 ";
     } elsif ( $args->{'-speed'} == 2 ) {
-	$args->{'-params'} .= " --pinv e --nclasses 4 --alpha e --search NNI ";	
+	#$args->{'-params'} .= " --pinv e --nclasses 4 --alpha e --search NNI ";	
     } else {
-	$args->{'-params'} .= " --pinv 0 --nclasses 1 --search NNI ";	
+	#$args->{'-params'} .= " --pinv 0 --nclasses 1 --search NNI ";	
     }
 
     # get outgroup 
@@ -1007,7 +1008,8 @@ sub phyml {
 
     unless ( $args->{'-sowh'} ) {
 	my $cmdline = 
-	    "$binary ".($topfile ? " --inputtree $topfile " : "")." $args->{'-params'} -i $align &>/dev/null ";
+	    #"$binary ".($topfile ? " --inputtree $topfile " : "")." $args->{'-params'} -i $align &>/dev/null ";
+	    "$binary $align  $args->{'-params'} ".($topfile ? " $topfile " : "BIONJ")." n y &>/dev/null ";
 	print( $cmdline )  if $args->{'-verbose'};
 	system( $cmdline );    
 	
@@ -1041,15 +1043,18 @@ sub phyml {
 	# real data 
 	###################################################
 
-	my $cmdline = " $binary -o $rm ".(
-	    $rm eq $null ? " --inputtree $topfile " : undef
- 	    )." $args->{'-params'} -i $align &> /dev/null ";	
+	#my $cmdline = " $binary -o $rm ".(
+	#    $rm eq $null ? " --inputtree $topfile " : undef
+ 	#    )." $args->{'-params'} -i $align &> /dev/null ";	
+	my $cmdline =  "$binary $align  $args->{'-params'} ".($topfile ? " $topfile " : "BIONJ")." ".
+	    ($rm eq 'lr' ? 'n' : 'y')." y &>/dev/null ";
 	print( $cmdline )  if $args->{'-verbose'};
 	system( $cmdline );
 	# 
-	my ($treefile, $statsfile) = map { $align.$_ } qw(_phyml_tree.txt _phyml_stats.txt);
+	my ($treefile, $statsfile) = map { $align.$_ } qw(_phyml_tree.txt _phyml_stat.txt); #_stats.txt
 	print {$fherr} "Tree/phyml 2!" and return undef unless -s $treefile > 50;
 	my $ml_param = _parsePhymlStatsFile( $statsfile );
+
 	chomp(my $ml_tree = `cat $treefile `);
 	push @res, { TREE => $ml_tree , LNL => $ml_param->{'LNL'} };
 
@@ -1110,7 +1115,7 @@ sub phyml {
 	    close $sqfh;
 	    print {$fherr} "Sims/seq-gen: $rep_count !" and return undef 
 		unless $rep_count==$args->{'-sowh'};
-	    #`cp $sqfile /Useres/devin/examine`;
+	    `cp $sqfile /Users/devin/examine`;
 	}
 
 	###################################################	
@@ -1118,14 +1123,18 @@ sub phyml {
 	# we allow reoptimization of params (ie full SOWH).
 	###################################################
 	
-	my $cmdline = " $binary -o $rm ".(
-	    $rm eq $null ? " --inputtree $topfile " : undef
- 	    )." -n $args->{'-sowh'} $args->{'-params'} -i $sqfile &>/dev/null ";
-	print( $cmdline ) if $args->{'-verbose'};
+	#my $cmdline = " $binary -o $rm ".(
+	#    $rm eq $null ? " --inputtree $topfile " : undef
+ 	#    )." -n $args->{'-sowh'} $args->{'-params'} -i $sqfile &>/dev/null ";
+	my $simparams = $args->{'-params'};
+	$simparams =~ s/(0\s+i\s+)\d+/\1$args->{'-sowh'}/ || die($args->{'-params'});
+	my $cmdline =  "$binary $sqfile  $simparams ".($topfile ? " $topfile " : "BIONJ")." ".
+	    ($rm eq 'lr' ? 'n' : 'y')." y &>/dev/null ";
+	print( '>'.$cmdline ) if $args->{'-verbose'};
 	system( $cmdline );	
 	
-	my ($treefile, $statsfile) = map { $sqfile.$_ } qw(_phyml_tree.txt _phyml_stats.txt);
-	print {$fherr} "Tree/phyml 3!" and return undef unless -s $treefile > 50;
+	my ($treefile, $statsfile) = map { $sqfile.$_ } qw(_phyml_tree.txt _phyml_stat.txt); # _stats.txt
+	print {$fherr} "Tree/phyml 3! :  $treefile ".(-s  $treefile) and return undef unless -s $treefile > 50;
 	my @recs = _parsePhymlStatsFile( $statsfile );
 	map { $res{$_}{$rm}=$recs[$_] } 0..$#recs;	
     }   
@@ -1166,20 +1175,35 @@ sub phyml {
 sub _parsePhymlStatsFile {
     my $file = shift;
     return undef unless -e $file;
+    print $file;
 
     local $/ = 'Montpellier';
     open(my $fh, $file);
-    my ($junk,@chunk) = <$fh>;
+    #my ($junk,@chunk) = <$fh>;
+    my (@chunk) = <$fh>;
     close $fh;
 
     my @records;
+    if ( $chunk[0] =~ /Likelihood\s+Discrete\s+Number/) { # different version of phyml 
+	foreach my $line ( split/\n/, $chunk[0] ) {
+	    next unless $line =~ /^\s+\#\d+/;
+	    my @r=split/\s+/, $line;
+	    my %hash = (
+		LNL => $r[3],
+		ALPHA => $r[6],
+		PINV => $r[7],
+		TSTV => $r[8]
+		);
+	    push @records, \%hash; 
+	}
+    } else {
     foreach my $chnk ( @chunk ) {
 	my %hash;
 	foreach (split/\n/, $chnk) {
 	    my @r=split/\s+/;
 	    if ( /transversion/ ) {
 		$hash{'TSTV'} = $r[-1];
-	    } elsif (/Log\-likelihood/) {
+	    } elsif (/likelihood/i) {
 		$hash{'LNL'} = $r[-1];
 	    } elsif (/Gamma\sshape\sparameter/) {
 		$hash{'ALPHA'} = $r[-1];
@@ -1190,6 +1214,7 @@ sub _parsePhymlStatsFile {
 	    }
 	}
 	push @records, \%hash;
+    }
     }
 
     return ( ! wantarray && $#records == 0 ? pop(@records) : @records );
