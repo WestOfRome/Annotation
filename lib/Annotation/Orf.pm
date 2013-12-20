@@ -855,7 +855,7 @@ sub diagnose {
       my %hash = map { uc($_->organism) 
 			   => [ $_->context(-self =>1,-distance=>$args->{'-window'}) ] } @set;
       my @keys = map { uc($_->organism) } @set;
-      print map { $_.":$#{$hash{$_}}"} @keys;
+      #print map { $_.":$#{$hash{$_}}"} @keys;
       
       my ($align,$og,$scr) = $self->dpalign(
 	  # alignment 
@@ -876,10 +876,8 @@ sub diagnose {
       my ($simple_scr,$denom) = $self->_score_multiple_alignment_simple($align);
 
       print ">$align, $scr,$simple_scr,$denom";
-      &_print_align( [keys %hash], $align );
+      &_print_align( [keys %hash], $align, 50 );
   }
-
-  exit;
 
   return @issues;
 }
@@ -894,7 +892,7 @@ sub _score_multiple_alignment_simple {
     my %counts;
     foreach my $k (@keys) {
 	$counts{ $k } = scalar( grep { $self->isa( ref($_->{$k}) ) } @{$align} ); 
-	print $k, $counts{$k};
+	#print $k, $counts{$k};
     }
     my ($min) = sort { $a <=> $b } values %counts;
 
@@ -908,17 +906,29 @@ sub _score_multiple_alignment_simple {
     return($scr, $min);
 }
 
+=head2 ancestral_alignment()
+=cut 
+
+sub ancetral_alignment {
+    my $self = shift;
+    my $args = {@_};
+    
+    $args->{'-ancestor'}=1 unless $args->{'-ancestor'};
+    
+    return $self->syntenic_alignment( %{$args} );
+}
 
 =head2 syntenic_alignment(-object => Orf, -ancestor => Anc_x.y|[Anc_x.y,Anc_w.z], 
     -homology => 'YGOB', -window => 7, -clean => 1, -score => 1)
     
-    Perform a gene-level alignment of two genes ([self],[sister]) 
-    by anchoring on [ancestor] and using a window of [window] genes, 
+    Perform a gene-level alignment of two genomeic regions centered on self/object.
+    If -ancestor is true we explicitly align on the ancetral gene order.
+    If -ancestor is an ancestral gene we further attempt to anchor the alignment on this.
 
     We return an alignment (array of hashes), score and scoring hash.
     
     dpalign() does the heavy lifting to create the alignment once the 
-    datastructures have been created to represent the two regions 
+    datastructures have been built to represent the two regions 
     and the ancestral chromosome. 
     
 =cut 
@@ -928,7 +938,6 @@ sub syntenic_alignment {
     my $args = {@_};
 
     my $sister =  $args->{'-object'} || $args->{'-sister'};
-    my $anc = $args->{'-ancestor'};
 
     ######################################	
     # check arguments 
@@ -939,96 +948,127 @@ sub syntenic_alignment {
     $args->{'-clean'} = 1 unless exists $args->{'-clean'};
     $args->{'-score'} = 'paralog' unless exists $args->{'-score'};
     
+    $self->throw if $args->{'-clean'} && ! $args->{'-ancestor'};
+
     ######################################	
     # prepare variables 
     ######################################	
 
     my $key0 = 'ANC';  # used multiple places. 
-    
-    ######################################	
-    # we will need an ancestral gene order to scaffold to align
-    # the two regions. we create now with reference to '-window' 
-    ######################################	
-    
-    my ($chr, $max_anc, $min_anc);
-    if ( $anc =~ /^Anc_(\d+)\.(\d+)/ ) {
-	$chr = $1;
-	($max_anc) = $2 + ( 2*$args->{'-window'} ); 
-	($min_anc) = $2 - ( 2*$args->{'-window'} ); 
-    } elsif ( ref($anc) eq 'ARRAY' ) {
-	$anc->[0] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
-	my ($chr1,$min) = ($1,$2);
-	$anc->[1] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
-	my ($chr2,$max) = ($1,$2);
-	$self->throw unless $chr1 eq $chr2;
-	($chr, $max_anc, $min_anc) = ($chr, $min, $max);
-    } else { $self->throw( $anc, ref($anc) ); }
+    my $anc = $args->{'-ancestor'};
 
-    $min_anc = 1 unless $min_anc >= 1;
-    $self->throw unless $min_anc <= $max_anc;	      
-    
     ######################################	
-    # 
+    # Anc determines run mode --
+    # Anc_x.y => Anchor alignment on this 
+    # spoof => Anchor alignment on an Anc but first figure out what that is
+    # undef => Do not anchor alignment on Anc chr 
     ######################################	
- 
-    my $genome = $self->up->up->clone;
-    $genome->organism( $key0 );
-    my $contig = ref($self->up)->new(SEQUENCE => 1e5 x 'ATGC', ID => 1);
-    $genome->add(-object => $contig);
-     #print $genome->organism, $min, $anc, $max;
 
-    my @anc_gene_order;
-    for my $pos ( $min_anc .. $max_anc ) {
-	my $homol = 'Anc_'.$chr.'.'.$pos;
-	my $orf = ref($self)
-	    ->new(
-	    START => $pos*10,
-	    STOP => ($pos*10)+3,
-	    STRAND => 1,
-	    UP => undef
-	    );
-	$orf->data(  $args->{'-homology'} => $homol );
-	$orf->data( 'ANC_POS' => $pos );
-	$contig->add(-object => $orf);
-	push @anc_gene_order, $orf;
+    # variables needed by dpalign 
+    my %hash; # genes in ordered arrays by species 
+    my @keys; # names of tracks(speices) to align in order of addition 
+
+    if ( $anc ) { # explcicitly align against ancestral gene order 
+	
+	# we want to align to the ancestral gene order but do not know 
+	# the gene to anchor on. figure it out and then proceed. 
+
+	if ( $anc !~ /^Anc/i) {
+	    my $left = $self->left;
+	    $left = $left->left until ! $left || $left->ygob =~ /Anc_(\d+)\.(\d+)/o;
+	    my ($l_chr, $l_index) = ($1,$2);
+	    my $right = $self->right;
+	    $right = $right->right until ! $right || $right->ygob =~ /Anc_(\d+)\.(\d+)/o;
+	    my ($r_chr, $r_index) = ($1,$2);
+	    return () unless $l_chr eq $r_chr;
+	    my $index = sprintf("%d",($r_index + $l_index)/2);
+	    $anc = 'Anc_'.$r_chr.'.'.$index;
+	    return () unless $anc =~ /$HOMOLOGY{'YGOB'}/o;
+	}   
+    
+	######################################	
+	# create ancestral gene order using Anc and -window 
+	######################################	
+	
+	my ($chr, $max_anc, $min_anc);
+	if ( $anc =~ /^Anc_(\d+)\.(\d+)/ ) {
+	    $chr = $1;
+	    ($max_anc) = $2 + ( 2*$args->{'-window'} ); 
+	    ($min_anc) = $2 - ( 2*$args->{'-window'} ); 
+	} elsif ( ref($anc) eq 'ARRAY' ) {
+	    $anc->[0] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+	    my ($chr1,$min) = ($1,$2);
+	    $anc->[1] =~ /Anc_(\d+)\.(\d+)/ || $self->throw;
+	    my ($chr2,$max) = ($1,$2);
+	    $self->throw unless $chr1 eq $chr2;
+	    ($chr, $max_anc, $min_anc) = ($chr, $min, $max);
+	} else { $self->throw( $anc, ref($anc) ); }
+	
+	$min_anc = 1 unless $min_anc >= 1;
+	$self->throw unless $min_anc <= $max_anc;	      
+	
+	######################################	
+	# Create objects to represent ancestral gene order 
+	######################################	
+	
+	my $genome = $self->up->up->clone;
+	$genome->organism( $key0 );
+	my $contig = ref($self->up)->new(SEQUENCE => 1e5 x 'ATGC', ID => 1);
+	$genome->add(-object => $contig);
+	#print $genome->organism, $min, $anc, $max;
+	
+	my @anc_gene_order;
+	for my $pos ( $min_anc .. $max_anc ) {
+	    my $homol = 'Anc_'.$chr.'.'.$pos;
+	    my $orf = ref($self)
+		->new(
+		START => $pos*10,
+		STOP => ($pos*10)+3,
+		STRAND => 1,
+		UP => undef
+		);
+	    $orf->data(  $args->{'-homology'} => $homol );
+	    $orf->data( 'ANC_POS' => $pos );
+	    $contig->add(-object => $orf);
+	    push @anc_gene_order, $orf;
+	}
+	
+	# place the ancestral data on the dpalign datastructures
+	
+	$hash{ $key0 } = \@anc_gene_order;
+	push @keys, $key0;
     }
-
-    # build our data structure 
-    
-    my %hash = ( $key0 => \@anc_gene_order );
-    my @keys = ( $key0 );
     
     ######################################	
-    # we will need an ancestral gene order to scaffold to align
-    # the two regions. we create now with reference to '-window' 
-    ######################################	
-
     # define order and valid range. only Ancs in reference are 
     # admitted for scoring so we constrain ultimate range without 
-    # without having to edit the actual gene order array i_array. 
+    # having to edit the actual gene order array i_array. 
+    ######################################	
     
     my @genes=($self,$sister);
-
     for my $i (0..1) {
 	my @i_array = $genes[$i]->context(-distance => $args->{'-window'}, -self => 1);
-	my $i_rt; # i_rt is used to determine orientation 	
-	my @i_sort =  grep {defined} # sort {$a <=> $b}
-	map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @i_array;    
+	my @i_sort = ( ! $anc ? @i_array : grep {defined} # sort {$a <=> $b}
+		       map { $_->ygob =~ /\.(\d+)/; $1 } grep { $_->ygob =~ /_$chr\./ } @i_array);    
 	my @i_prune = &_prune_from_ends(\@i_sort, $args->{'-penalty'});
+	
+	my $i_rt; # i_rt is used to determine orientation 	
 	map { $i_rt += ($i_prune[$_]>$i_prune[$_-1] ? 1 : -1) } 1..$#i_prune; # determine order on chr
-
+	
 	my $key = uc($genes[$i]->organism).($i+1);
 	$hash{ $key } = [ $i_rt > 0 ? @i_array : reverse @i_array ];
 	push @keys, $key;
     }
 
-    # align two regions to the ancestor 
+    ######################################	
+    # align two regions (to the ancestor) 
+    ###################################### 
 
     my $align = $self->dpalign(
 	# alignment 
 	-hash => \%hash, 
 	-order => [ @keys ], #$key0 must be first 
-	-reference => $key0,
+	-reference => $keys[0],
 	-global => 1,
 	# scoring 
 	-match =>  $args->{'-homology'} ,
@@ -1040,7 +1080,10 @@ sub syntenic_alignment {
 	-verbose => undef
 	);
 
+    ######################################	
     # strip the anc track and destroy objects. 
+    ######################################	
+
     # all this destruction may not be necessary since fixing the 
     # problems in the DESTROY method. Mayne enough to go out of scope.. 
 
@@ -1070,8 +1113,6 @@ sub syntenic_alignment {
 	pop(@clean) until ( ! @clean || $clean[-1]->{$keys[0]} || $clean[-1]->{$keys[1]} );
     } else { @clean = @{$align}; } 
 
-    # 
-
     unless ( @clean ) {
 	delete $hash{ $key0 };
 	undef( @anc_gene_order );
@@ -1080,6 +1121,10 @@ sub syntenic_alignment {
 	$genome->DESTROY();
 	return undef;
     }
+
+    ######################################	
+    # print output 
+    ######################################	
     
     &_print_align( [keys %hash], \@clean, 2 ) if $args->{'-verbose'};
     
@@ -1093,7 +1138,7 @@ sub syntenic_alignment {
     }
 
     ######################################	
-    # trim back to only regions in YGOB ancestor 
+    # compute scores 
     ######################################	
     
     my ($score,$hash) = 
@@ -1102,8 +1147,10 @@ sub syntenic_alignment {
     my ($span,$ohno) = 
 	$self->_testOhnoSpan(-align => \@clean, %{ $args } );
 
+    ######################################	
     # final scrubbing ...
-    
+    ######################################	
+
     SCRUB : {
 	delete $hash{ $key0 };
 	undef( @anc_gene_order );
