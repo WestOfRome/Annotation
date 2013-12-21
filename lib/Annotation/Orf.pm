@@ -1074,8 +1074,8 @@ sub syntenic_alignment {
 	-match =>  $args->{'-homology'} ,
 	-mismatch => -1e6,
 	-gap => 0,
-	-inversion => -100,
-	-trna => 100,
+	#-inversion => -100,
+	#-trna => 100,
 	# 
 	-verbose => undef
 	);
@@ -1091,7 +1091,7 @@ sub syntenic_alignment {
 	delete $hash{ $key0 };
 	undef( @anc_gene_order );
 	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
-	$genome->DESTROY();
+	$genome->DESTROY() if $genome;
 	return ($align,undef);
     }
     
@@ -1118,7 +1118,7 @@ sub syntenic_alignment {
 	undef( @anc_gene_order );
 	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
 	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @clean;
-	$genome->DESTROY();
+	$genome->DESTROY() if $genome;
 	return undef;
     }
 
@@ -1133,7 +1133,7 @@ sub syntenic_alignment {
 	undef( @anc_gene_order );
 	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
 	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @clean;
-	$genome->DESTROY();
+	$genome->DESTROY() if $genome;
 	return (\@clean,undef);
     }
 
@@ -1156,7 +1156,7 @@ sub syntenic_alignment {
 	undef( @anc_gene_order );
 	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @{ $align };
 	map { delete $_->{ $key0 } } grep { exists $_->{ $key0 } } @clean;
-	$genome->DESTROY();
+	$genome->DESTROY() if $genome;
     }
 
     return (\@clean,$score,$hash,$span,$ohno);
@@ -1293,10 +1293,14 @@ sub _score_syntenic_alignment {
 	$oldk=$k and next unless ($old->{$key1} || $old->{$key2} );
 	# 
 	$count{'KC'}++;
-	my $delta = abs( $old->{$key0}->data('ANC_POS') - $row->{$key0}->data('ANC_POS'))-1;  
-	my $pen = ($delta >= $args->{'-penalty'} ? 0 : $args->{'-penalty'} - $delta );
-	$count{'DELTA'} += $pen;
-	push @{$count{'ARRAY'}}, $pen;
+
+	if ( exists $old->{$key0} ) {
+	    my $delta = abs( $old->{$key0}->data('ANC_POS') - $row->{$key0}->data('ANC_POS'))-1;  
+	    my $pen = ($delta >= $args->{'-penalty'} ? 0 : $args->{'-penalty'} - $delta );
+	    $count{'DELTA'} += $pen;
+	    push @{$count{'ARRAY'}}, $pen;
+	}
+
 	$oldk=$k;
     }
     
