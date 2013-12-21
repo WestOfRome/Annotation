@@ -1671,6 +1671,8 @@ sub dpalign {
     #map { return undef if $#{$args->{'-hash'}->{uc($_)}}==-1 }  ($self->organism, $self->bound);
     
     my $fh = STDOUT;
+    my $overall_score;
+
     #######################
 
     # make some vars. 
@@ -1678,7 +1680,8 @@ sub dpalign {
     # align to. used for ohnolog detection 
 
     my %hash = %{$args->{'-hash'}};
-    my $ref = shift( @{$args->{'-order'}});     
+    my $ref = shift( @{$args->{'-order'}}); 
+    $ref = shift( @{$args->{'-order'}}) until exists $hash{$ref};     
     my @ref = map { {$ref => $_, REF => $_} } @{ $hash{$ref} }; # uc($_->organism)
     my @keys = ($ref);
 
@@ -1687,7 +1690,8 @@ sub dpalign {
 
     while ( my $add = shift @{$args->{'-order'}} ) {
 	print "\n>>>$add" if $args->{'-verbose'};
-
+	next unless exists $hash{$add};
+ 
 	# establish vars 
 
 	my @fwd = map { {uc($add) => $_, REF => $_} } @{ $hash{$add} }; # uc($_->organism)
@@ -1776,6 +1780,9 @@ sub dpalign {
 	print {$fh} $bestDir, $dirs{$bestDir}->{SCORE}, "($dirs{$other}->{SCORE})" if $args->{'-verbose'};
 	my $dp_mat = $dirs{$bestDir}->{MATRIX};
 	my @add = @{$dirs{$bestDir}->{ARRAY}};
+
+	$overall_score += $dirs{$bestDir}->{SCORE};
+	#print $add, $overall_score;
 	
 	# perform the traceback and redefine the ref so we can iterate 
 	
@@ -1858,7 +1865,7 @@ sub dpalign {
 	} 
     }
     
-    return (wantarray ? (\@ref, \@og) : \@ref );
+    return (wantarray ? (\@ref, \@og, $overall_score) : \@ref );
 }
 
 sub _init_dp_matrix {
@@ -1893,11 +1900,15 @@ sub _make_dp_scoring_matrix {
 		    my $ex = $i->exonerate2(-object => $j, -homolog => undef, -return => 'score', -model => lc($score) );
 		    $mat{ $i->name }{ $j->name } = ( $ex > 0 ? $ex : $mm );
 		} elsif ( $score =~ /ygob/i ) {
+		    $score = uc($score);
 		    # this is used by ohnologs2().
 		    # we use the YGOB raw bit score from the. 
 		    # MUST use $j component as the i component is a fake scaffold. 
 		    $mat{ $i->name }{ $j->name } =  
 			( $i->data($score) && ($i->data($score) eq $j->data($score)) ? $j->score($score) : $mm );
+		} elsif ( $score =~ /homol/i ) {
+		    my $scr = $i->homology( -object =>$j );
+		    $mat{ $i->name }{ $j->name } = ($scr > 0 ? $scr : $mm);
 		} else {
 		    # default. +1 for a match. 
 		    $mat{ $i->name }{ $j->name } = 
@@ -2428,6 +2439,7 @@ sub quality {
 
     my $key = 'QUALITY';
     my $fh = *STDOUT;
+    my $qtime = time;
 
     ##############################    
     # P2-ICEB-ULUR-AHUC-ALAK
@@ -2440,30 +2452,10 @@ sub quality {
 	$self->throw if $#ogs < $args->{'-nulldist'};
 	
 	my %hash;
-	foreach my $o ( sort { $a->_internal_id <=> $b->_internal_id } @ogs ) {
-	    
-	    #########################################
-	    # Depracated.  
-	    # The telomere distance is a really nice idea but too hard. 
-	    # %ID may need to be restored for non-Anc loci. 
-	    #########################################
-	    if ( 1==0 ) {
-		# index by telomere distance 	    
-		foreach my $i ( grep { $_->up->length >1e5} $o->_orthogroup ) {
-		    my $tdist = $i->telomereDistance;
-		    my $index = int( ($tdist + $args->{'-unit'} ) / $args->{'-unit'} );
-		    $index = 10 if $index > 10;
-		    push @{ $hash{'SYN'}{ $i->organism.$index } }, $i->synteny( -hyper => );
-		}	    
-		# for %ID we index by species pair 	    
-		foreach my $i ( sort {$a->organism cmp $b->organism} $o->_orthogroup ) {
-		    foreach my $j ( sort {$a->organism cmp $b->organism} $o->_orthogroup ) {
-			next unless $i->organism lt $j->organism;
-			my $tag = $i->organism.':'.$j->organism;
-			push @{$hash{'PID'}{ $tag }}, $i->bl2seq(-object => $j, -identity => 1);
-		    }
-		}
-	    }
+	foreach my $o ( sort { $a->_internal_id <=> $b->_internal_id } 
+			grep {$_->ygob} @ogs ) {
+
+	    # indexing by telomere distance code removed. 2013/12/14
 
 	    ######################################### 
 	    # qualifying criteria 
@@ -2492,7 +2484,8 @@ sub quality {
 	    my ( $score_syn, $mean_syn, $sd_syn ) = 
 		$self->synteny_matrix(
 		    -orfs => [ $o->_orthogroup ],
-		    -mode => 'nonaligned',
+		    -mode => 'ortho',
+		    -ancestor => $o->ygob,
 		    -score => 1
 		);
 	    push @{ $hash{'SYN'} }, $score_syn;
@@ -2501,11 +2494,17 @@ sub quality {
 
 	    my ($mean_ygob,$sd_ygob) = &_calcMeanSD( map { $_->logscore('ygob') } $o->_orthogroup );
 	    $sd_ygob=1 unless $sd_ygob >1;
-	    my $score_ygob = sprintf("%.1f", $mean_ygob/$sd_ygob);
-	    push @{ $hash{'YGOB'} }, -1*$score_ygob; # make +ve -- needed for Qnorm below 
-
+	    my $score_ygob = -1*sprintf("%.1f", $mean_ygob/$sd_ygob);
+	    push @{ $hash{'YGOB'} }, $score_ygob; # make +ve -- needed for Qnorm below 
+	    
+	    print {STDERR} (++$count, ($o->identify)[1], $score_syn, #$mean_syn, $sd_syn, 
+			 $score_ygob, #$mean_ygob,$sd_ygob
+			    (time - $qtime)
+	    ) if $args->{'-verbose'} >= 2; 
+	    $qtime = time;
+	    
 	    #print STDERR $mean_len, $score_syn, $score_ygob;
-	    last if ++$count >= $args->{'-nulldist'};
+	    last if $count >= $args->{'-nulldist'};
 	}
 
 	######################################### 
@@ -2583,6 +2582,9 @@ sub quality {
 	$self->throw unless $self->down->down->isa(ref( $args->{'-object'} ));	
 	my ($qual,$o) = ($self->{$key}, $args->{'-object'});
 
+	my $fam = $o->family;
+	my ($sgd,$fam,$gen) = $o->identify() unless $fam;
+
 	#################################	
 	# get data 
 	#################################
@@ -2592,10 +2594,12 @@ sub quality {
 	my ( $score_syn, $mean_syn, $sd_syn ) = 
 	    $self->synteny_matrix(
 		-orfs => [ $o->_orthogroup ],
-		-mode => 'nonaligned',
+		-mode => 'ortho',
+		-ancestor => ($fam || 'spoof'),
 		-score => 1
 	    );
-	
+	$score_syn = 0 unless $score_syn;
+
 	# homology 
 	
 	my ($mean_ygob,$sd_ygob) = &_calcMeanSD( map { $_->logscore('ygob') } $o->_orthogroup );
@@ -3385,6 +3389,7 @@ sub synteny_matrix {
     # ortholog   => syntenic_alignment + orhtolog 
     # paralog    => syntenic_alignment + paralog 
 
+    $args->{'-homology'} = 'YGOB' unless exists $args->{'-homology'};
     $args->{'-mode'} = 'nonaligned' unless exists $args->{'-mode'};
     $args->{'-sort'} = 'ogid' unless exists $args->{'-sort'};
     $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
@@ -3393,8 +3398,7 @@ sub synteny_matrix {
     # teast args 
     ########################################
 
-    $self->throw unless $args->{'-mode'} =~ /^n/i || 
-	(defined $args->{'-ancestor'} && $args->{'-ancestor'} =~ /^Anc_/);
+    $self->throw unless $args->{'-mode'} =~ /^n/i || defined $args->{'-ancestor'};
     $self->throw unless defined $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;
 
     ########################################
@@ -3412,7 +3416,8 @@ sub synteny_matrix {
 
     if ( $args->{'-verbose'} >=1 ) {
 	print {$fh} "\n>".$args->{'-ancestor'}, scalar(@orfs);
-	print {$fh} (qw(Gene Anc Evalue HYPERG LOSS OGID),undef, ( map {$_->shortname} @orfs ));
+	print {$fh} (qw(Gene Anc Evalue HYPERG LOSS Density OGID),
+		     undef, ( map {$_->shortname} @orfs ));
     }
 
     ########################################
@@ -3430,15 +3435,17 @@ sub synteny_matrix {
 	    if ( $args->{'-mode'} =~ /^n/i ) {
 		$score = 
 		    $orfs[$i]->synteny_conserved(
-			-object => $orfs[$j]
+			-object => $orfs[$j],
+			#-homology => $args->{'-homology'}
 		    );
 	    } elsif ( $args->{'-mode'} =~ /^[op]/i ) {
 		($align,$score,$hash) = # either an alignment (array of hashes) or hash
 		    $orfs[$i]->syntenic_alignment(
 			-sister => $orfs[$j],
 			-ancestor => $args->{'-ancestor'},
+			-homology => $args->{'-homology'},
 			-window => $args->{'-window'},
-			-clean => 1,
+			-clean => ($args->{'-ancestor'} ? 1 : 0),
 			-score => $args->{'-mode'},
 			-verbose => 0
 		    );
@@ -3458,25 +3465,29 @@ sub synteny_matrix {
 	    print {$fh} 
 	    ($orfs[$i]->sn, 
 	     (map {/(\d+\.\d+)/; $1} $orfs[$i]->family), $orfs[$i]->logscore('ygob'), 
-	     $orfs[$i]->hypergob,  $orfs[$i]->loss,
+	     $orfs[$i]->hypergob,  $orfs[$i]->loss, $orfs[$i]->density,
 	     $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
 	    print {$fh} 
 	    ($orfs[$#orfs]->sn, 
 	     (map {/(\d+\.\d+)/; $1} $orfs[$#orfs]->family), $orfs[$#orfs]->logscore('ygob'), 
-	     $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss, 
+	     $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss,  $orfs[$#orfs]->density,
 	     $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
 	     '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
 	}
     } # orf
 
-    # 
-
+    ######################################### 
+    # Produce an overall synteny score from PW scores
+    ######################################### 
+    
     if ( $args->{'-score'} ) {
 	my ($m,$sd) = &_calcMeanSD( @scores );
-	return ( sprintf("%.1f", $m/( $sd>0 ? $sd : 1 )), $m, $sd );
+	return ( sprintf("%.1f", $m/( $sd>1 ? $sd : 1 )), $m, $sd );
     }
-
+    
+    ######################################### 
     # 
+    ######################################### 
 
     if ( $args->{'-symmetrical'} || $args->{'-symmetric'} ) {
 	foreach my $i ( keys %synt ) {
