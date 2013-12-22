@@ -1572,7 +1572,8 @@ sub hmmer3 {
     
     # 
 
-    #print("$binary --tblout $tblout $args->{'-params'} @order &> /dev/null");
+    print("$binary --tblout $tblout $args->{'-params'} @order &> /dev/null")
+	if $args->{'-verbose'};
     system("$binary --tblout $tblout $args->{'-params'} @order &> /dev/null");
     $self->_cleanupfile($fasta);
 
@@ -1583,6 +1584,8 @@ sub hmmer3 {
     foreach my $line (split/\n/, `cat $tblout`) {
 	next if $line =~ /^\#/;
 	my ($target, $query, $evalue, $score, $bias, @others)=split/\s+/, $line;
+
+	print $line if $args->{'-verbose'};
 
 	last if $evalue > $args->{'-evalue'}; # max eval to record 
 	last if ($oldE && (( $evalue / ($oldE > 0 ? $oldE : $INFINITY )) > $args->{'-drop'})); # min drop 
@@ -2327,13 +2330,12 @@ sub _external_app {
     my $args = {@_};
     
     $args->{'-application'} = 'blast.formatdb' unless exists $args->{'-application'};
-    
     return $APPS{ $args->{'-application'} } if exists $APPS{ $args->{'-application'} };
 
     if ( $args->{'-application'} =~ /\w+\.(\w+)/ ) {          
         my $alt = $1;                                
         chomp(my $binary = `which $alt`);            
-        if ( $binary && -x $binary ) {               
+        if ( $binary && -e $binary && -x $binary ) {               
             $args->{'-application'} = $alt;          
         }                                            
     }
@@ -2343,7 +2345,7 @@ sub _external_app {
     $self->throw("Cannot locate $args->{'-application'} ($binary) - $!")
 	unless chomp(my $binary = `which $args->{'-application'}`);
     $self->throw("Binary not executable: $binary - $!") 
-        unless -x $binary;
+        unless -e $binary && -x $binary;
 
     $APPS{ $args->{'-application'} } = $binary;
 
