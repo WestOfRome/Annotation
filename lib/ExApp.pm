@@ -1578,14 +1578,17 @@ sub hmmer3 {
     $self->_cleanupfile($fasta);
 
     # 
-    
+
     my $oldE;
     my @hits;
     foreach my $line (split/\n/, `cat $tblout`) {
 	next if $line =~ /^\#/;
-	my ($target, $query, $evalue, $score, $bias, @others)=split/\s+/, $line;
+	my ($target, $ac1, $query, $ac2, $evalue, $score, $bias, @others)=split/\s+/, $line;
 
-	print $line if $args->{'-verbose'};
+	if (  $args->{'-verbose'} ) {
+	    print $line;
+	    print $target, $query, $evalue, $score, $bias;
+	}
 
 	last if $evalue > $args->{'-evalue'}; # max eval to record 
 	last if ($oldE && (( $evalue / ($oldE > 0 ? $oldE : $INFINITY )) > $args->{'-drop'})); # min drop 
@@ -1601,7 +1604,8 @@ sub hmmer3 {
 	    START => 1,
 	    STOP => 1000, # ugh 
 	    STRAND => 1
-	}; 
+	};
+ 
 	last if $#hits >= $args->{'-max_hits'}; # max hits to keep 
     }
     $self->_cleanupfile($tblout);
