@@ -1076,7 +1076,6 @@ sub syntenic_alignment {
 	-gap => 0,
 	#-inversion => -100,
 	#-trna => 100,
-	# 
 	-verbose => undef
 	);
 
