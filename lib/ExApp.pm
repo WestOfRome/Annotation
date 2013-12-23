@@ -1539,7 +1539,7 @@ sub hmmer3 {
     $args->{'-params'} = '' unless exists $args->{'-params'};
     $args->{'-bias'} = $INFINITY unless exists $args->{'-bias'};
     $args->{'-max_hits'} = 30 unless exists $args->{'-max_hits'};
-
+    
     # prepare binary 
     
     my $binary = 
