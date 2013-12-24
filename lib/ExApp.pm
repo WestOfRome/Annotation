@@ -973,7 +973,8 @@ sub phyml {
 	    ? $args->{'-outgroup'}
 	    : $self->outgroup(-object => $args->{'-object'}).''
 	    );
-	print {$fherr} "Outgroup!" and return undef unless length($id) > 1;
+	print {$fherr} "Outgroup!\n".$self->output(-string=>1) 
+	    and return undef unless length($id) > 1;
 	($dna,$aa) = $self->fetch(-id => $id, -relabel => 'Outg' );
 	print "Outgroup: $id" if $args->{'-verbose'};
     }
@@ -1187,7 +1188,7 @@ sub phyml {
 sub _parsePhymlStatsFile {
     my $file = shift;
     return undef unless -e $file;
-    print $file;
+    #print $file;
 
     local $/ = 'Montpellier';
     open(my $fh, $file);
