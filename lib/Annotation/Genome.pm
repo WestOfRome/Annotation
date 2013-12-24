@@ -2064,7 +2064,7 @@ sub ygob {
     allow learning of subtel synteny parameters that would allow 
     use of a machine-learning classifier (with internal regions 
     params learned from regions chosen by terminal-dist).
-    2. We do not controld the total number of subtelomeres in the 
+    2. We do not control the total number of subtelomeres in the 
     genome. In the event that the edges of all contigs or all of 
     small contigs tend to exists in low synteny arrested, they will 
     be labelled as SUBTEL.
@@ -2388,6 +2388,126 @@ sub _access_synteny_null_dist {
     return ( wantarray ? ($dist->{$value},$dist->{'TOTAL'}) : ($dist->{$value}/$dist->{'TOTAL'}) );
 }
 
+sub quality2 {
+    my $self = shift;
+    my $args = {@_};
+
+    ##############################    
+    # Defaults 
+    ##############################    
+
+    # run mode 
+    $args->{'-object'} = undef unless exists $args->{'-object'};
+    $args->{'-nulldist'} = $args->{'-null'} if exists $args->{'-null'};
+    $args->{'-nulldist'} = undef unless exists $args->{'-nulldist'};
+    # null set selection 
+    $args->{'-length_filter'} = .1 unless exists $args->{'-length_filter'};
+    # score normalization 
+    $args->{'-unit'} = 20; # unless exists $args->{'-unit'};
+    $args->{'-equalize'} = 1 unless exists $args->{'-equalize'};
+    # 
+    $args->{'-verbose'} = undef unless exists $args->{'-verbose'};
+    # bonus 
+    $args->{'-sowh'} = 20 unless exists  $args->{'-sowh'};
+
+    ##############################        
+    # param chencksing 
+    ##############################    
+    
+    $self->throw if $args->{'-object'} && $args->{'-nulldist'};
+
+    ##############################    
+    # set required vars 
+    ##############################    
+
+    my $key = 'QUALITY';
+    my $fh = *STDOUT;
+    my $qtime = time;
+
+    ##############################    
+    # P2-ICEB-ULUR-AHUC-ALAK
+    ##############################    
+
+    my $count=0;
+    if ( $args->{'-nulldist'} ) {
+
+	my @ogs;
+	foreach my $o ( sort { $a->_internal_id <=> $b->_internal_id } 
+			grep {$_->ygob} grep { $_->assign !~ /RNA/ } $self->orthogroups() ) {
+	    
+	    map { next unless $_->ygob eq $o->ygob } $o->orthogroup;
+	    #map { next unless $_->telomere >= 20 } $o->orthogroup;
+	    
+	    # look like complete genes... 
+	    
+	    my ($mean_len,$sd_len) = &_calcMeanSD( map {$_->length} $o->_orthogroup );
+	    next unless $sd_len/$mean_len < $args->{'-length_filter'};
+	    
+	    push @ogs, $o;
+	    last if $#ogs >= $args->{'-nulldist'};
+	}
+	$self->throw if $#ogs < $args->{'-nulldist'};
+
+	
+	######################################### 
+	# quality criteria 
+	######################################### 
+	  	
+	foreach my $og ( @ogs ) {
+	    
+	    #map { $_->output } $og->_orthogroup;
+
+	    #####################################
+	    # Homology based tree 
+	    #####################################
+	    
+	    # Choosing not to use phyml for 3 reasons : 
+	    # 1. We do not want to run the risk of not having an outgroup.  
+	    # 2. Too slow. 
+	    # 3. Model selection is a problem. 
+	    # my $tree = $og->phyml( -outgroup => $og->data('HOMOLOG'), -molecule => 'aa' );
+	    # my $tree = $og->phyml( -outgroup => undef, -molecule => 'aa' );
+	    # print $tree->{TREE};
+
+	    # Instead, we build a neighbour joining tree from a distance matrix
+
+	    #my %identity = 
+#		$self->identity_matrix(		    
+#		);
+
+	    # Synteny 	    
+	    
+	    my %distance = 
+		$self->synteny_matrix(
+		    -orfs => [ $og->_orthogroup ],
+		    #
+		    -ancestor => undef, #$o->ygob,
+		    -homology => 'homology',
+		    #
+		    -mode => 'ortho',
+		    -distance => 1,
+		    -verbose => 1
+		);
+	    my %distance = 
+		$self->synteny_matrix(
+		    -orfs => [ $og->_orthogroup ],
+		    #
+		    -ancestor => undef, #$o->ygob,
+		    -homology => 'homology',
+		    #
+		    -mode => 'ortho',
+		    -distance => 0,
+		    -verbose => 1
+		);
+
+	    exit;
+	}
+    }
+
+    exit;
+    return;
+}
+
 =head2 quality( -object => $orf, -nulldist => #samples, -equalize => 1|0) 
 
     Compute quality of Orthogroups based on population statistics. 
@@ -2464,7 +2584,7 @@ sub quality {
 	    # consistency on YGOB hit... 	    
 
 	    map { next unless $_->ygob eq $o->ygob } $o->orthogroup;
-	    #map { next unless $_->telomereDistance >= 20 } $o->orthogroup;
+	    #map { next unless $_->telomere >= 20 } $o->orthogroup;
 
 	    # look like complete genes... 
 
@@ -2484,8 +2604,11 @@ sub quality {
 	    my ( $score_syn, $mean_syn, $sd_syn ) = 
 		$self->synteny_matrix(
 		    -orfs => [ $o->_orthogroup ],
+		    #
+		    -ancestor => undef, #$o->ygob,
+		    -homology => 'homology',
+		    #
 		    -mode => 'ortho',
-		    -ancestor => $o->ygob,
 		    -score => 1
 		);
 	    push @{ $hash{'SYN'} }, $score_syn;
@@ -3391,15 +3514,22 @@ sub synteny_matrix {
 
     $args->{'-homology'} = 'YGOB' unless exists $args->{'-homology'};
     $args->{'-mode'} = 'nonaligned' unless exists $args->{'-mode'};
-    $args->{'-sort'} = 'ogid' unless exists $args->{'-sort'};
     $args->{'-window'} = 7 unless exists $args->{'-window'}; # used here AND in alignment method 
+    # 
+    $args->{'-score'} = 0 unless exists $args->{'-score'};
+    $args->{'-distance'} = 0 unless exists $args->{'-distance'};
+    $args->{'-symmetrical'} = 0 unless exists $args->{'-symmetrical'};
+    # 
+    $args->{'-sort'} = 'ogid' unless exists $args->{'-sort'};
+    $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
 
     ########################################
     # teast args 
     ########################################
 
-    $self->throw unless $args->{'-mode'} =~ /^n/i || defined $args->{'-ancestor'};
+    #$self->throw unless $args->{'-mode'} =~ /^n/i || defined $args->{'-ancestor'};
     $self->throw unless defined $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;
+    $self->throw if $args->{'-distance'} && $args->{'-mode'} !~ /^o/;
 
     ########################################
     # prep vars 
@@ -3409,17 +3539,17 @@ sub synteny_matrix {
     my $meth = $args->{'-sort'};
     my @orfs= sort { $b->$meth <=> $a->$meth } 
     map {$self->throw($_) unless /::/; $_ } @{$args->{'-orfs'}};    
-
+    
     ########################################
     # print pretty .. 
     ########################################
 
     if ( $args->{'-verbose'} >=1 ) {
 	print {$fh} "\n>".$args->{'-ancestor'}, scalar(@orfs);
-	print {$fh} (qw(Gene Anc Evalue HYPERG LOSS Density OGID),
-		     undef, ( map {$_->shortname} @orfs ));
+	print {$fh} (qw(Gene Anc Evalue HyperG LOSS Density OGID),
+		     undef, ( map {$_->sn} @orfs ));
     }
-
+    
     ########################################
     # iterate over all Orf pairs and compute 
     ########################################
@@ -3453,7 +3583,12 @@ sub synteny_matrix {
 	    
 	    #print $orfs[$i]->name, $orfs[$j]->name, $score;		
 	    $synt{ $orfs[$i]->name }{ $orfs[$j]->name } = $score;
-	    push @row, ( $args->{'-ascii'} ?  &_hypergob_ascii_visual($score) : $score);
+
+	    if (  $args->{'-ascii'} ) {
+		push @row, &_hypergob_ascii_visual($score);
+	    } elsif ( $args->{'-distance'} ) {
+		push @row,  (2*$args->{'-window'}+1-$score);
+	    } else { push @row, $score; } 
 	    push @scores, $score;
 	}
 	
@@ -3464,12 +3599,12 @@ sub synteny_matrix {
 	if ( $args->{'-verbose'} >=1 ) {
 	    print {$fh} 
 	    ($orfs[$i]->sn, 
-	     (map {/(\d+\.\d+)/; $1} $orfs[$i]->family), $orfs[$i]->logscore('ygob'), 
+	     (map {/(\d+\.\d+)/; $1} $orfs[$i]->ygob), $orfs[$i]->logscore('ygob'), 
 	     $orfs[$i]->hypergob,  $orfs[$i]->loss, $orfs[$i]->density,
 	     $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
 	    print {$fh} 
 	    ($orfs[$#orfs]->sn, 
-	     (map {/(\d+\.\d+)/; $1} $orfs[$#orfs]->family), $orfs[$#orfs]->logscore('ygob'), 
+	     (map {/(\d+\.\d+)/; $1} $orfs[$#orfs]->ygob), $orfs[$#orfs]->logscore('ygob'), 
 	     $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss,  $orfs[$#orfs]->density,
 	     $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
 	     '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
