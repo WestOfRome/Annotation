@@ -6700,7 +6700,7 @@ sub logscore {
 
 sub synscore { 
     my $self = shift;
-    my $key = shift;
+    my $key = uc(shift);
     $self->throw unless $key;
     return $self->data('___'.$key);
 }
