@@ -914,17 +914,20 @@ sub wise { #  avg 3.29s/call (for ~20Kb regions)
 sub phyml {
     my $self = shift;
     my $args = {@_}; 
-
+    
     # generic params 
     $args->{'-application'} = 'phyml' unless exists $args->{'-application'};
     $args->{'-object'} = [ $self->orthogroup ] unless exists $args->{'-object'};
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
+    $args->{'-molecule'} = 'codon' unless exists $args->{'-molecule'};
     # phyml params 
     $args->{'-speed'} = 2 unless exists $args->{'-speed'};
     $args->{'-boots'} = 0 unless exists $args->{'-boots'}; 
     #$args->{'-params'} = " -d nt -b $args->{'-boots'} -m HKY85 -f m -t e --quiet " 
-    $args->{'-params'} = " 0 i 1 $args->{'-boots'} HKY e e 4 e " 
-	unless exists $args->{'-params'};
+    $args->{'-params'} = ( $args->{'-molecule'} =~ /^[ap]/i 	
+			   ? " 1 i 1 $args->{'-boots'} JTT e 4 e " 
+			   : " 0 i 1 $args->{'-boots'} HKY e e 4 e " 
+	) unless exists $args->{'-params'};	
     # tree params 
     $args->{'-topology'} = $self->up->up->tree unless exists $args->{'-topology'};
     $args->{'-outgroup'} = 1 unless exists $args->{'-outgroup'};
@@ -934,15 +937,19 @@ sub phyml {
     $args->{'-pvalue'} = .05 unless exists $args->{'-pvalue'};
 
     my $fherr = \*STDOUT;
-
-    ###############
+    
+    ######################################### 
     # deal with params 
-
+    ######################################### 
+    
     $self->throw unless $args->{'-object'} && ref($args->{'-object'}) eq 'ARRAY';
     map { $self->throw unless $self->isa(ref($_)) } @{$args->{'-object'}};
     return undef unless $#{$args->{'-object'}} >= 1;
 
+    ######################################### 
     # get phyml set speed-based run params 
+    # -- currently disabled until we can upgrade phyml 
+    ######################################### 
 
     $self->throw unless my $binary = 
 	$self->_external_app(-application => $args->{'-application'});
@@ -955,7 +962,9 @@ sub phyml {
 	#$args->{'-params'} .= " --pinv 0 --nclasses 1 --search NNI ";	
     }
 
+    ######################################### 
     # get outgroup 
+    ######################################### 
 
     my ($id,$dna,$aa);
     if ( $args->{'-outgroup'} ) {
@@ -969,8 +978,10 @@ sub phyml {
 	print "Outgroup: $id" if $args->{'-verbose'};
     }
 
+    ######################################### 
     # require topology file ? 
     # add outgroup if required.
+    ######################################### 
 
     my ( $topfile);
     if ( $args->{'-topology'} ) {	
@@ -989,13 +1000,12 @@ sub phyml {
     }
 
     ###################################################
-    # basic tree drawing 
-    ###################################################
-
     # get an alignment
-
+    ###################################################
+    
     my $align = $self->align(	
 	-format => 'phylip', 
+	-molecule => $args->{'-molecule'},
 	-object => $args->{'-object'},
 	($args->{'-outgroup'} ? (-rawseq => [$dna,$aa]) : () ), # fasta formatted string 
 	-gaps => 0 # must be ungapped for SOWH 
@@ -1004,7 +1014,9 @@ sub phyml {
     my @info = split/\s+/, `head -1 $align`; # needed for SOWH 
     print {$fherr} "Gaps!" and return undef unless $info[2] >= $args->{'-min'};
 
-    # return tree 
+    ######################################### 
+    # basic tree drawing 
+    ######################################### 
 
     unless ( $args->{'-sowh'} ) {
 	my $cmdline = 
@@ -1013,7 +1025,7 @@ sub phyml {
 	print( $cmdline )  if $args->{'-verbose'};
 	system( $cmdline );    
 	
-	my ($treefile, $statsfile) = map { $align.$_ } qw(_phyml_tree.txt _phyml_stats.txt);
+	my ($treefile, $statsfile) = map { $align.$_ } qw(_phyml_tree.txt _phyml_stat.txt);
 	print {$fherr} "Tree/phyml 1!" and return undef unless -s $treefile > 50;
 	my $ml_param = _parsePhymlStatsFile( $statsfile );
 	chomp(my $ml_tree = `cat $treefile `);
@@ -1127,7 +1139,7 @@ sub phyml {
 	#    $rm eq $null ? " --inputtree $topfile " : undef
  	#    )." -n $args->{'-sowh'} $args->{'-params'} -i $sqfile &>/dev/null ";
 	my $simparams = $args->{'-params'};
-	$simparams =~ s/(0\s+i\s+)\d+/\1$args->{'-sowh'}/ || die($args->{'-params'});
+	$simparams =~ s/([01]\s+i\s+)\d+/\1$args->{'-sowh'}/ || die($args->{'-params'});
 	my $cmdline =  "$binary $sqfile  $simparams ".($topfile ? " $topfile " : "BIONJ")." ".
 	    ($rm eq 'lr' ? 'n' : 'y')." y &>/dev/null ";
 	print( '>'.$cmdline ) if $args->{'-verbose'};
