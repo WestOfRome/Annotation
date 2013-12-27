@@ -1869,7 +1869,7 @@ sub align {
     } else {
 	system("$fsa $prefix$aa  > $aa_aln 2> /dev/null ");
 	$align = ( $args->{'-application'} eq 'fsa' ? $aa_aln : $clustalFile );
-	die unless -e $align && -s $align;
+	$self->throw( $prefix.$aa ) unless -e $align && -s $align;
 	system("$revtrans $dna $align -O fasta -match name > $dna_aln "); # autodetects format 
 	$align = $dna_aln;
     }
@@ -1992,11 +1992,13 @@ sub paml {
     my $treeFile = $self->_writeNewickTree( @{$args->{'-object'}} ) if $args->{'-method'} eq 'codeml';
     my $ctrlFile = &_writePamlControlFile($args->{'-method'}, $alnFile, $pamlFile, $treeFile); # !! not a tmp file !! 
     
+    my @files = ($ctrlFile, $alnFile, ($args->{'-method'} eq 'codeml' ? $treeFile : ()));
+
     # run if we have what we need 
     # immediatley start to clean up 
 
     system("$paml &> /dev/null ") if (-s $alnFile && -s $ctrlFile);
-    map { $self->_cleanupfile($_) } ($ctrlFile, $alnFile, $treeFile); # delete 3 + close 1 
+    map { $self->_cleanupfile($_) } @files; # delete 3 + close 1 
     close($TMP_HANDLE); # we must still delete this 1 later 
 
     # parse output if it exists 
@@ -2337,7 +2339,7 @@ sub _tempfile {
 sub _cleanupfile {
     my $self = shift;
     my $file = shift;
-    die unless -e $file;
+    die($file) unless -e $file;
     unlink($file);
     return 1;
 }
