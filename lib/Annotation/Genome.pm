@@ -2471,8 +2471,8 @@ sub quality2 {
 
 	    # Instead, we build a neighbour joining tree from a distance matrix
 
-	    my $identity = 
-		$og->identity_matrix(
+	    my $sequence = 
+		$og->distance_matrix(
 		    #-orfs => [ $og->_orthogroup ],		    
 		    -metric => 'dS',
 		    -verbose => 1
@@ -2480,7 +2480,7 @@ sub quality2 {
 
 	    # Synteny 	    
 	    
-	    my $distance = 
+	    my $synteny = 
 		$self->synteny_matrix(
 		    -orfs => [ $og->_orthogroup ],
 		    #
@@ -2491,18 +2491,7 @@ sub quality2 {
 		    -distance => 1,
 		    -verbose => 1
 		);
-	    my %distance = 
-		$self->synteny_matrix(
-		    -orfs => [ $og->_orthogroup ],
-		    #
-		    -ancestor => undef, #$o->ygob,
-		    -homology => 'homology',
-		    #
-		    -mode => 'ortho',
-		    -distance => 0,
-		    -verbose => 1
-		);
-
+	    
 	    exit;
 	}
     }
