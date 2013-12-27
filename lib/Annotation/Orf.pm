@@ -907,6 +907,10 @@ sub _score_multiple_alignment_simple {
 }
 
 =head2 ancestral_alignment()
+
+    Similar to syntenic alignment but forces 
+    alignment to the ancestral genome. 
+
 =cut 
 
 sub ancetral_alignment {
@@ -1347,6 +1351,114 @@ sub _prune_from_ends {
     
     #print $#x, $i,  $#x-$i-$j+1, "($j)";
     return splice(@x, $i, $#x-$i-$j+1)
+}
+
+=head2 distance_matrix()
+=cut 
+
+sub distance_matrix {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-orfs'} = [ $self->_orthogroup ] unless exists $args->{'-orfs'};
+    $args->{'-metric'} = 'dS' unless exists $args->{'-metric'};
+    # 
+    $args->{'-score'} = 0 unless exists $args->{'-score'};
+    $args->{'-symmetrical'} = 0 unless exists $args->{'-symmetrical'};
+    # 
+    $args->{'-sort'} = 'ogid' unless exists $args->{'-sort'};
+    $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
+
+    $self->throw unless defined $args->{'-orfs'} && ref($args->{'-orfs'}) =~ /ARRAY/;
+
+    ########################################
+    # prep vars 
+    ########################################
+
+    my $fh = STDOUT;
+    my $meth = $args->{'-sort'};
+    my @orfs= sort { $b->$meth <=> $a->$meth } 
+    map {$self->throw($_) unless /::/; $_ } @{$args->{'-orfs'}};    
+    
+    ########################################
+    # print pretty .. 
+    ########################################
+
+    if ( $args->{'-verbose'} >=1 ) {
+	print {$fh} "\n>".$args->{'-metric'}, scalar(@orfs);
+	print {$fh} (qw(Gene Anc Evalue HyperG LOSS Density OGID),
+		     undef, ( map {$_->sn} @orfs ));
+    }
+
+    ########################################
+    # loop + work 
+    ########################################
+
+    my %matrix;
+    my @scores;
+    for my $i ( 0..($#orfs-1) ) {
+	my @row = ('-') x ($i+1);
+	for my $j ( $i+1 .. $#orfs ) {
+	    my $metric;
+	    if ( $args->{'-metric'} =~ /^[pi]/i ) {
+		my ($pid) = 100 - # convert to a distance 
+		    $orfs[$i]->bl2seq( 
+			-object => $orfs[$j],
+			-identity => 1
+		    );
+		$metric = $pid;
+	    } else {
+		my ($dN,$dS) = $orfs[$i]->paml( 
+		    -object => [ $orfs[$j] ] ,
+		    -method => 'yn00'
+		    );
+		$metric = ($args->{'-metric'} =~ /^[dk]s/i ? $dS : $dN);
+	    }
+	    $matrix{ $orfs[$i]->name }{ $orfs[$j]->name } = $metric;
+	    push @row, $metric;
+	}
+
+	########################################
+	# print pretty 
+	########################################
+	
+	if ( $args->{'-verbose'} >=1 ) {
+	    print {$fh} 
+	    ($orfs[$i]->sn, 
+	     (map {/(\d+\.\d+)/; $1} $orfs[$i]->ygob), $orfs[$i]->logscore('ygob'), 
+	     $orfs[$i]->hypergob,  $orfs[$i]->loss, $orfs[$i]->density,
+	     $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
+	    print {$fh} 
+	    ($orfs[$#orfs]->sn, 
+	     (map {/(\d+\.\d+)/; $1} $orfs[$#orfs]->ygob), $orfs[$#orfs]->logscore('ygob'), 
+	     $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss,  $orfs[$#orfs]->density,
+	     $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
+	     '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
+	}
+    }
+
+    ######################################### 
+    # Produce an overall synteny score from PW scores
+    ######################################### 
+    
+    if ( $args->{'-score'} ) {
+	my ($m,$sd) = &_calcMeanSD( @scores );
+	return ( sprintf("%.1f", $m/( $sd>1 ? $sd : 1 )), $m, $sd );
+    }
+    
+    ######################################### 
+    # 
+    ######################################### 
+
+    if ( $args->{'-symmetrical'} || $args->{'-symmetric'} ) {
+	foreach my $i ( keys %matrix ) {
+	    foreach my $j ( keys %{$matrix{$i} } ) {
+		$matrix{$j}{$i}=$matrix{$i}{$j};
+	    }
+	}
+    }
+
+    return \%matrix;
 }
 
 =head2 sisters(-window => 10)
