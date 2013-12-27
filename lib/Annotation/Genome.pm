@@ -2471,13 +2471,16 @@ sub quality2 {
 
 	    # Instead, we build a neighbour joining tree from a distance matrix
 
-	    #my %identity = 
-#		$self->identity_matrix(		    
-#		);
+	    my $identity = 
+		$og->identity_matrix(
+		    #-orfs => [ $og->_orthogroup ],		    
+		    -metric => 'dS',
+		    -verbose => 1
+		);
 
 	    # Synteny 	    
 	    
-	    my %distance = 
+	    my $distance = 
 		$self->synteny_matrix(
 		    -orfs => [ $og->_orthogroup ],
 		    #
@@ -3581,14 +3584,11 @@ sub synteny_matrix {
 		    );
 	    } else {$self->throw;}
 	    
-	    #print $orfs[$i]->name, $orfs[$j]->name, $score;		
-	    $synt{ $orfs[$i]->name }{ $orfs[$j]->name } = $score;
-
-	    if (  $args->{'-ascii'} ) {
-		push @row, &_hypergob_ascii_visual($score);
-	    } elsif ( $args->{'-distance'} ) {
-		push @row,  (2*$args->{'-window'}+1-$score);
-	    } else { push @row, $score; } 
+	    my $store = $score;
+	    $score = (  $args->{'-distance'} ? 2*$args->{'-window'}+1-$score : $score);
+	    
+	    $synt{ $orfs[$i]->name }{ $orfs[$j]->name } = $score;	    
+	    push @row, ($args->{'-ascii'} ? &_hypergob_ascii_visual($store) : $score);
 	    push @scores, $score;
 	}
 	
