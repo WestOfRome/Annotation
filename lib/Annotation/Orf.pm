@@ -4,8 +4,10 @@ package Annotation::Orf;
 
 use Annotation;
 use GlobalVars;
-use File::Copy;
 use YGOB;
+use Node;
+
+use File::Copy;
 use GD::SVG;
 
 @ISA = qw(Annotation);
@@ -1407,6 +1409,8 @@ sub distance_matrix {
 			-identity => 1
 		    );
 		$metric = $pid;
+	    } elsif ( $args->{'-debug'} ) {
+		$metric=sprintf("%.3f",rand());
 	    } else {
 		my ($dN,$dS) = $orfs[$i]->paml( 
 		    -object => [ $orfs[$j] ] ,
@@ -1425,15 +1429,17 @@ sub distance_matrix {
 	if ( $args->{'-verbose'} >=1 ) {
 	    print {$fh} 
 	    ($orfs[$i]->sn, 
-	     (map {/(\d+\.\d+)/; $1} $orfs[$i]->ygob), $orfs[$i]->logscore('ygob'), 
-	     $orfs[$i]->hypergob,  $orfs[$i]->loss, $orfs[$i]->density,
-	     $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', @row); 
+	     #(map {/(\d+\.\d+)/; $1} $orfs[$i]->ygob), $orfs[$i]->logscore('ygob'), 
+	     #$orfs[$i]->hypergob,  $orfs[$i]->loss, $orfs[$i]->density,
+	     #$orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', 
+	     @row); 
 	    print {$fh} 
 	    ($orfs[$#orfs]->sn, 
-	     (map {/(\d+\.\d+)/; $1} $orfs[$#orfs]->ygob), $orfs[$#orfs]->logscore('ygob'), 
-	     $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss,  $orfs[$#orfs]->density,
-	     $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
-	     '|', (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
+	     #(map {/(\d+\.\d+)/; $1} $orfs[$#orfs]->ygob), $orfs[$#orfs]->logscore('ygob'), 
+	     #$orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss,  $orfs[$#orfs]->density,
+	     #$orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
+	     #'|', 
+	     (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
 	}
     }
 
@@ -1468,7 +1474,7 @@ sub neighbour_joining {
     my $self = shift;
     my $args = {@_};
     
-    $self->throw unless $args->{'-matrix'} && ref($args->{'-matrix'}) eq 'HASH';
+    $self->throw unless $args->{'-matrix'} && ref($args->{'-matrix'}) eq 'HASH'; #<<
     $args->{'-verbose'}=0 unless exists $args->{'-verbose'};
 
     ###################################
@@ -1478,7 +1484,7 @@ sub neighbour_joining {
     my $D = $args->{'-matrix'};
     foreach my $key ( keys %{$D} ) {
 	#map { print $key,$_,$D->{$key}->{$_} } keys %{$D->{$key}};
-	map { $self->throw unless $D->{$key}->{$_}==$D->{$_}->{$key} } keys %{$D->{$key}};
+	map { $self->throw unless $D->{$key}->{$_}==$D->{$_}->{$key} } keys %{$D->{$key}}; # <<
     }
 
     ###################################
@@ -1486,14 +1492,31 @@ sub neighbour_joining {
     ###################################
 
     my $number_taxa = scalar(keys %{$D});
-    return() if $number_taxa <= 2; 
+    return() if $number_taxa <= 2; #<<
 
     ###################################
     # Set up basic vars
     ###################################
 
     my $fh = STDERR;
-    my $node = map {$_ => undef} qw(ROOT ANCESTOR LEFT RIGHT LENGTH BOOTS);
+
+    ###################################
+    # Prepare a return data structure 
+    ###################################
+
+    my $root = Node->new(
+	ROOT => 3, # trifurcating 
+	NAME => 'Root'
+	);
+    foreach my $otu ( keys %{$D} ) {
+	my $node = Node->new(
+	    NAME => $otu,
+	    ROOT => 0,
+	    BRANCH_LENGTH => -$INFINITY,
+	    BOOTSTRAPS => 0
+	    );
+	$root->add( -object => $node );
+    }
 
     ###################################
     # Iterate until all we attain a trifurcating root
@@ -1508,17 +1531,17 @@ sub neighbour_joining {
 	
 	my (%row_totals, %col_totals);
 	foreach my $i ( keys %{$D} ) {
-	    foreach my $j ( keys %{$D->{$i}} ) {
-		$row{$i} += $D->{$i}->{$j};
-		$col{$j} += $D->{$i}->{$j};
+	    foreach my $j ( grep {$_ ne $i} keys %{$D} ) {		
+		$row_totals{$i} += $D->{$i}->{$j};
+		$col_totals{$j} += $D->{$i}->{$j};
 	    }
 	}
-
+	
 	# STEP 1 
 	# Identify the OTUs to join by finding the minimum
 	# of the Q matrix. Derive Q from D using Equation 1 
 	# from  Gascuel and Steel 2006.
-
+	
 	my ($f,$g) = $self->_Q_matrix_minimum( $D, \%row_totals, \%col_totals, $number_taxa );
 
 	# STEP 2
@@ -1528,21 +1551,41 @@ sub neighbour_joining {
 	# Mol. Biol. Evol. 23(11):1997–2000. 2006
 	
 	my $dist_fg = $D->{ $f }->{ $g };
-	my $dist_fu = 
+	my $dist_fu = sprintf("%.3f", 
 	    ( 0.5 * $dist_fg ) + 
 	    (( 0.5 * 1/($number_taxa-2) ) * 	     
-	     ( ($row_totals{$f} -  $dist_fg ) - ($col_totals{$g} -  $dist_fg ) ));
-	my $dist_gu = 
-	    ( 0.5 * $dist_fg ) + 
-	    (( 0.5 * 1/($number_taxa-2) ) * 
-	     ( ($row_totals{$g} - $dist_fg) - ($col_totals{$f} - $dist_fg) ));
+	     ( ($row_totals{$f} -  $dist_fg ) - ($col_totals{$g} -  $dist_fg ) ))
+	    );
+	my $dist_gu = $dist_fg - $dist_fu;
 	
 	# pretty print .. 
 
 	my $new_node = 'Node_'.(++$node_count).'.'.$node_count; # Sbay_contig.index	
 	print {$fh} ">".$number_taxa, $f,$g,$dist_fg, $new_node,$dist_fu,$dist_gu 
 	    if $args->{'-verbose'};
-	$self->throw unless $dist_fg = ($dist_fu + $dist_gu);	
+	
+	# update datastructure 
+
+	my ($f_node) = grep { $_->name eq $f } $root->stream;
+	my ($g_node) = grep { $_->name eq $g } $root->stream;
+	my $u_node = Node->new(
+	    ROOT => 0,
+	    NAME => $new_node,
+	    BRANCH_LENGTH => ($dist_fg - ($dist_gu + $dist_fu))/2,
+	    BOOTSTRAPS => 0
+	    );
+	# 
+	my $ancestor = $f_node->ancestor;
+	$self->throw unless $f_node->ancestor eq $g_node->ancestor;
+	$ancestor->add( -object => $u_node );
+	#
+	$ancestor->remove( -object => $f_node );
+	$u_node->add( -object => $f_node );
+	$f_node->branch_length( $dist_fu );
+	# 
+	$ancestor->remove( -object => $g_node );
+	$u_node->add( -object => $g_node );
+	$g_node->branch_length( $dist_gu );
 	
 	# STEP 3 
 	# Update D matrix and iterate the process : 
@@ -1553,7 +1596,9 @@ sub neighbour_joining {
 
 	foreach my $k ( grep {!/^[$f|$g]$/} keys %{$D} ) {
 	    $D->{$k}->{$new_node} = # calculate new distance 
-		( 0.5 * ( $D->{$k}->{$f} + $D->{$k}->{$g} - $dist_fg) );
+		0.5 * ( $D->{$k}->{$f} - $dist_fu ) +
+		0.5 * ( $D->{$k}->{$g} - $dist_gu );
+		#( 0.5 * ( $D->{$k}->{$f} + $D->{$k}->{$g} - $dist_fg) );
 	    $D->{$new_node}->{$k} = $D->{$k}->{$new_node}; # make symmetrical 
 	}
 	foreach my $remove ( $f, $g ) {
@@ -1563,19 +1608,52 @@ sub neighbour_joining {
 	    map { delete $D->{$retain}->{$_} } ($f,$g);
 	}
 	$number_taxa = scalar(keys %{$D});
-
+	
 	#
 
 	if ( $args->{'-verbose'} >= 2 ) {
-	    print {$fh} "\nMATRIX\n$number_taxa:", keys %{$D};
+	    print {$fh} "\nMATRIX\t$number_taxa\n", keys %{$D};
 	    foreach my $i (keys %{$D} ) {
 		print {$fh} $i, map { $D->{$i}->{$_} } (keys %{$D} );
 	    }
 	}
     }
 
+    ###################################
+    # Final distances 
+    ###################################
+    # 1. A+B = X
+    # 2. A+C = Y
+    # 3. B+C = Z
+    # 4. A + (Z-C) = X     [1 & 3]
+    # 5. A - C = X - Z     [4]
+    # 6. A = (X - Z + Y)/2 [5 & 2]
+    # 7. B = X - A         [6 & 1]
+
+    my @label = keys %{$D};
+    my @dists = (3 x undef);
+    
+    $dist[ 0 ] = ( $D->{ $label[0] }->{ $label[1] } + 
+		   $D->{ $label[0] }->{ $label[2] } - 
+		   $D->{ $label[2] }->{ $label[1] } ) * .5;
+    $dist[ 1 ] = $D->{ $label[0] }->{ $label[1] } - $dist[0];
+    $dist[ 2 ] = $D->{ $label[0] }->{ $label[2] } - $dist[0];
+
+    print @dist;
+    
+    for my $i ( 0..$#label ) {
+	my ($node) = grep { $_->name eq $label[$i] } $root->stream;
+	$node->branch_length( $dist[ $i ] );
+    }
+
+    ###################################
+    # 
+    ###################################
+
+    $root->print if $args->{'-verbose'};
     exit;
-    return $nj;
+
+    return $root;
 }
 
 sub _Q_matrix_minimum {
