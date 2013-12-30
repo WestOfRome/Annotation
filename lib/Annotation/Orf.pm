@@ -92,7 +92,7 @@ sub DESTROY {
 
     START => coord, 
     STOP => coord,
-    STRAND => �1,
+    STRAND => ±1,
 
     # not required 
 
@@ -1459,6 +1459,179 @@ sub distance_matrix {
     }
 
     return \%matrix;
+}
+
+=head2 neighbour_joining()
+=cut
+
+sub neighbour_joining {
+    my $self = shift;
+    my $args = {@_};
+    
+    $self->throw unless $args->{'-matrix'} && ref($args->{'-matrix'}) eq 'HASH';
+    $args->{'-verbose'}=0 unless exists $args->{'-verbose'};
+
+    ###################################
+    # Ensure matrix is well formed 
+    ###################################
+
+    my $D = $args->{'-matrix'};
+    foreach my $key ( keys %{$D} ) {
+	#map { print $key,$_,$D->{$key}->{$_} } keys %{$D->{$key}};
+	map { $self->throw unless $D->{$key}->{$_}==$D->{$_}->{$key} } keys %{$D->{$key}};
+    }
+
+    ###################################
+    # Basic calculations + early termination 
+    ###################################
+
+    my $number_taxa = scalar(keys %{$D});
+    return() if $number_taxa <= 2; 
+
+    ###################################
+    # Set up basic vars
+    ###################################
+
+    my $fh = STDERR;
+    my $node = map {$_ => undef} qw(ROOT ANCESTOR LEFT RIGHT LENGTH BOOTS);
+
+    ###################################
+    # Iterate until all we attain a trifurcating root
+    ###################################
+
+    my $node_count=0;
+    until ( $number_taxa <= 3 ) {
+	
+	###################################
+	# calculate row and column sums 
+	###################################
+	
+	my (%row_totals, %col_totals);
+	foreach my $i ( keys %{$D} ) {
+	    foreach my $j ( keys %{$D->{$i}} ) {
+		$row{$i} += $D->{$i}->{$j};
+		$col{$j} += $D->{$i}->{$j};
+	    }
+	}
+
+	# STEP 1 
+	# Identify the OTUs to join by finding the minimum
+	# of the Q matrix. Derive Q from D using Equation 1 
+	# from  Gascuel and Steel 2006.
+
+	my ($f,$g) = $self->_Q_matrix_minimum( $D, \%row_totals, \%col_totals, $number_taxa );
+
+	# STEP 2
+	# Join f and g through u that connects to the root. 
+	# Define u by computing the distances to f,g. 
+	# Gascuel and Steele, 2006. Equation 2.
+	# Mol. Biol. Evol. 23(11):1997–2000. 2006
+	
+	my $dist_fg = $D->{ $f }->{ $g };
+	my $dist_fu = 
+	    ( 0.5 * $dist_fg ) + 
+	    (( 0.5 * 1/($number_taxa-2) ) * 	     
+	     ( ($row_totals{$f} -  $dist_fg ) - ($col_totals{$g} -  $dist_fg ) ));
+	my $dist_gu = 
+	    ( 0.5 * $dist_fg ) + 
+	    (( 0.5 * 1/($number_taxa-2) ) * 
+	     ( ($row_totals{$g} - $dist_fg) - ($col_totals{$f} - $dist_fg) ));
+	
+	# pretty print .. 
+
+	my $new_node = 'Node_'.(++$node_count).'.'.$node_count; # Sbay_contig.index	
+	print {$fh} ">".$number_taxa, $f,$g,$dist_fg, $new_node,$dist_fu,$dist_gu 
+	    if $args->{'-verbose'};
+	$self->throw unless $dist_fg = ($dist_fu + $dist_gu);	
+	
+	# STEP 3 
+	# Update D matrix and iterate the process : 
+	# 1. Remove f and g from the matrix
+	# 2. Add u distances to the matrix 
+	# Gascuel and Steele, 2006. Equation 3.
+	# Mol. Biol. Evol. 23(11):1997–2000. 2006
+
+	foreach my $k ( grep {!/^[$f|$g]$/} keys %{$D} ) {
+	    $D->{$k}->{$new_node} = # calculate new distance 
+		( 0.5 * ( $D->{$k}->{$f} + $D->{$k}->{$g} - $dist_fg) );
+	    $D->{$new_node}->{$k} = $D->{$k}->{$new_node}; # make symmetrical 
+	}
+	foreach my $remove ( $f, $g ) {
+	    delete $D->{$remove};
+	}
+	foreach my $retain ( grep {$_ ne $new_node} keys %{$D} ) {
+	    map { delete $D->{$retain}->{$_} } ($f,$g);
+	}
+	$number_taxa = scalar(keys %{$D});
+
+	#
+
+	if ( $args->{'-verbose'} >= 2 ) {
+	    print {$fh} "\nMATRIX\n$number_taxa:", keys %{$D};
+	    foreach my $i (keys %{$D} ) {
+		print {$fh} $i, map { $D->{$i}->{$_} } (keys %{$D} );
+	    }
+	}
+    }
+
+    exit;
+    return $nj;
+}
+
+sub _Q_matrix_minimum {
+    my ($self,$D,$row,$col,$taxa) = @_;
+    
+    map { $self->throw unless ref($_) eq 'HASH' } ($D,$row,$col);
+    $self->throw unless $taxa && $taxa >0 && $taxa <1e2;
+    $self->throw if $taxa <= 3;
+
+    ###################################
+    # Initialize matrix
+    ###################################
+
+    my $Q;
+    foreach my $key ( keys %{$D} ) {
+	map { $Q->{$key}->{$_}=$INFINITY } keys %{$D};
+    }
+
+    ###################################
+    # Equation 1
+    # Mol. Biol. Evol. 23(11):1997–2000. 2006
+    # http://mbe.oxfordjournals.org/content/23/11/1997.full.pdf+html
+    # Gascuel and Steel
+    ###################################
+
+    foreach my $i ( keys %{$D} ) {
+	foreach my $j ( grep {$_ ne $i} keys %{$D->{$i}} ) {
+	    $Q->{$i}->{$j} = 
+		(($taxa - 2)*$D->{$i}->{$j}) - 
+		($row->{$i} - $D->{$i}->{$j}) - 
+		($col->{$j} - $D->{$i}->{$j}) ; 
+	}
+
+	if ( 1==2 ) {
+	    print 'Q',$i, map { 
+		($Q->{$i}->{$_}==$INFINITY 
+		 ? $INFINITY 
+		 : sprintf("%.2f",$Q->{$i}->{$_}) ) } keys %{$D};
+	}
+    }
+
+    # get the minimum of the Q matrix
+    # --> nodes to join 
+
+    my @labels=keys %{$Q};
+    my ($min_i,$min_j)=@labels[0..1];
+    for my $i (0..($#labels-1)) {
+	for my $j ( ($i+1)..$#labels ) {
+	    if ( $Q->{ $labels[$i] }->{ $labels[$j] } <
+		 $Q->{ $labels[$min_i] }->{ $labels[$min_j] } ) {
+		($min_i,$min_j)=($i,$j);
+	    }
+	}
+    }
+    
+    return ($labels[$min_i],$labels[$min_j]);
 }
 
 =head2 sisters(-window => 10)
