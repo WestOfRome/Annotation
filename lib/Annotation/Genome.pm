@@ -2475,8 +2475,11 @@ sub quality2 {
 		$og->distance_matrix(
 		    #-orfs => [ $og->_orthogroup ],		    
 		    -metric => 'dS',
-		    -verbose => 1
+		    -verbose => 1,
+		    -symmetric => 1
 		);
+
+	    $og->neighbour_joining( -matrix => $sequence, -verbose => 1 );
 
 	    # Synteny 	    
 	    
@@ -2489,7 +2492,8 @@ sub quality2 {
 		    #
 		    -mode => 'ortho',
 		    -distance => 1,
-		    -verbose => 1
+		    -verbose => 1,
+		    -symmetric => 1
 		);
 	    
 	    exit;
