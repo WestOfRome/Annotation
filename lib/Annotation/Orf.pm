@@ -1429,16 +1429,16 @@ sub distance_matrix {
 	if ( $args->{'-verbose'} >=1 ) {
 	    print {$fh} 
 	    ($orfs[$i]->sn, 
-	     #(map {/(\d+\.\d+)/; $1} $orfs[$i]->ygob), $orfs[$i]->logscore('ygob'), 
-	     #$orfs[$i]->hypergob,  $orfs[$i]->loss, $orfs[$i]->density,
-	     #$orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', 
+	     (map {/(\d+\.\d+)/; $1} $orfs[$i]->ygob), $orfs[$i]->logscore('ygob'), 
+	     $orfs[$i]->hypergob,  $orfs[$i]->loss, $orfs[$i]->density,
+	     $orfs[$i]->ogid.($orfs[$i]->ohnolog ? '*' : ''), '|', 
 	     @row); 
 	    print {$fh} 
 	    ($orfs[$#orfs]->sn, 
-	     #(map {/(\d+\.\d+)/; $1} $orfs[$#orfs]->ygob), $orfs[$#orfs]->logscore('ygob'), 
-	     #$orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss,  $orfs[$#orfs]->density,
-	     #$orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
-	     #'|', 
+	     (map {/(\d+\.\d+)/; $1} $orfs[$#orfs]->ygob), $orfs[$#orfs]->logscore('ygob'), 
+	     $orfs[$#orfs]->hypergob, $orfs[$#orfs]->loss,  $orfs[$#orfs]->density,
+	     $orfs[$#orfs]->ogid.($orfs[$#orfs]->ohnolog ? '*' : ''), 
+	     '|', 
 	     (('-') x scalar(@orfs))) if $i == ($#orfs-1);		    
 	}
     }
@@ -1467,7 +1467,17 @@ sub distance_matrix {
     return \%matrix;
 }
 
-=head2 neighbour_joining()
+=head2 neighbour_joining( -matrix => \%sqr_dist_mat, -topology => 0|1,
+    -verbose => 0|1 )
+
+    Reconstruct a neighbour joining tree from a distance matrix. 
+    Matrix must be a symmetric (square) distance matrix and can have any units. 
+    
+    The return value is a node object that is the center of an 
+    unrooted trifurcating tree. 
+
+    If -topology is true we force fit to the Saccharomyces sensu stricto topolgy. 
+
 =cut
 
 sub neighbour_joining {
@@ -1476,6 +1486,7 @@ sub neighbour_joining {
     
     $self->throw unless $args->{'-matrix'} && ref($args->{'-matrix'}) eq 'HASH'; #<<
     $args->{'-verbose'}=0 unless exists $args->{'-verbose'};
+    $args->{'-topology'}=0 unless exists $args->{'-topology'};
 
     ###################################
     # Ensure matrix is well formed 
@@ -1499,6 +1510,13 @@ sub neighbour_joining {
     ###################################
 
     my $fh = STDERR;
+    
+    # this is a hack...
+
+    my @force_topology = (
+	[ (grep {/Scer/} keys %{$D}), (grep {/Spar/} keys %{$D}) ],
+	[ (grep {/Smik/} keys %{$D}), 'Node_1.1' ]
+	);
 
     ###################################
     # Prepare a return data structure 
@@ -1542,8 +1560,12 @@ sub neighbour_joining {
 	# of the Q matrix. Derive Q from D using Equation 1 
 	# from  Gascuel and Steel 2006.
 	
-	my ($f,$g) = $self->_Q_matrix_minimum( $D, \%row_totals, \%col_totals, $number_taxa );
-
+	my ($f,$g) = (
+	    $args->{'-topology'} == 1 # force topology true  
+	    ? @{ $force_topology[ $node_count ]}
+	    : $self->_Q_matrix_minimum( $D, \%row_totals, \%col_totals, $number_taxa ) 
+	    );
+	
 	# STEP 2
 	# Join f and g through u that connects to the root. 
 	# Define u by computing the distances to f,g. 
@@ -1638,8 +1660,6 @@ sub neighbour_joining {
 		   $D->{ $label[2] }->{ $label[1] } ) * .5;
     $dist[ 1 ] = $D->{ $label[0] }->{ $label[1] } - $dist[0];
     $dist[ 2 ] = $D->{ $label[0] }->{ $label[2] } - $dist[0];
-
-    print @dist;
     
     for my $i ( 0..$#label ) {
 	my ($node) = grep { $_->name eq $label[$i] } $root->stream;
@@ -1650,9 +1670,8 @@ sub neighbour_joining {
     # 
     ###################################
 
-    $root->print if $args->{'-verbose'};
-    exit;
-
+    $root->newick( -print => $args->{'-verbose'} );
+    
     return $root;
 }
 
