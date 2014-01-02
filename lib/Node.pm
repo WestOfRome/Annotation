@@ -181,17 +181,43 @@ sub remove {
 # IO
 #########################################
 
-sub print {
+=head2 newick( -screen => [0|1], -file => [undef|name], -process => 0|1 )
+
+    Returns tree (or subtree) as a newick format text string or 
+    an array ref of branchlengths. The latter makes wild assumptions
+    and is not generalized for now. 
+
+    With options will optionally also write screen and file. 
+
+    e.g. (Skud_1.2:0.0136875,Sbay_1.5:0.0269125,((Scer_1.22:0.005,
+    Spar_1.6:0.0054):0.008,Smik_1.4:0.0152):0.0035375);
+
+=cut 
+
+sub newick {
     my $self = shift;
     my $args = {@_};
 
-    my $fh = $args->{'-fh'} || STDOUT;
-    
+    my $fh = STDOUT;
+
     my @data = $self->_write_tree_helper;
     my $string = join( ',', @data ).";" ;
+    
+    print {$fh} $string if $args->{'-screen'}==1 || $args->{'-print'}==1;
 
-    print {$fh} $string;
-    exit;
+    if ( defined $args->{'-file'} ) {
+	my $file = (! -e $args->{'-file'} && $args->{'-file'} =~ /\.nwk$/ 
+		    ? $args->{'-file'}.'.nwk' 
+		    : $args->{'-file'});
+	
+	open(my $fh2, $file);
+	print {$fh2} $string;
+	close $fh2
+    } 
+
+    if ( $args->{'-process'} ) {
+    }
+
     return $string;
 }
 
