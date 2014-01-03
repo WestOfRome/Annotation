@@ -2388,6 +2388,50 @@ sub _access_synteny_null_dist {
     return ( wantarray ? ($dist->{$value},$dist->{'TOTAL'}) : ($dist->{$value}/$dist->{'TOTAL'}) );
 }
 
+sub _quality2_helper_function {
+    my $self = shift;
+    my $og = shift;
+
+    # Homology based tree #######################################
+    # We build a neighbour joining tree from a distance matrix.
+    # Choosing not to use phyml for 3 reasons : 
+    # 1. We do not want to run the risk of not having an outgroup.  
+    # 2. Too slow. 
+    # 3. Model selection is a problem. 
+    # my $tree = $og->phyml( -outgroup => $og->data('HOMOLOG'), -molecule => 'aa' );
+    # my $tree = $og->phyml( -outgroup => undef, -molecule => 'aa' );
+    # print $tree->{TREE};
+
+    my @data;
+    
+    my $seq = $og->distance_matrix(-metric => 'dN',-symmetric => 1);		
+    my $nj = $og->neighbour_joining( -matrix => $seq, -topology => 1);
+    my $bl_seq = $nj->newick( -process => 1 );
+    my $sum;
+    map { $sum+=$_ } @{$bl_seq};
+    return () unless $sum;
+    push @data, $sum, (map { $_ / $sum } @{$bl_seq});
+
+    # synteny 
+	    
+    my $syn = $self->synteny_matrix(
+	-orfs => [ $og->_orthogroup ],
+	-ancestor => undef, #$o->ygob,
+	-homology => 'homology',
+	-mode => 'ortho',
+	-distance => 1,
+	-symmetric => 1
+	);	    
+    my $nj = $og->neighbour_joining( -matrix => $syn, -topology => 1);
+    my $bl_syn = $nj->newick( -process => 1 );
+    my $sum;
+    map { $sum+=$_ } @{$bl_syn};
+    return () unless $sum;
+    push @data, $sum, (map { $_ / $sum } @{$bl_syn});
+    
+    return @data;
+}
+
 sub quality2 {
     my $self = shift;
     my $args = {@_};
@@ -2403,12 +2447,10 @@ sub quality2 {
     # null set selection 
     $args->{'-length_filter'} = .1 unless exists $args->{'-length_filter'};
     # score normalization 
-    $args->{'-unit'} = 20; # unless exists $args->{'-unit'};
-    $args->{'-equalize'} = 1 unless exists $args->{'-equalize'};
+    $args->{'-error_model'} = 'both' unless exists $args->{'-error_model'};
+    $args->{'-error_rate'} = 0.5 unless exists $args->{'-error_rate'};
     # 
     $args->{'-verbose'} = undef unless exists $args->{'-verbose'};
-    # bonus 
-    $args->{'-sowh'} = 20 unless exists  $args->{'-sowh'};
 
     ##############################        
     # param chencksing 
@@ -2423,6 +2465,8 @@ sub quality2 {
     my $key = 'QUALITY';
     my $fh = *STDOUT;
     my $qtime = time;
+    my $branches = (2 * (scalar($self->bound)+1)) -3; # 2n-3 
+    my @species = map { uc($_) } ($self->organism, $self->bound);
 
     ##############################    
     # P2-ICEB-ULUR-AHUC-ALAK
@@ -2431,74 +2475,93 @@ sub quality2 {
     my $count=0;
     if ( $args->{'-nulldist'} ) {
 
-	my @ogs;
-	foreach my $o ( sort { $a->_internal_id <=> $b->_internal_id } 
-			grep {$_->ygob} grep { $_->assign !~ /RNA/ } $self->orthogroups() ) {
-	    
-	    map { next unless $_->ygob eq $o->ygob } $o->orthogroup;
-	    #map { next unless $_->telomere >= 20 } $o->orthogroup;
-	    
-	    # look like complete genes... 
-	    
-	    my ($mean_len,$sd_len) = &_calcMeanSD( map {$_->length} $o->_orthogroup );
-	    next unless $sd_len/$mean_len < $args->{'-length_filter'};
-	    
-	    push @ogs, $o;
-	    last if $#ogs >= $args->{'-nulldist'};
-	}
-	$self->throw if $#ogs < $args->{'-nulldist'};
+	##############################    
+	# obtain a gene set to work with 
+	##############################    
 
-	
+	my (@ogs, %seen);
+      CAND: foreach my $x ( #sort { $a->_internal_id <=> $b->_internal_id } 	  
+	  grep {$_->ohnolog->orthogroup} grep { $_->ohnolog }
+	  grep {$_->ygob} grep { $_->assign !~ /RNA/ } $self->orthogroups() ) {
+	  
+	  next CAND unless $x->ygob eq $x->ohnolog->ygob;
+
+	  foreach my $o ( $x, $x->ohnolog ) {	      
+	      map { next CAND unless $_->ygob eq $o->ygob } $o->orthogroup;	      
+	      map { next CAND unless $_->telomere >= 20 } $o->orthogroup;	      
+	      my ($mean_len,$sd_len) = &_calcMeanSD( map {$_->length} $o->_orthogroup );
+	      next CAND unless $sd_len/$mean_len < $args->{'-length_filter'};
+	  }
+	  
+	  push @ogs, $x unless exists $seen{ $x->ohnolog->unique_id };	  
+	  $seen{ $x->unique_id }++;
+	  last if $#ogs >= $args->{'-nulldist'};
+      }	
+	$self->throw( $#ogs ) if $#ogs < $args->{'-nulldist'};
+
 	######################################### 
-	# quality criteria 
+	# construct data for native OGs and randomizations 
 	######################################### 
-	  	
-	foreach my $og ( @ogs ) {
-	    
-	    #map { $_->output } $og->_orthogroup;
 
-	    #####################################
-	    # Homology based tree 
-	    #####################################
-	    
-	    # Choosing not to use phyml for 3 reasons : 
-	    # 1. We do not want to run the risk of not having an outgroup.  
-	    # 2. Too slow. 
-	    # 3. Model selection is a problem. 
-	    # my $tree = $og->phyml( -outgroup => $og->data('HOMOLOG'), -molecule => 'aa' );
-	    # my $tree = $og->phyml( -outgroup => undef, -molecule => 'aa' );
-	    # print $tree->{TREE};
+	my %data;
+	foreach my $i ( 0..$#ogs ) {
+	    my $og = $ogs[$i];
 
-	    # Instead, we build a neighbour joining tree from a distance matrix
-
-	    my $sequence = 
-		$og->distance_matrix(
-		    #-orfs => [ $og->_orthogroup ],		    
-		    -metric => 'dS',
-		    -verbose => 1,
-		    -symmetric => 1
+	    my %scenarios = (
+		#'POS' =>  $ogs[$i],
+		#'NEG_RANDOM' => $ogs[$i-1],
+		'NEG_HOMOLOGY' => $ogs[$i]->ohnolog
 		);
 
-	    $og->neighbour_joining( -matrix => $sequence, -verbose => 1 );
+	    foreach my $scen ( reverse sort keys %scenarios ) {		
+		my $go = $scenarios{$scen};
 
-	    # Synteny 	    
-	    
-	    my $synteny = 
-		$self->synteny_matrix(
-		    -orfs => [ $og->_orthogroup ],
-		    #
-		    -ancestor => undef, #$o->ygob,
-		    -homology => 'homology',
-		    #
-		    -mode => 'ortho',
-		    -distance => 1,
-		    -verbose => 1,
-		    -symmetric => 1
-		);
-	    
-	    exit;
+		# generate erroneous OG
+		# we _always_ swap one and optionally swap a second.
+		# there is no value in swapping more than 2 for 5 species. 
+		
+		my ($swap,$swap2);
+		unless ( $scen eq 'POS' ) {
+		    $swap = $species[int(rand(4))+1];
+		    if ( rand() <= $args->{'-error_rate'} ) {
+			$swap2 = $species[int(rand(4))+1] until ($swap2 && $swap2 ne $swap);
+		    }
+		}
+		
+		# do the randomizations 
+		
+		foreach my $sp ( grep {defined} ($swap,$swap2) ) {
+		    my $mark = $go->$sp;
+		    $go->$sp( $og->$sp );
+		    $og->$sp( $mark );
+		    print $i, $sp, $mark, $og->$sp;
+		}
+		
+		# business end 
+
+		my $use_for_analysis = (rand() <=.5 ? $og : $go);
+		if ( 1==2 
+		     #&& my @data = $self->_quality2_helper_function( $use_for_analysis ) 
+		    ) { 		
+
+		    $self->throw($#data) unless scalar(@data) == (2 * $branches)+2;
+		    print {$fh} $og->ygob,$scen,join("\t", map { sprintf("%.2f", $_) } @data) 
+			if $args->{'-verbose'};
+		    push @{ $data{ $scen } }, \@data;
+		    
+		}
+
+		# restore data structures 
+
+		foreach my $sp ( $swap, $swap2 ) {
+		    my $mark = $go->$sp;
+		    $go->$sp( $og->$sp );
+		    $og->$sp( $mark );
+		}
+	    }
 	}
-    }
+
+    } # null dist 
 
     exit;
     return;
