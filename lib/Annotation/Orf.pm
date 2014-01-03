@@ -1410,7 +1410,7 @@ sub distance_matrix {
 		    );
 		$metric = $pid;
 	    } elsif ( $args->{'-debug'} ) {
-		$metric=sprintf("%.3f",rand());
+		$metric=rand();
 	    } else {
 		my ($dN,$dS) = $orfs[$i]->paml( 
 		    -object => [ $orfs[$j] ] ,
@@ -1418,10 +1418,10 @@ sub distance_matrix {
 		    );
 		$metric = ($args->{'-metric'} =~ /^[dk]s/i ? $dS : $dN);
 	    }
-	    $matrix{ $orfs[$i]->name }{ $orfs[$j]->name } = $metric;
-	    push @row, $metric;
+	    $matrix{ $orfs[$i]->name }{ $orfs[$j]->name } = sprintf("%.5f",$metric);
+	    push @row, $matrix{ $orfs[$i]->name }{ $orfs[$j]->name };
 	}
-
+	
 	########################################
 	# print pretty 
 	########################################
@@ -1607,7 +1607,7 @@ sub neighbour_joining {
 	# 
 	$ancestor->remove( -object => $g_node );
 	$u_node->add( -object => $g_node );
-	$g_node->branch_length( $dist_gu );
+	$g_node->branch_length(  sprintf("%.5f", $dist_gu) );
 	
 	# STEP 3 
 	# Update D matrix and iterate the process : 
@@ -1663,7 +1663,7 @@ sub neighbour_joining {
     
     for my $i ( 0..$#label ) {
 	my ($node) = grep { $_->name eq $label[$i] } $root->stream;
-	$node->branch_length( $dist[ $i ] );
+	$node->branch_length( sprintf("%.5f", $dist[ $i ]) );
     }
 
     ###################################
