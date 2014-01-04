@@ -1959,27 +1959,38 @@ sub align {
     }
 }
 
-=head2 paml()
+=head2 paml( -object => [ORFS], -method => 'codeml|yn00', -range => [],
+    -length_ratio => .25, -min_codons => 30, -application => 'fsa')
+    
 =cut 
 
 sub paml {
     my $self = shift;
     my $args = {@_};
 
+    ########################################
     # some cursory checking 
+    ########################################
 
     $self->throw unless $args->{'-object'} && ref($args->{'-object'}) eq 'ARRAY';
     map { $self->throw unless $self->isa(ref($_)) } @{$args->{'-object'}};
-
+    $args->{'-length_ratio'} = undef unless exists $args->{'-length_ratio'};
+    $args->{'-min_codons'} = 30 unless exists $args->{'-min_codons'};
     $args->{'-method'} = ( $#{$args->{'-object'}} == 0 ? 'yn00' : 'codeml' ) 
 	unless exists  $args->{'-method'};
 
+    ########################################
     # get app and 4 files ready 
+    ########################################
 
     my $paml = $self->_external_app(-application => 'paml.'.$args->{'-method'} );
 
     my ($TMP_HANDLE, $pamlFile) = 
 	$self->_tempfile("annot_paml_XXXXXX");
+
+    ########################################
+    # loop + work 
+    ########################################
 
     my $alnFile = $self->align(
 	-molecule => 'codon', 
@@ -1989,6 +2000,19 @@ sub paml {
 	-application => ($args->{'-application'} || 'fsa')
 	);
     
+    if ( defined $args->{'-length_ratio'} ) {
+	chomp(my $alnLen = `head -1 $alnFile | cut -f 3 -d ' ' `);
+	print $alnLen;
+	return () if $alnLen / $args->{'-object'}->[0]->length 
+	    <= $args->{'-length_ratio'};
+	$alnLen /= 3; # codons 
+	return () if $alnLen <= $args->{'-min_codons'};
+    }
+
+    ########################################
+    # loop + work 
+    ########################################
+
     my $treeFile = $self->_writeNewickTree( @{$args->{'-object'}} ) if $args->{'-method'} eq 'codeml';
     my $ctrlFile = &_writePamlControlFile($args->{'-method'}, $alnFile, $pamlFile, $treeFile); # !! not a tmp file !! 
     
@@ -2001,7 +2025,9 @@ sub paml {
     map { $self->_cleanupfile($_) } @files; # delete 3 + close 1 
     close($TMP_HANDLE); # we must still delete this 1 later 
 
+    ########################################
     # parse output if it exists 
+    ########################################
 
     my ($ka, $ks) = (undef, undef);
     if ( -s $pamlFile ) {
