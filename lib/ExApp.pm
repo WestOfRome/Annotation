@@ -1823,8 +1823,10 @@ sub align {
     map { $self->throw unless $self->isa(ref($_)) } @{$args->{'-object'}};
     $self->throw if $args->{'-gaps'}==0 && $args->{'-application'} ne 'fsa';
 
-    my $aa = $self->_write_temp_seq(-molecule => 'aa', -seq => [$self, @{$args->{'-object'}}], -id => 'organism');
-    my $dna = $self->_write_temp_seq(-molecule => 'dna', -seq => [$self, @{$args->{'-object'}}], -id => 'organism');
+    my %uniq;
+    my @obj = grep { !$uniq{$_->unique_id}++} ($self, @{$args->{'-object'}});
+    my $aa = $self->_write_temp_seq(-molecule => 'aa', -seq => \@obj, -id => 'organism');
+    my $dna = $self->_write_temp_seq(-molecule => 'dna', -seq => \@obj, -id => 'organism');
 
     # this shit is ugly.. but needed to sneak in an outgroup 
 
@@ -1869,7 +1871,7 @@ sub align {
     } else {
 	system("$fsa $prefix$aa  > $aa_aln 2> /dev/null ");
 	$align = ( $args->{'-application'} eq 'fsa' ? $aa_aln : $clustalFile );
-	$self->throw( $prefix.$aa ) unless -e $align && -s $align;
+	$self->warn( $prefix.$aa ) unless -e $align && -s $align;
 	system("$revtrans $dna $align -O fasta -match name > $dna_aln "); # autodetects format 
 	$align = $dna_aln;
     }
@@ -1999,23 +2001,22 @@ sub paml {
 	-range => $args->{'-range'}, 
 	-application => ($args->{'-application'} || 'fsa')
 	);
-    
+
     if ( defined $args->{'-length_ratio'} ) {
 	chomp(my $alnLen = `head -1 $alnFile | cut -f 3 -d ' ' `);
-	print $alnLen;
-	return () if $alnLen / $args->{'-object'}->[0]->length 
-	    <= $args->{'-length_ratio'};
-	$alnLen /= 3; # codons 
-	return () if $alnLen <= $args->{'-min_codons'};
+	my $ratio = $alnLen / $args->{'-object'}->[0]->length; 
+	#print $alnLen, $ratio;
+	return () if $ratio <= $args->{'-length_ratio'} || 
+	    $alnLen/3 <= $args->{'-min_codons'};
     }
 
     ########################################
     # loop + work 
     ########################################
 
-    my $treeFile = $self->_writeNewickTree( @{$args->{'-object'}} ) if $args->{'-method'} eq 'codeml';
+    my $treeFile = $self->_writeNewickTree( @{$args->{'-object'}} ) 
+	if $args->{'-method'} eq 'codeml';
     my $ctrlFile = &_writePamlControlFile($args->{'-method'}, $alnFile, $pamlFile, $treeFile); # !! not a tmp file !! 
-    
     my @files = ($ctrlFile, $alnFile, ($args->{'-method'} eq 'codeml' ? $treeFile : ()));
 
     # run if we have what we need 
@@ -2029,14 +2030,28 @@ sub paml {
     # parse output if it exists 
     ########################################
 
+    my (%ka, %ks);
     my ($ka, $ks) = (undef, undef);
     if ( -s $pamlFile ) {
 	if ( $args->{'-method'} eq 'codeml' ) {
 	    ($ka) = map {s/\s+//g; $_} `grep 'tree length for dN:' $pamlFile | cut -d ':' -f 2`;
 	    ($ks) = map {s/\s+//g; $_} `grep 'tree length for dS:' $pamlFile | cut -d ':' -f 2`;
 	} else {
-	    my @r = split/\s+/, `grep '\+\-' $pamlFile | grep -v SE`; # assumes one PW comparison
-	    ($ka, $ks) = ($r[8], $r[11]);
+	    my @orgs = map { $_->organism }  @{$args->{'-object'}};
+	    my @pw = `grep '\+\-' $pamlFile | grep -v SE`; # assumes one PW comparison
+	    foreach my $line ( @pw ) {
+		my @r =  split/\s+/, $line;
+		($ka, $ks) = ($r[8], $r[11]);
+		my $org1 = $orgs[ $r[1]-1 ];
+		my $org2 = $orgs[ $r[2]-1 ];
+		$ks{$org1}{$org2}=$ks;
+		$ks{$org2}{$org1}=$ks;
+		$ka{$org1}{$org2}=$ka;
+		$ka{$org2}{$org1}=$ka;
+		print $ka, $ks, $org1, $org2, $ks{$org2}{$org1}, $ka{$org2}{$org1};
+	    }
+	    $self->data( KA_MATRIX => \%ka );
+	    $self->data( KS_MATRIX => \%ks );
 	}
     } else { $self->warn($self->name." $paml $! "); } # complain 
 
