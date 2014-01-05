@@ -6620,21 +6620,30 @@ sub _dissolve_orthogroup {
     return $self;
 }
 
-=head2 _define_orthogroup(-kaks => 1, -sowh => 0)
+=head2 _define_orthogroup(-kaks => 0, -sowh => 0, -matrices => 0)
 
 =cut 
 
 sub _define_orthogroup {
     my $self = shift;
     my $args = {@_};
+
+    ################################
+    # Set defautl argnuments ... 
+    ################################
     
     my @og = ( exists $args->{'-object'} ? @{$args->{'-object'}} : (grep {/\:\:/} @_) );
 
     $args->{'-verbose'}=1 unless exists  $args->{'-verbose'};
     $args->{'-kaks'}=0 unless exists $args->{'-kaks'};
+    $args->{'-matrices'}=0 unless exists $args->{'-matrices'};
     $args->{'-sowh'}=0 unless exists $args->{'-sowh'};
     $args->{'-debug'}=0 unless exists $args->{'-debug'};
-    
+
+    ################################
+    # Basic param checking 
+    ################################
+
     if ( $args->{'-debug'} ) {
 	my $fh = STDERR;
 	print $fh caller(1);
@@ -6648,17 +6657,19 @@ sub _define_orthogroup {
     map { $self->throw($_) unless exists $sp{uc($_)} } $self->up->up->bound;
     $self->throw if exists $sp{uc($self->organism)};
 
-    ################
-    # bad asignments 
-
+    ################################
+    # bad asignments -- this needs to be changed ... ropey. 
+    ################################
+    
     my %assign;
     map { $assign{$_->assign}++ } ($self, values %sp);
     print %assign and $self->throw if exists $assign{'GAP'} || 
 	(scalar(keys %assign) > 1  && (exists $assign{'TRNA'} || exists $assign{'FEATURE'}) );  
     # exists $assign{'REPEAT'} || -- good decision? required to get HAP1.. Anc_1.380
 
-    ################
+    ################################
     # last chance to reject 
+    ################################
 
     if ( $args->{'-sowh'} && $#og >= 1 && $self->coding ) {
 	if ( my $sowh = $self->phyml( -object => [values %sp], -sowh => $args->{'-sowh'}, -verbose => 1 ) ) {
@@ -6668,8 +6679,14 @@ sub _define_orthogroup {
 	}
     }
 
-    ################
+    ################################
     # make OG 
+    ################################
+
+    # we should be blessing into a new class here...
+    # to be added later. we can then move some methods 
+    # e.g. the paml() call below to that class and store
+    # the data on an appropriate data strucutre. 
 
     my ($newogid) = (map { $_->ogid } sort { $b->ogid <=> $a->ogid } $self->up->up->orthogroups)[0] + 1;
     $self->_set_ogid($newogid);
@@ -6679,19 +6696,25 @@ sub _define_orthogroup {
 	$self->$meth($sp{$sp});
 	$sp{$sp}->_set_ogid($newogid);
     }
-
-    ################
-    # store some stats for QC later    
     
-    ################
+    ################################
     # optional compute Ka/Ks 
+    ################################
     
     if ( $args->{'-kaks'} && $self->assign !~ /RNA/ ) {
 	$self->kaks;
     }
-    
-    ################
+
+    if ( $args->{'-matrices'} ) {
+	$self->paml(
+	    -object => [$self->_orthogroup],
+	    -method => 'yn00'
+	    );
+    }
+
+    ################################
     # verbose 
+    ################################
     
     if ( $args->{'-verbose'} ) {
 	print ">$newogid",$self->identify, 
