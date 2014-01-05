@@ -1414,8 +1414,11 @@ sub distance_matrix {
 	    } else {
 		my ($dN,$dS) = $orfs[$i]->paml( 
 		    -object => [ $orfs[$j] ] ,
-		    -method => 'yn00'
+		    -method => 'yn00',
+		    -length_ratio => 0.25,
+		    -min_codons => 30
 		    );
+		return() unless defined $dN && defined $dS; # right behaviour?
 		$metric = ($args->{'-metric'} =~ /^[dk]s/i ? $dS : $dN);
 	    }
 	    $matrix{ $orfs[$i]->name }{ $orfs[$j]->name } = sprintf("%.5f",$metric);
