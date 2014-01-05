@@ -1991,7 +1991,7 @@ sub paml {
 	$self->_tempfile("annot_paml_XXXXXX");
 
     ########################################
-    # loop + work 
+    # align and validate 
     ########################################
 
     my $alnFile = $self->align(
@@ -2011,7 +2011,7 @@ sub paml {
     }
 
     ########################################
-    # loop + work 
+    # run PAML 
     ########################################
 
     my $treeFile = $self->_writeNewickTree( @{$args->{'-object'}} ) 
@@ -2048,10 +2048,16 @@ sub paml {
 		$ks{$org2}{$org1}=$ks;
 		$ka{$org1}{$org2}=$ka;
 		$ka{$org2}{$org1}=$ka;
-		print $ka, $ks, $org1, $org2, $ks{$org2}{$org1}, $ka{$org2}{$org1};
+		# print $ka, $ks, $org1, $org2, $ks{$org2}{$org1}, $ka{$org2}{$org1};
 	    }
-	    $self->data( KA_MATRIX => \%ka );
-	    $self->data( KS_MATRIX => \%ks );
+	    
+	    ########################################
+	    # this is a terrible hack. DEVIN. 
+	    # To be replaced by proper Orthogroup class. 
+	    $self->data( KA_MATRIX => \%ka ) if $self->orthogroup;
+	    $self->data( KS_MATRIX => \%ks ) if $self->orthogroup;
+	    ########################################
+
 	}
     } else { $self->warn($self->name." $paml $! "); } # complain 
 
