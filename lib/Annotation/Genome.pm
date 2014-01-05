@@ -2391,7 +2391,8 @@ sub _access_synteny_null_dist {
 sub _quality2_helper_function {
     my $self = shift;
     my $og = shift;
-
+    my $reject_identical_sequences = shift;
+    
     # Homology based tree #######################################
     # We build a neighbour joining tree from a distance matrix.
     # Choosing not to use phyml for 3 reasons : 
@@ -2403,14 +2404,30 @@ sub _quality2_helper_function {
     # print $tree->{TREE};
 
     my @data;
-    
-    my $seq = $og->distance_matrix(-metric => 'dN',-symmetric => 1);		
-    my $nj = $og->neighbour_joining( -matrix => $seq, -topology => 1);
-    my $bl_seq = $nj->newick( -process => 1 );
-    my $sum;
-    map { $sum+=$_ } @{$bl_seq};
-    return () unless $sum;
-    push @data, $sum, (map { $_ / $sum } @{$bl_seq});
+
+    # dN
+    foreach my $m ( qw(dN dS) ) {
+
+	# undef if alignment to short 
+	# reject identical seqs 
+
+	return () unless my $seq =
+	    $og->distance_matrix(-metric => $m,-symmetric => 1,-verbose=>0);
+	return () if ($reject_identical_sequences && 
+		      grep { $_==0 } map { values %{$_} } values %{$seq});
+
+	# 
+
+	my $nj = $og->neighbour_joining( -matrix => $seq, -topology => 1);
+	my $bl_seq = $nj->newick( -process => 1 );
+
+	# 
+
+	my $sum;
+	map { $sum+=$_ } @{$bl_seq};
+	return () unless $sum;
+	push @data, $sum, (map { $_ / $sum } @{$bl_seq});
+    }
 
     # synteny 
 	    
@@ -2484,6 +2501,7 @@ sub quality2 {
 	  grep {$_->ohnolog->orthogroup} grep { $_->ohnolog }
 	  grep {$_->ygob} grep { $_->assign !~ /RNA/ } $self->orthogroups() ) {
 	  
+	  next CAND unless ! $args->{'-debug'} || $args->{'-debug'} eq $x->ygob;
 	  next CAND unless $x->ygob eq $x->ohnolog->ygob;
 
 	  foreach my $o ( $x, $x->ohnolog ) {	      
@@ -2497,25 +2515,25 @@ sub quality2 {
 	  $seen{ $x->unique_id }++;
 	  last if $#ogs >= $args->{'-nulldist'};
       }	
-	$self->throw( $#ogs ) if $#ogs < $args->{'-nulldist'};
+	$self->throw( $#ogs ) unless $args->{'-debug'} || $#ogs >= $args->{'-nulldist'};
 
 	######################################### 
 	# construct data for native OGs and randomizations 
 	######################################### 
-
+	
 	my %data;
 	foreach my $i ( 0..$#ogs ) {
 	    my $og = $ogs[$i];
-
+	    
 	    my %scenarios = (
-		#'POS' =>  $ogs[$i],
+		'POS' =>  $ogs[$i],
 		#'NEG_RANDOM' => $ogs[$i-1],
 		'NEG_HOMOLOGY' => $ogs[$i]->ohnolog
 		);
 
 	    foreach my $scen ( reverse sort keys %scenarios ) {		
 		my $go = $scenarios{$scen};
-
+		
 		# generate erroneous OG
 		# we _always_ swap one and optionally swap a second.
 		# there is no value in swapping more than 2 for 5 species. 
@@ -2534,33 +2552,31 @@ sub quality2 {
 		    my $mark = $go->$sp;
 		    $go->$sp( $og->$sp );
 		    $og->$sp( $mark );
-		    print $i, $sp, $mark, $og->$sp;
 		}
 		
 		# business end 
-
+		
 		my $use_for_analysis = (rand() <=.5 ? $og : $go);
-		if ( 1==2 
-		     #&& my @data = $self->_quality2_helper_function( $use_for_analysis ) 
-		    ) { 		
-
-		    $self->throw($#data) unless scalar(@data) == (2 * $branches)+2;
+		my $reject_identical_sequences = ($scen eq 'POS' ? 1 : 0);
+		
+		if ( my @data = $self->_quality2_helper_function(	    
+			 $use_for_analysis, $reject_identical_sequences) ){ 			
+		    $self->throw($#data) unless scalar(@data) == ($branches+1)*3;
 		    print {$fh} $og->ygob,$scen,join("\t", map { sprintf("%.2f", $_) } @data) 
 			if $args->{'-verbose'};
-		    push @{ $data{ $scen } }, \@data;
-		    
+		    print {STDERR} $og->ygob,$scen,join("\t", map { sprintf("%.2f", $_) } @data) ;
+		    push @{ $data{ $scen } }, \@data;		    
 		}
-
+		
 		# restore data structures 
-
-		foreach my $sp ( $swap, $swap2 ) {
+		
+		foreach my $sp ( grep {defined} ($swap, $swap2) ) {
 		    my $mark = $go->$sp;
 		    $go->$sp( $og->$sp );
 		    $og->$sp( $mark );
 		}
 	    }
 	}
-
     } # null dist 
 
     exit;
