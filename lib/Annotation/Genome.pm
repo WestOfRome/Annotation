@@ -2492,6 +2492,32 @@ sub quality2 {
     my $count=0;
     if ( $args->{'-nulldist'} ) {
 
+	######################################### 
+	# Devin sandpit 
+	######################################### 
+
+	OG:foreach my $og ( grep { $_->assign !~ /RNA/ } $self->orthogroups() ) {
+
+	    my @values;
+	    foreach my $m ( qw(Ka Ks) ) {
+		next OG unless my $seq = $og->data( uc( $m.'_MATRIX' ) );
+		next OG unless scalar(  map { values %{$_} } values %{$seq} ); # empty hash.grr.
+		map { next OG unless $_==$_+0  } map { values %{$_} } values %{$seq}; # numeracy
+		
+		my $nj = $og->neighbour_joining( -matrix => $seq, -topology => 1);   		
+		my $bl = $nj->newick( -process =>1 );
+
+		my $sum;
+		map { $sum+=$_ } @{$bl};
+		push @values, $sum, map { sprintf("%.5f", $_) } 
+		($sum ? map { $_ / $sum } @{$bl} : (1/scalar(@{$bl})) x scalar(@{$bl}) );
+	    }
+	    
+	    print {$fh} $og->name, $og->ogid, @values, $og->ygob;
+	    print {STDERR} $og->name, $og->ogid, @values,$og->ygob;
+	}
+	  exit;
+
 	##############################    
 	# obtain a gene set to work with 
 	##############################    
@@ -2516,6 +2542,7 @@ sub quality2 {
 	  last if $#ogs >= $args->{'-nulldist'};
       }	
 	$self->throw( $#ogs ) unless $args->{'-debug'} || $#ogs >= $args->{'-nulldist'};
+
 
 	######################################### 
 	# construct data for native OGs and randomizations 

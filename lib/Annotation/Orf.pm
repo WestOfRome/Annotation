@@ -1498,7 +1498,8 @@ sub neighbour_joining {
     my $D = $args->{'-matrix'};
     foreach my $key ( keys %{$D} ) {
 	#map { print $key,$_,$D->{$key}->{$_} } keys %{$D->{$key}};
-	map { $self->throw unless $D->{$key}->{$_}==$D->{$_}->{$key} } keys %{$D->{$key}}; # <<
+	map { $self->throw( $D->{$key}->{$_}.':'.$D->{$_}->{$key} ) 
+		  unless $D->{$key}->{$_}==$D->{$_}->{$key} } keys %{$D->{$key}}; # <<
     }
 
     ###################################
@@ -1514,7 +1515,7 @@ sub neighbour_joining {
 
     my $fh = STDERR;
     
-    # this is a hack...
+    # this is a hack... DEVIN 
 
     my @force_topology = (
 	[ (grep {/Scer/} keys %{$D}), (grep {/Spar/} keys %{$D}) ],
@@ -1674,7 +1675,6 @@ sub neighbour_joining {
     ###################################
 
     $root->newick( -print => $args->{'-verbose'} );
-    
     return $root;
 }
 
