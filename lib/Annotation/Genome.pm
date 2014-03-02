@@ -1069,6 +1069,8 @@ sub load {
       my $seq = join('', @r);      
       my $length = length($seq);
 
+      #print $id, $length;
+
       my $kmercov = -1; 
       ($id,$kmercov) = split/\s+/, $id; # common format >scaffold67 45.3 
 	  
