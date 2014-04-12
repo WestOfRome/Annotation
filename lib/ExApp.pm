@@ -167,7 +167,7 @@ sub _blast2orfs {
 	    my $hsp_range = $hsp->down; # get Exon object 
 	    # call exonify to deal with STOP codons. Returns Exon array.  
 	    # -frame => 0 because BLAST HSPs cannot have Frame-shifts.
-	    my @exons = $hsp_range->exonify(-frame => 0); # throw on error?
+	    next unless my @exons = $hsp_range->exonify(-frame => 0); # throw on error?
 	    # exons are really created by BLAST so we update.
 	    # used by other methods to know how to treat these exons. 
 	    map { $_->_creator((caller(0))[3]) } @exons; 
@@ -706,16 +706,14 @@ sub _locate_hmm {
     my $self = shift;
     my $anc = shift;
 
-    $args->{'-db'} = $ENV{'YGOB_HMMER3_DB'} unless $args->{'-db'};
-    $self->throw("HMMER: $args->{'-db'}") unless -e $args->{'-db'};
+    $args->{'-db'} = $ENV{'YGOB_HMMER3_LIB'} unless $args->{'-db'};
 
-    my $dbdir = $args->{'-db'};
-    $dbdir =~ s/ygob\.hmm$/YGOB\//; 
-    $self->throw("HMMER: $dbdir") unless -e $dbdir;
+    $self->throw("HMMER: $args->{'-db'}") 
+	unless -e $args->{'-db'} && -d $args->{'-db'};
 
     my @sp = split/\//,$anc;
     
-    my $hmm = $dbdir.'/'.$sp[-1];
+    my $hmm =  $args->{'-db'}.'/'.$sp[-1];
     $hmm .= '.h3m' unless $hmm =~ /\.h3m$/;
     $self->warn("No HMM file: $hmm") and return undef unless -e $hmm; # avoid horrible crashing feeling..
     return $hmm unless wantarray;
@@ -1407,6 +1405,7 @@ sub hmmer {
     
     my $binary = $self->_external_app(-application => $args->{'-application'});	
     my $mc = `$binary $args->{'-params'} $args->{'-hmm'} $file`;
+
     $self->_cleanupfile($file);
     return undef unless $mc;
 
@@ -1590,11 +1589,14 @@ sub hmmer3 {
     system("$binary --tblout $tblout $args->{'-params'} @order &> /dev/null");
     $self->_cleanupfile($fasta);
 
+    my $string =  `cat $tblout`;
+    print $string and $self->throw if $string =~ /Error\:/;
+    
     # 
 
     my $oldE;
     my @hits;
-    foreach my $line (split/\n/, `cat $tblout`) {
+    foreach my $line (split/\n/, $string) {
 	next if $line =~ /^\#/;
 	my ($target, $ac1, $query, $ac2, $evalue, $score, $bias, @others)=split/\s+/, $line;
 

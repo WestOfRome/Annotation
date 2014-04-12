@@ -243,9 +243,9 @@ sub annotate {
   VARIANTS:
 
     foreach my $contig ( $self->stream ) {
-	$contig->purge2( -overlap => $args->{'-overlap'}, -merge => 1 );
+	$contig->purge2( -overlap => $args->{'-overlap'}, -merge => 1, -verbose => 0 );
     }
-    
+
     $self->backup( -tag => 'variants' );
 
     return $self;
@@ -5984,7 +5984,7 @@ sub seek {
 
     $self->throw("Hardcoded-- fix that!") if exists $args->{'-synteny'};
 
-    $args->{'-db'} = $ENV{'YGOB_HMMER3_DB'} unless $args->{'-db'};
+    $args->{'-db'} = $ENV{'YGOB_HMMER3_LIB'} unless $args->{'-db'};
     # 
     $args->{'-window'} = 5 unless exists $args->{'-window'};    # number of orfs around target genes 
     $args->{'-extend'} = 5000 unless exists $args->{'-extend'}; # bp around each orf 
@@ -5996,14 +5996,17 @@ sub seek {
     
     $self->throw if $args->{'-slow'} || ! $args->{'-fast'};
 
+    $args->{'-file'} = $ENV{'YGOB_ORTHO_DB'} unless exists $args->{'-file'};
+    $self->throw unless ! $args->{'-file'} || -e $args->{'-file'};
+    $YGOB = YGOB->new( $args->{'-file'} ) unless $YGOB;
+
     ##############################################
     # collect all required files 
     ##############################################
 
-    $self->throw("$args->{'-db'}") unless -e $args->{'-db'};
+    $self->throw("$args->{'-db'}") 
+	unless -e $args->{'-db'} && -d $args->{'-db'};
     my $dbdir = $args->{'-db'};
-    $dbdir =~ s/ygob\.hmm$/YGOB\//; 
-    $self->throw unless -e $dbdir;
     my @hmms =  <$dbdir/*h3m>;
     $self->throw unless $#hmms >= 1000;
 
@@ -7574,11 +7577,11 @@ sub compare {
 		push @tag, @g1; #@g2;
 
 	    } elsif ( ($#g1 >0 && $#g2>=0) || ($#g2 >0 && $#g1>=0) ) { # 2:1 / 1:2 
-
+		
 		$tag = ( $#g1 == $#g2 ? 'complx' : 'strct'); # assume complex locus but correct 
 		$me->data( $attr => scalar(@g1).'/'.scalar(@g2) );
 		push @tag, @g1 ; #, @g2;
-
+		
 	    } elsif ( $#g1 >0 || $#g2 >0 ) {
 		$tag = 'rdnt';
 		push @tag, @g1,@g2;
@@ -7635,7 +7638,8 @@ sub compare {
     if ( $args->{'-view'} ) {
 	my $xyz;
 	foreach my $orf ( sort { $a->name <=> $b->name } @{$labels{$args->{'-view'}}} ) { 
-	    $orf->evaluate(-force => 1);
+	    #$orf->evaluate(-force => 1);
+	    $orf->evaluate(-force => 0, -validate =>0);
 	    $orf->glyph if $orf->data($attr);
 	    #$orf->show(-species => []) if $orf->data($attr);
 	    

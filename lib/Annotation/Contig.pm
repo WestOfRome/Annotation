@@ -1169,7 +1169,7 @@ sub search {
     my ($hmmfile, $minlen);
     if ($args->{'-hmm'}) {
 	($hmmfile, $minlen) = $self->_locate_hmm( $args->{'-hmm'} );
-	return undef unless $hmmfile;
+	return () unless $hmmfile;
     }
     
     ###########################################
@@ -1341,7 +1341,7 @@ sub features {
 	    -score => $p      # log likelihood cutoff
 	    );
     }
-    
+
     return $self;
 }
 

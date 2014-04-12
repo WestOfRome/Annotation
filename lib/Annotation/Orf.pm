@@ -256,7 +256,7 @@ sub update {
     #########################################
     # 
     #########################################
-    
+
     if ( $args->{'-hmmer'} ) {
 	my ($hit) = 
 	    $self->hmmer3(-application => 'hm3.hmmscan', -db => $args->{'-hmmer'});
@@ -3856,12 +3856,16 @@ sub _homolog {
 	my %hom;
 	# the grep function removes homologs that are of form 6319628
 	# these are hits from Genbank
-	map { $hom{ $_ }++ } grep {!/^\d+$/} grep {defined} map { $_->homolog(-fast => 1).'' } @orfs;
+	map { $hom{ $_ }++ } grep {!/^\d+$/} grep {/\w/} grep {defined} 
+	map { $_->homolog(-fast => 1).'' } @orfs;
 	my ($first) = sort { $hom{$b} <=> $hom{$a} } keys %hom;
-	my ($sp) = _species_key($first);
-	if (grep {/$sp/} @{$args->{'-species'}} ) {
-	    $homolog = $first and goto FINISH if 
-		$first && $hom{$first} > scalar(@orfs)/2;
+
+	if ( $first ) {
+	    my ($sp) = _species_key($first);
+	    if (grep {/$sp/} @{$args->{'-species'}} ) {
+		$homolog = $first and goto FINISH if 
+		    $first && $hom{$first} > scalar(@orfs)/2;
+	    }
 	}
     }
     
@@ -4943,7 +4947,7 @@ sub evaluate {
     ############################################################
 
     $self->evidence('NONE') if $args->{'-force'}; # hard reset 
-    
+
     foreach my $evidence ( @EVIDENCE ) {
 
 	##############################
@@ -5412,7 +5416,8 @@ sub introns {
 }
 
 sub _species_key {
-    die unless my $gene = shift;
+    print caller() and die($gene) 
+	unless my $gene = shift;
 
     if ($gene =~ /([YA])[A-P][LR]\d{3}.+/) { # SGD 
     } elsif ($gene =~ /([A-Z]{4})\d+[A-Z]\d+[grst]?/) { # Genolevures 
