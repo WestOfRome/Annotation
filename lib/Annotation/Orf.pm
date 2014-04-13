@@ -2395,7 +2395,7 @@ sub show {
 =head2 glyph(-print => KEY, -tag => undef)
 
     Draft version. Prints basic info and the chosen data('KEY').
-    Copies to allele/Anna/Gene.svg for viewing. Use -tag to 
+    Copies to allele/Anna/current.svg for viewing. Use -tag to 
     append addtional identifier info to file name.
 
 =cut
@@ -3002,11 +3002,11 @@ sub merge {
     my $temp = $other->clone;
     map { $_->transfer(-from => $temp, -to => $merge, -warn => 0) } $temp->stream;
     $temp->DESTROY;
-    map { $_->stop(-R => 1, -adjust => -3)  } $merge->stream; # remove STOP codons
-
+    map { $_->stop(-R => 1, -adjust => -3) if $_->length > 3  } $merge->stream; # remove STOP codons
+    
     # optimize around the merged model 
-
-    $merge->update(); # call update on $merge 
+    
+    $merge->update( -evaluate => 0 ); # call update on $merge 
     my $success =     # calls update on $success 
 	$merge->reoptimise(-reference => $hom, -verbose => 0); # can return  merge proposal 
     return undef unless $success && $success->translatable;
@@ -3038,7 +3038,6 @@ sub merge {
     $other->DESTROY;
     $self->_creator( (caller(0))[3] );
     $self->update();
-
     #$self->output(-creator => 1);
 
     return $self;
@@ -6036,9 +6035,11 @@ sub fragments {
     
     if ( my $i1 = $self->pillar() ) {
 	if ( my $i2 = $obj->pillar() ) {
-	    #print 'PIL',$i1, $i2, $self->pillarscore, $obj->pillarscore, $args->{'score'} if $args->{'-verbose'};
+	    #print 'PIL',$i1, $i2, $self->pillarscore, $obj->pillarscore, $args->{'score'} 
+	    # if $args->{'-verbose'};
 	    if ( $i1 ne $i2 ) {
-		return 0 if $self->pillarscore > $args->{'-score'} && $obj->pillarscore > $args->{'-score'};	
+		return 0 if $self->pillarscore > $args->{'-score'} && 
+		    $obj->pillarscore > $args->{'-score'};	
 	    } elsif ( $i1 eq $i2 ) {
 		my $h1 = $self->homolog( -fast => 1 );
 		# +ve == unique, -ve double tiling  
@@ -6090,10 +6091,16 @@ sub fragments {
     
     my @dummy = map { $_->stop(-R => 1, -adjust => -3) unless $_->length <= 3; $_ } 
     map { $_->clone() } map { $_->stream } ($obj,$self); 
-    my $fuse = ref($self)->new( START => 1, STOP => 2, STRAND => $self->strand, EXONS => \@dummy, UP => $self->up );
+    my $fuse = ref($self)->new( 
+	START => 1, 
+	STOP => 2, 
+	STRAND => $self->strand, 
+	EXONS => \@dummy, 
+	UP => $self->up 
+	);
     $self->throw unless $self->stream + $obj->stream == $fuse->stream; # exon count    
     $fuse->index;
-
+    
     # get exonerate score for the fused gene 
     
     my $sc3 = $fuse->exonerate2( @params, -verbose =>0 );

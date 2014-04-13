@@ -561,6 +561,9 @@ sub purge2 {
     $args->{'-overlap'} = 0.8 unless exists $args->{'-overlap'};
     $args->{'-verbose'} = 1 unless exists $args->{'-verbose'};
     $args->{'-merge'} = 1 unless exists $args->{'-merge'};
+    $args->{'-debug'} = 0 unless exists $args->{'-debug'};
+  
+    my $fh = \*STDOUT;
 
     # 0. group genes that share codons -- alternative gene versions 
     # 1. deal with hybrid/compound model clusters -- make discrete 
@@ -626,6 +629,13 @@ sub purge2 {
 	# to the sum of the individual scores 
 	
 	next unless $o->fragments( -object => $l, -verbose => 1 );  # 1 | 0 | undef   
+
+	if ( $args->{'-debug'} ) {
+	    print {$fh} ">>".(++$ds9);
+	    $o->ouptut(-fh => $fh, -creator =>1, -prepend => [$ds9] );
+	    $o->glyph( -tag => 'current'.$ds9 );
+	}
+	
 	$o->merge( -object => $l );
 	$o->oliver if $args->{'-verbose'};
     }
