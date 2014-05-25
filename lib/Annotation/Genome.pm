@@ -2394,6 +2394,9 @@ sub _quality2_helper_function {
     my $self = shift;
     my $og = shift;
     my $reject_identical_sequences = shift;
+
+    my $args = { @_ };
+    $args->{'-verbose'} = 5;
     
     # Homology based tree #######################################
     # We build a neighbour joining tree from a distance matrix.
@@ -2404,31 +2407,40 @@ sub _quality2_helper_function {
     # my $tree = $og->phyml( -outgroup => $og->data('HOMOLOG'), -molecule => 'aa' );
     # my $tree = $og->phyml( -outgroup => undef, -molecule => 'aa' );
     # print $tree->{TREE};
+    
+    # SOWH 
 
-    my @data;
+    #return () unless my $sowh = $og->phyml( -sowh => 50 );
+    #return () unless $sowh->{'RESULT'} =~ /Alternative|Species/;
+    my @data =  map { $sowh->{$_} } qw(PVAL FIX FREE RESULT);
 
-    # dN
-    foreach my $m ( qw(dN dS) ) {
+    # TTL - KA, KS 
+
+    foreach my $m ( qw(Ka Ks) ) {
 
 	# undef if alignment to short 
 	# reject identical seqs 
 
 	return () unless my $seq =
 	    $og->distance_matrix(-metric => $m,-symmetric => 1,-verbose=>0);
-	return () if ($reject_identical_sequences && 
+	#return () unless my $seq = $og->data( uc( $m.'_MATRIX' ) );
+	return () unless scalar(  map { values %{$_} } values %{$seq} ); # empty hash.grr.
+	map { last KAKS unless $_==$_+0  } map { values %{$_} } values %{$seq}; # numeracy
+	return () if ($reject_identical_sequences && # Gene conversion. Fix in future. 
 		      grep { $_==0 } map { values %{$_} } values %{$seq});
+	
+	# 
+
+	my $ttl;
+	my $nj = $og->neighbour_joining( -matrix => $seq, -topology => 0,
+					 -verbose => $args->{'-verbose'});
+	my $bl = $nj->newick( -process => 1 );
+	map { $ttl+= $_ } @{ $bl }; 
 
 	# 
 
-	my $nj = $og->neighbour_joining( -matrix => $seq, -topology => 1);
-	my $bl_seq = $nj->newick( -process => 1 );
-
-	# 
-
-	my $sum;
-	map { $sum+=$_ } @{$bl_seq};
-	return () unless $sum;
-	push @data, $sum, (map { $_ / $sum } @{$bl_seq});
+	return () unless $ttl;
+	push @data, $ttl;
     }
 
     # synteny 
@@ -2438,15 +2450,16 @@ sub _quality2_helper_function {
 	-ancestor => undef, #$o->ygob,
 	-homology => 'homology',
 	-mode => 'ortho',
-	-distance => 1,
-	-symmetric => 1
+	-symmetric => 1,
+	-distance => 1
 	);	    
-    my $nj = $og->neighbour_joining( -matrix => $syn, -topology => 1);
-    my $bl_syn = $nj->newick( -process => 1 );
-    my $sum;
-    map { $sum+=$_ } @{$bl_syn};
-    return () unless $sum;
-    push @data, $sum, (map { $_ / $sum } @{$bl_syn});
+    my $nj = $og->neighbour_joining( -matrix => $syn, -topology => 1, 
+				     -verbose => $args->{'-verbose'});
+    my $bl = $nj->newick( -process => 1 );
+    my $ttl;
+    map { $ttl+=$_ } @{$bl};
+    return () unless $ttl;
+    push @data, $ttl;
     
     return @data;
 }
@@ -2483,6 +2496,7 @@ sub quality2 {
 
     my $key = 'QUALITY';
     my $fh = *STDOUT;
+    my $fherr = *STDERR;
     my $qtime = time;
     my $branches = (2 * (scalar($self->bound)+1)) -3; # 2n-3 
     my @species = map { uc($_) } ($self->organism, $self->bound);
@@ -2494,57 +2508,43 @@ sub quality2 {
     my $count=0;
     if ( $args->{'-nulldist'} ) {
 
-	######################################### 
-	# Devin sandpit 
-	######################################### 
-
-	OG:foreach my $og ( grep { $_->assign !~ /RNA/ } $self->orthogroups() ) {
-
-	    my @values;
-	    foreach my $m ( qw(Ka Ks) ) {
-		next OG unless my $seq = $og->data( uc( $m.'_MATRIX' ) );
-		next OG unless scalar(  map { values %{$_} } values %{$seq} ); # empty hash.grr.
-		map { next OG unless $_==$_+0  } map { values %{$_} } values %{$seq}; # numeracy
-		
-		my $nj = $og->neighbour_joining( -matrix => $seq, -topology => 1);   		
-		my $bl = $nj->newick( -process =>1 );
-
-		my $sum;
-		map { $sum+=$_ } @{$bl};
-		push @values, $sum, map { sprintf("%.5f", $_) } 
-		($sum ? map { $_ / $sum } @{$bl} : (1/scalar(@{$bl})) x scalar(@{$bl}) );
-	    }
-	    
-	    print {$fh} $og->name, $og->ogid, @values, $og->ygob;
-	    print {STDERR} $og->name, $og->ogid, @values,$og->ygob;
-	}
-	  exit;
-
 	##############################    
 	# obtain a gene set to work with 
 	##############################    
 
 	my (@ogs, %seen);
-      CAND: foreach my $x ( #sort { $a->_internal_id <=> $b->_internal_id } 	  
-	  grep {$_->ohnolog->orthogroup} grep { $_->ohnolog }
-	  grep {$_->ygob} grep { $_->assign !~ /RNA/ } $self->orthogroups() ) {
-	  
+      CAND: foreach my $x ( 
+	  #sort { $a->_internal_id <=> $b->_internal_id } 	  
+	  grep { $_->ohnolog->orthogroup }
+	  grep { $_->ohnolog } grep {$_->ygob} 			    
+	  grep { $_->assign !~ /RNA/ } $self->orthogroups() ) {
+
+	  # basic QC 
+
 	  next CAND unless ! $args->{'-debug'} || $args->{'-debug'} eq $x->ygob;
 	  next CAND unless $x->ygob eq $x->ohnolog->ygob;
+	  #next CAND unless $x->outgroup(-fast => 1) && 
+	  #    $x->ohnolog->outgroup(-fast => 1);
+
+	  # suitable OG pair ?
 
 	  foreach my $o ( $x, $x->ohnolog ) {	      
-	      map { next CAND unless $_->ygob eq $o->ygob } $o->orthogroup;	      
-	      map { next CAND unless $_->telomere >= 20 } $o->orthogroup;	      
+	      #map { next CAND unless $_->ygob eq $o->ygob } $o->orthogroup;	      
+	      #map { next CAND unless $_->telomere >= 20 } $o->orthogroup;	      
 	      my ($mean_len,$sd_len) = &_calcMeanSD( map {$_->length} $o->_orthogroup );
 	      next CAND unless $sd_len/$mean_len < $args->{'-length_filter'};
 	  }
-	  
 	  push @ogs, $x unless exists $seen{ $x->ohnolog->unique_id };	  
+	  
+	  # Book keeping 
+	  
 	  $seen{ $x->unique_id }++;
-	  last if $#ogs >= $args->{'-nulldist'};
+	  print {$fherr} $x->time, scalar(keys %seen), $#ogs 
+	      if (scalar(keys %seen)%50==0 && $args->{'-verbos'});
+	  last if $x->ygob eq $args->{'-debug'} || $x->name eq $args->{'-debug'} ||
+	      $#ogs >= $args->{'-nulldist'} || scalar(keys %seen)>5000;
       }	
-	$self->throw( $#ogs ) unless $args->{'-debug'} || $#ogs >= $args->{'-nulldist'};
-
+	#$self->throw( $#ogs ) unless $args->{'-debug'} || $#ogs >= $args->{'-nulldist'};
 
 	######################################### 
 	# construct data for native OGs and randomizations 
@@ -2552,11 +2552,12 @@ sub quality2 {
 	
 	my %data;
 	foreach my $i ( 0..$#ogs ) {
-	    my $og = $ogs[$i];
-	    
+	    my $og = $ogs[$i];	  
+	    # $og->output(-fh => $fherr);
+  
 	    my %scenarios = (
 		'POS' =>  $ogs[$i],
-		#'NEG_RANDOM' => $ogs[$i-1],
+		#'NEG_RANDOM' => $ogs[$i-1],# causes havoc for the homology/tree methods 
 		'NEG_HOMOLOGY' => $ogs[$i]->ohnolog
 		);
 
@@ -2566,7 +2567,8 @@ sub quality2 {
 		# generate erroneous OG
 		# we _always_ swap one and optionally swap a second.
 		# there is no value in swapping more than 2 for 5 species. 
-		
+		# need to generalize code at some point ... 
+
 		my ($swap,$swap2);
 		unless ( $scen eq 'POS' ) {
 		    $swap = $species[int(rand(4))+1];
@@ -2574,7 +2576,8 @@ sub quality2 {
 			$swap2 = $species[int(rand(4))+1] until ($swap2 && $swap2 ne $swap);
 		    }
 		}
-		
+		print {$fherr} $swap, $swap2 if $args->{'-debug'};
+
 		# do the randomizations 
 		
 		foreach my $sp ( grep {defined} ($swap,$swap2) ) {
@@ -2590,10 +2593,11 @@ sub quality2 {
 		
 		if ( my @data = $self->_quality2_helper_function(	    
 			 $use_for_analysis, $reject_identical_sequences) ){ 			
-		    $self->throw($#data) unless scalar(@data) == ($branches+1)*3;
-		    print {$fh} $og->ygob,$scen,join("\t", map { sprintf("%.2f", $_) } @data) 
-			if $args->{'-verbose'};
-		    print {STDERR} $og->ygob,$scen,join("\t", map { sprintf("%.2f", $_) } @data) ;
+		    $self->throw($#data) unless scalar(@data) == 7; # ($branches+1)*3;
+		    
+		    print {$fh} $og->ygob,$scen,join("\t", map { $_ } @data) 
+			if $args->{'-verbose'}; #  sprintf("%.2f", $_)
+		    print {$fherr} $og->ygob,$scen,join("\t", map { $_ } @data) ;
 		    push @{ $data{ $scen } }, \@data;		    
 		}
 		
@@ -8083,7 +8087,7 @@ sub summarize {
 # subroutines : output 
 #########################################
 
-=head2 gff(-file => file.name, -exons => 1)
+=head2 gff(-file => file.name, -exons => 1, -ygob => 1)
 
     Write gff file. Evidence is written an tag=value pairs.
     Use -exon switch to enable exon annotation output.
@@ -8116,7 +8120,7 @@ sub gff {
     foreach my $contig ($self->stream) {
 	print {$fh} join(" ","##sequence-region",$contig->id,'1',$contig->length);       
         foreach my $orf ($contig->stream) {
-            $orf->gff(%{$args});
+	    $orf->gff(%{$args});
         }
     }
 
