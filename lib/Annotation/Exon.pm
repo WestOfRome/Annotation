@@ -774,8 +774,10 @@ sub gff {
 	Parent => $self->up->_internal_id,
 	parent_name => $self->up->name,
 	length => $self->length,
-	left_score => $self->intron( -direction => 'left'),
-	right_score => $self->intron( -direction => 'right'),
+	'5prime_score' => $self->intron( -direction => 'left'),
+	'3prime_score' => $self->intron( -direction => 'right'),
+	'5prime_frame' => $self->frame(),
+	'3prime_frame' => $self->frame(-nucleotide => $self->length),
         );
 
     push my @gff, 
