@@ -1498,10 +1498,18 @@ sub neighbour_joining {
     my $D = $args->{'-matrix'};
     foreach my $key ( keys %{$D} ) {
 	#map { print $key,$_,$D->{$key}->{$_} } keys %{$D->{$key}};
-	map { $self->throw( $D->{$key}->{$_}.':'.$D->{$_}->{$key} ) 
-		  unless $D->{$key}->{$_}==$D->{$_}->{$key} } keys %{$D->{$key}}; # <<
+	foreach ( keys %{$D->{$key}} ) {
+	    if ( $D->{$key}->{$_} <1e-10 || $D->{$_}->{$key} <1e-10 ) {
+		$self->throw if $D->{$key}->{$_} > 1e-10 || $D->{$_}->{$key} > 1e-10;
+		$D->{$key}->{$_} = 1e-10;
+		$D->{$_}->{$key} = 1e-10;
+	    } else {
+		$self->throw( $D->{$key}->{$_}.':'.$D->{$_}->{$key} ) 
+		    unless $D->{$key}->{$_} == $D->{$_}->{$key};
+	    }
+	}
     }
-
+    
     ###################################
     # Basic calculations + early termination 
     ###################################
@@ -1535,7 +1543,7 @@ sub neighbour_joining {
 	    NAME => $otu,
 	    ROOT => 0,
 	    BRANCH_LENGTH => -$INFINITY,
-	    BOOTSTRAPS => 0
+	    BOOTSTRAP => 0
 	    );
 	$root->add( -object => $node );
     }
@@ -1546,6 +1554,15 @@ sub neighbour_joining {
 
     my $node_count=0;
     until ( $number_taxa <= 3 ) {
+	
+	#
+
+	if ( $args->{'-verbose'} >= 2 ) {
+	    print {$fh} "\nMATRIX\t$number_taxa\n", keys %{$D};
+	    foreach my $i (keys %{$D} ) {
+		print {$fh} $i, map { $D->{$i}->{$_} } (keys %{$D} );
+	    }
+	}
 	
 	###################################
 	# calculate row and column sums 
@@ -1598,7 +1615,7 @@ sub neighbour_joining {
 	    ROOT => 0,
 	    NAME => $new_node,
 	    BRANCH_LENGTH => ($dist_fg - ($dist_gu + $dist_fu))/2,
-	    BOOTSTRAPS => 0
+	    BOOTSTRAP => 0
 	    );
 	# 
 	my $ancestor = $f_node->ancestor;
@@ -1634,15 +1651,6 @@ sub neighbour_joining {
 	    map { delete $D->{$retain}->{$_} } ($f,$g);
 	}
 	$number_taxa = scalar(keys %{$D});
-	
-	#
-
-	if ( $args->{'-verbose'} >= 2 ) {
-	    print {$fh} "\nMATRIX\t$number_taxa\n", keys %{$D};
-	    foreach my $i (keys %{$D} ) {
-		print {$fh} $i, map { $D->{$i}->{$_} } (keys %{$D} );
-	    }
-	}
     }
 
     ###################################
@@ -4400,7 +4408,7 @@ sub _synteny {
 		) > 0;
 	}
 
-    } else { # recruse work to -direction, then to -object .. 
+    } else { # recurse work to -direction, then to -object .. 
 	
 	my %hash;
 	foreach my $dir ( qw(left right) ) {
@@ -6919,6 +6927,116 @@ sub gff {
     return $self;
 }
 
+sub _upgrade_data_structure {
+    my $self = shift;
+
+    ##############################
+    # Catalog things to change 
+    ##############################
+
+    my %repair_map = (
+	'YGOBHMM' => '_YGOB',
+	#'_SGD_GENE' => undef, # this is now stored on the Orf object as _DEBUG
+	#'_OG' => undef,  # this is now stored on the Orf object 
+	#'_OHNOLOG' => undef, # this is now stored on the Orf object 
+	#'_GAP' => undef, # Honor. I think we just track this for no reason 
+	#'_TMP'=> undef, # Do not honor 
+	#'_TEMP'=> undef, # Do not honor 
+	);
+    
+    ##############################
+    # Test all elements of the array to make sure we understand them 
+    ##############################
+
+    my $old = $self->_data;
+    
+    foreach my $key (keys %{$old} ) {
+	my $key_bkp = $key;
+	my ($prefix,$suffix)=();
+
+	# see _init_homology_data
+
+	if ( $key =~ /(_CHR|\*)$/ ) {
+	    $suffix = $1;
+	    $key =~ s/$suffix//;
+	} else { $suffix=undef; }
+
+	#  see _init_homology_data
+
+	if ( $key =~ /^(_{1,3})/ ) {
+	    $prefix=$1;
+	    $key =~ s/$prefix//;
+	    #$self->throw( $key_bkp, $old->{$key_bkp} ) if $old->{$key_bkp} =~ /[a-z]/i;
+	} else { $prefix=undef; }
+	
+	#print $key_bkp, $prefix, $key, $suffix, $old->{ $key };
+
+	# 
+
+	if ( $key eq 'OG' || $key eq 'GAP' || 
+	     $key eq 'TMP' ||  $key eq 'TEMP' || 
+	     $key eq 'SGD_GENE' || $key eq 'OHNOLOG' ) {
+	    next;
+	} elsif ( $suffix ) {
+	    $self->throw( $key_bkp ) unless exists $HOMOLOGY{ $key }; 
+	} elsif ( $prefix ) {
+	    $self->throw( $key_bkp ) unless exists 
+		$HOMOLOGY{ $key } || $EVIDENCE{ $key } || $key eq 'GENE'; 
+	}
+    }
+
+    ##############################
+    # Edit the data -- special ones first 
+    ##############################
+
+    if ( exists  $old->{'_OG'} ) {
+	$self->throw if $self->{'OGID'};
+	$self->{'OGID'} = $old->{'_OG'};
+	delete $old->{ '_OG' };
+    }
+
+    if ( exists  $old->{'_OHNOLOG'} ) {
+	$self->throw if $self->ohnolog;
+	$self->ohnolog( -object => $old->{'_OHNOLOG'} );
+	delete $old->{ '_OHNOLOG' };
+        $self->ohnolog->data( '_OHNOLOG' => 'delete' )
+	    if $self->ohnolog->data( '_OHNOLOG' ) ;
+    }
+    
+    if ( exists  $old->{'_SGD_GENE'} ) {
+	$self->throw if $self->_debug;
+	$self->_debug( $old->{'_SGD_GENE'} );
+	delete $old->{ '_SGD_GENE' };
+    }
+
+    delete $old->{ '_TMP' };
+    delete $old->{ '_TEMP' };
+
+    ##############################
+    # Edit the data -- 
+    ##############################
+
+    foreach my $k ( keys %repair_map ) {
+	$old->{ $repair_map{ $k } } = $old->{ $k };
+	delete $old->{ $k };
+    }
+    
+    ##############################
+    # Edit the data -- 
+    ##############################
+    
+    #print %{ $old };
+    $self->_data( $old ); 
+    #print %{ $self->_data };
+    $self->_init_data_structure( $old );
+
+    # 
+
+    $self->evaluate;
+
+    return $self;
+}
+
 =head2 data(KEY => val)
     
     Get/Set values from DATA hash. 
@@ -7422,6 +7540,25 @@ sub _gammln {
      $ser += $cof[$j]/++$y;
   }
   -$tmp + log(2.5066282746310005*$ser/$x);
+}
+
+##########################################
+##########################################
+
+sub time {
+    my $self = shift;
+    my $args = {@_};
+
+    my $delta = 0;
+    my $stamped_time = time;
+    if ( $args->{'-init'} || ! $global_time_tracker ) {
+	$delta = 0;
+    } else {
+	$delta = $stamped_time - $global_time_tracker;
+    }
+    $global_time_tracker=$stamped_time;
+
+    return $delta;
 }
 
 ##########################################
