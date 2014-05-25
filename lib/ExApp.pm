@@ -1126,7 +1126,7 @@ sub phyml {
 	    close $sqfh;
 	    print {$fherr} "Sims/seq-gen: $rep_count !" and return undef 
 		unless $rep_count==$args->{'-sowh'};
-	    `cp $sqfile /Users/devin/examine`;
+	    #`cp $sqfile /Users/devin/examine`;
 	}
 
 	###################################################	

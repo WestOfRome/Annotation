@@ -27,7 +27,7 @@ my %AUTOMETH = (
     descendents => undef,
     # Numerical 
     branch_length => undef,
-    bootstraps => undef
+    bootstrap => undef
     # Methodology.
     # Removing -- these are tree attributes not node. 
     # data_type => undef, # codons, dN, dS etc
