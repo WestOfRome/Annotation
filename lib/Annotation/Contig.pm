@@ -2042,6 +2042,31 @@ sub fasta {
     return $self;
 }
 
+=head2 genbank_tbl( -fh => ) 
+
+    Output information needed by tbl2asn1 for submission to genbank.
+
+=cut 
+
+sub genbank_tbl{
+    my $self = shift;
+    my $args = {@_};
+
+    $self->throw unless exists $args->{'-fh'};
+    my $fh = $args->{'-fh'};
+
+    print {$fh} ">Feature", $self->id;
+    if ( $args->{'-reference'} ) { # Pubmed ID
+	print {$fh} 1, $self->length, 'REFERENCE';
+	print {$fh} undef, undef, undef, 'PubMed', $args->{'-reference'};
+    }
+
+    foreach my $feat ( $self->stream ) {
+	$feat->genbank_tbl();
+    }
+
+    return 1;
+}
 
 #########################################
 #########################################
