@@ -8127,6 +8127,36 @@ sub gff {
     return $self;
 }
 
+=head2 genbank_tbl(-file => file.tbl)
+
+    Write gff file. Evidence is written an tag=value pairs.
+    Use -exon switch to enable exon annotation output.
+    Contigs and higher levels are not currently written. 
+
+=cut 
+
+sub genbank_tbl {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-source'} = 'ScannellZill2011G3' unless exists $args->{'-source'};
+    
+    my $fh;
+    if (exists $args->{'-file'}) {
+	$args->{'-file'} = '>'.$args->{'-file'} unless $args->{'-file'} =~ /^\>/;
+        open($fh, $args->{'-file'}) || die($args->{'-file'});
+    } else {
+        $fh = STDOUT;
+    }
+    $args->{'-fh'} = $fh;
+
+    foreach my $scaf ( sort {$a->id <=> $b->id} $self->stream ) {
+	$scaf->genbank_tbl( %{$args} );
+    }
+
+    return 1;
+}
+
 #########################################
 # subroutines : aliases
 #########################################
