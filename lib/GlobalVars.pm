@@ -184,6 +184,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 14,
 	SOFA => 'sequence_feature',
 	SOFA_PARTOF => undef,
+	GENBANK_ASN1 => 'misc_feature', 
+	GENBANK_ASN1_PARTOF => undef,
 	STATUS => undef	
     }, 
     
@@ -196,6 +198,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 13,
 	SOFA => 'assembly_component',
 	SOFA_PARTOF => undef,
+	GENBANK_ASN1 => 'assembly_gap', # 'gap'
+	GENBANK_ASN1_PARTOF => undef, 
 	STATUS => undef	
     }, 
     
@@ -209,6 +213,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 12,
 	SOFA => 'telomere',
 	SOFA_PARTOF => undef,
+	GENBANK_ASN1 => undef, # 'centromere' or 'telomere' but both  
+	GENBANK_ASN1_PARTOF => undef, # require experimental validation 	
 	STATUS => undef	
     }, 
     
@@ -222,6 +228,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 11,
 	SOFA => 'tRNA',
 	SOFA_PARTOF => 'noncoding_exon',
+	GENBANK_ASN1 => 'tRAN',
+	GENBANK_ASN1_PARTOF => 'exon',
 	STATUS => undef	
     }, 	
     
@@ -236,6 +244,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	SOFA => 'pseudogene',
 	#SOFA_PARTOF => 'decayed_exon'	
 	SOFA_PARTOF => undef,
+	GENBANK_ASN1 => undef, # **FIX 
+	GENBANK_ASN1_PARTOF => undef, # **FIX	
 	STATUS => undef	
     },
     
@@ -249,6 +259,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 9,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'dubious'	
     },
     
@@ -262,6 +274,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 8,
 	SOFA => 'repeat_region',
 	SOFA_PARTOF => undef,
+	GENBANK_ASN1 => 'repeat_region', # 'mobile_element',
+	GENBANK_ASN1_PARTOF => undef,
 	STATUS => undef
     },
     
@@ -275,6 +289,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 7.5,
 	SOFA => 'repeat_region',
 	SOFA_PARTOF => undef,
+	GENBANK_ASN1 => 'LTR', # 'repeat_region',
+	GENBANK_ASN1_PARTOF => undef,
 	STATUS => undef
     },
 
@@ -288,6 +304,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 7,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'homology'
     },
     
@@ -301,6 +319,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 6,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'conservation'	
     },
 
@@ -315,6 +335,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 5,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS', ## Correct? 
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'homology'			
     },
 
@@ -328,6 +350,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 4,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'homology'	
     },
     
@@ -341,6 +365,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 3,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'homology'			
     },
 
@@ -354,6 +380,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 2,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'synteny'	
     }, 
     
@@ -367,6 +395,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 1,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'homology'		
     },
     
@@ -392,6 +422,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 0,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'hypothetical'		
     },  
     
@@ -410,6 +442,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => -1,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'hypothetical'		
     },              
     
@@ -423,6 +457,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => -2,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'dubious'	
     },
     
@@ -436,6 +472,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => -3,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',	
 	STATUS => 'dubious'	
     },
     
@@ -446,6 +484,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => -4,
 	SOFA => 'gene',
 	SOFA_PARTOF => 'exon',
+	GENBANK_ASN1 => undef, # **FIX
+	GENBANK_ASN1_PARTOF => undef,  # **FIX
 	STATUS => 'dubious'
     }
     ); 
