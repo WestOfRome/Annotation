@@ -6824,6 +6824,26 @@ sub ontology {
     return @{ $OntologyBeast->{$self->ygob}->{$args->{'-attribute'}} };
 }
 
+=head2 genbank_feature_key
+
+    Return appropriate Genbank feature for ASN1 format.
+
+=cut
+
+sub genbank_feature_key {
+    my $self = shift;       
+    my $sofa = $self->_evidence(
+	-evidence => $self->evidence,
+	-query => 'genbank_asn1'
+        );
+    my $subsofa = $self->_evidence(
+	-evidence => $self->evidence,
+	-query => 'genbank_asn1_partof'
+        );
+
+    return($sofa,$subsofa);
+}
+
 =head2 sofa
 
     Return sofa ontology term.
@@ -6884,6 +6904,7 @@ sub gff {
         $data{lc($key)} = $self->data($key);
 	$data{lc($key).'_evalue'} = $self->evalue($key) if defined $self->data('_'.$key);
     }
+
     $data{'synteny_loss'} = sprintf("%.2f",$self->loss);
     $data{'synteny_hyper'} = $self->hyper;
     if ( $self->coding ) {
@@ -6927,7 +6948,37 @@ sub gff {
     return $self;
 }
 
-sub _upgrade_data_structure {
+=head2 genbank_tbl()
+=cut 
+
+sub genbank_tbl {
+    my $self = shift;
+    my $args = {@_};
+
+    $self->throw unless exists $args->{'-fh'};
+    my $fh = $args->{'-fh'};
+
+    my ($asn,$asn_sub) = $self->genbank_feature_key;
+
+    # can include 'intron' features 
+
+}
+
+
+=head2 _upgrade_orf_structure() 
+
+    Method to change the modify the Orf structure used for 
+    the 2011 paper to the one expected by the current code base. 
+    Almost all changes are to the data attribute ($Orf->data())
+    but a few key elements are now stored on the main object
+    reference : 
+    $orf->_debug() 
+    $orf->ohnolog()
+    $orf->ogid()
+
+=cut
+
+sub _upgrade_orf_structure {
     my $self = shift;
 
     ##############################
