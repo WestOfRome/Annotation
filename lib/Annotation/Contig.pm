@@ -2062,7 +2062,7 @@ sub genbank_tbl{
     }
 
     foreach my $feat ( $self->stream ) {
-	$feat->genbank_tbl();
+	$feat->genbank_tbl( %{$args} );
     }
 
     return 1;

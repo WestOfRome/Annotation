@@ -228,7 +228,7 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 11,
 	SOFA => 'tRNA',
 	SOFA_PARTOF => 'noncoding_exon',
-	GENBANK_ASN1 => 'tRAN',
+	GENBANK_ASN1 => 'tRNA',
 	GENBANK_ASN1_PARTOF => 'exon',
 	STATUS => undef	
     }, 	
@@ -244,8 +244,8 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	SOFA => 'pseudogene',
 	#SOFA_PARTOF => 'decayed_exon'	
 	SOFA_PARTOF => undef,
-	GENBANK_ASN1 => undef, # **FIX 
-	GENBANK_ASN1_PARTOF => undef, # **FIX	
+	GENBANK_ASN1 => 'CDS',
+	GENBANK_ASN1_PARTOF => 'exon',
 	STATUS => undef	
     },
     
@@ -274,7 +274,7 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
 	ORDER => 8,
 	SOFA => 'repeat_region',
 	SOFA_PARTOF => undef,
-	GENBANK_ASN1 => 'repeat_region', # 'mobile_element',
+	GENBANK_ASN1 => 'mobile_element', # 'repeat_region'
 	GENBANK_ASN1_PARTOF => undef,
 	STATUS => undef
     },

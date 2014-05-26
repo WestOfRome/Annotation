@@ -8140,6 +8140,7 @@ sub genbank_tbl {
     my $args = {@_};
 
     $args->{'-source'} = 'ScannellZill2011G3' unless exists $args->{'-source'};
+    $args->{'-reference'} = '22384314' unless exists $args->{'-reference'};
     
     my $fh;
     if (exists $args->{'-file'}) {

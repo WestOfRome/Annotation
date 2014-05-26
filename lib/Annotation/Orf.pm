@@ -4977,6 +4977,7 @@ sub evaluate {
 	# %EVIDENCE so that evidence knows if it is of type
 	# homology or not...
 	my $test_key = ($evidence =~ /AA|NCBI|TY|LTR|YGOB/ ? '_'.$evidence : $evidence);
+	# NB: HSP does not contain an E-value but a ratio (from ->fragment() ?)
 	##############################
 
 	# core comparisons 
@@ -6824,6 +6825,41 @@ sub ontology {
     return @{ $OntologyBeast->{$self->ygob}->{$args->{'-attribute'}} };
 }
 
+=head2 genbank_evidence
+
+    Return appropriate Genbank feature for ASN1 format.
+
+=cut
+
+sub genbank_evidence {
+    my $self = shift;
+
+    my $string;
+    if ( $self->evidence eq 'YGOB' ) {
+	$string = "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob;	    
+    } elsif ( $self->evidence =~ /KAKS|NCBI|AA|HSP|HCNF/ ) {
+	$string = "similar to AA sequence:blastall:2.2.17:GenBank:".$self->gene;	    
+    } elsif ( $self->evidence =~ /SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
+	$string = 'non-experimental evidence, no additional details recorded';
+    } elsif (  $self->evidence eq 'LTR' ) {
+	$string = "similar to DNA sequence:blastall:2.2.17:SGD:".$self->hit('ltr');
+    } elsif (  $self->evidence eq 'TY' ) {
+	$string = "similar to AA sequence:blastall:2.2.17:SGD:".$self->hit('ty');
+    } elsif (  $self->evidence eq 'STOP' ) {
+	$string = 'non-experimental evidence, no additional details recorded';
+    } elsif (  $self->evidence eq 'RNA' ) {
+	$string = "nucleotide motif:tRNAscan-SE:1.23:".$self->gene;	    
+    } elsif (  $self->evidence eq 'HMM' ) {
+	$string = "nucleotide motif:HMMER:1.8.4:".$self->gene;
+    } elsif (  $self->evidence eq 'NNNN' ) {
+	$string = "alignment"; # slight abuse of the ontology ... 
+    } elsif (  $self->evidence eq 'MANUAL' ) {
+	$string = 'non-experimental evidence, no additional details recorded';
+    }
+
+    return $string;
+}
+
 =head2 genbank_feature_key
 
     Return appropriate Genbank feature for ASN1 format.
@@ -6955,12 +6991,97 @@ sub genbank_tbl {
     my $self = shift;
     my $args = {@_};
 
+    #################################
+    # validate args and organize variables 
+    #################################
+
     $self->throw unless exists $args->{'-fh'};
     my $fh = $args->{'-fh'};
+    
+    my @bump = (3 x undef);
+
+    #################################
+    # exclude certain features 
+    #################################
 
     my ($asn,$asn_sub) = $self->genbank_feature_key;
+    return undef unless $asn;
+ 
+    $self->evaluate( -force => 1);
 
-    # can include 'intron' features 
+    #################################
+    # standard components 
+    #################################
+
+    print {$fh} $self->start, $self->stop, $asn, undef, undef;
+    print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
+    print {$fh} @bump, 'gene', $self->name unless  $asn eq 'assembly_gap';
+    print {$fh} @bump, 'inference', $self->genbank_evidence unless  $asn eq 'assembly_gap';
+
+    #print {$fh} @bump, 'standard_name', $self->name; # diff from gene ?
+
+    #################################
+    # standard components 
+    #################################
+
+    if ( $asn eq 'CDS' ) {
+
+	# function 
+
+	print {$fh} @bump, 'product', 'homology to '.$self->gene if 
+	    $self->gene && $self->evalue('gene') <= 1e-5;
+	print {$fh} @bump, 'product', 'homology to '.$self->ygob if
+	    $self->ygob && $self->evalue('ygob') <= 1e-5;
+	#print {$fh} @bump, 'protein_id', (map {uc($_)} map { /^(\w{3})/ } $self->organism).'1';
+	print {$fh} @bump, 'function', 
+	join(';', grep {!/molecular_function/} $self->ontology( -attribute => 'F'));
+	
+	# translation 
+
+	print {$fh} @bump, 'codon_start', $self->fex->frame+1;
+	if ( $self->pseudogene ) {
+	    print {$fh} @bump, 'pseudogene', 'unitary';	 # unknown
+	} elsif ( $self->data('STOP') ) {
+	    # use pseudo if not an actual pseudogene but gene is disrupted by sequencing error etc 
+	    print {$fh} @bump, 'pseudo', undef;
+	} else {
+	    print {$fh} @bump, 'translation', $self->sequence( -molecule => 'aa' );
+	    print {$fh} @bump, 'transl_table', 1;
+	}
+
+    } elsif ( $asn eq 'assembly_gap' ) {
+
+	print {$fh} @bump, 'estimated_length','unknown';
+	print {$fh} @bump, 'gap_type','within_scaffold';
+	print {$fh} @bump, 'linkage_evidence','align genus'; # unspecified 
+
+    } elsif ( $asn eq 'tRNA' ) {
+	
+	print {$fh} @bump, 'pseudogene', 'unitary' if $self->gene =~ /pseudo/i;
+	
+    } elsif ( $asn eq 'misc_feature' ) {
+
+	print {$fh} @bump, 'function', $self->description;
+
+    } elsif ( $asn eq 'mobile_element' ) {
+
+	print {$fh} @bump, 'mobile_element_type', 'retrotransposon';
+	print {$fh} @bump, 'rpt_family', 'TY';
+	print {$fh} @bump, 'rpt_type', 'dispersed';
+
+    } elsif ( $asn eq 'LTR' ) {
+
+	print {$fh} @bump, 'rpt_family', 'TY';
+	print {$fh} @bump, 'rpt_type', 'dispersed';
+
+    } else { $self->throw( $asn ); }
+
+    last if ++$XX > 100;
+    
+
+    #################################
+    # include exon and 'intron' features 
+    #################################
 
 }
 
@@ -6987,6 +7108,10 @@ sub _upgrade_orf_structure {
 
     my %repair_map = (
 	'YGOBHMM' => '_YGOB',
+	'NCBI' => '_NCBI', # there is no '_NCBI' attribute -- stored directly on 'GENE'. bad. 
+	'LTR' => 'swap',
+	'TY' => 'swap',
+	'AA' => 'swap',
 	#'_SGD_GENE' => undef, # this is now stored on the Orf object as _DEBUG
 	#'_OG' => undef,  # this is now stored on the Orf object 
 	#'_OHNOLOG' => undef, # this is now stored on the Orf object 
@@ -7066,10 +7191,16 @@ sub _upgrade_orf_structure {
     ##############################
     # Edit the data -- 
     ##############################
-
+    
     foreach my $k ( keys %repair_map ) {
-	$old->{ $repair_map{ $k } } = $old->{ $k };
-	delete $old->{ $k };
+	if ( $repair_map{ $k } eq 'swap' ) {
+	    my ($x,$y) = ($old->{ $k }, $old->{ '_'.$k });
+	    $old->{ $k } = $y;
+	    $old->{ '_'.$k } = $x;
+	} else {
+	    $old->{ $repair_map{ $k } } = $old->{ $k };
+	    delete $old->{ $k };
+	}
     }
     
     ##############################
@@ -7182,6 +7313,20 @@ sub _init_homology_data {
     }
 
     return $self;
+}
+
+=head2 hit('aa')
+
+    Return best hit for a given DB search. 
+
+=cut 
+
+sub hit {
+    my $self = shift;
+    my $key = uc(shift);
+    $key = 'AA' if $key eq 'BLAST';
+    $key = 'YGOB' if $key =~ /^HMMER/;
+    return $self->data($key);
 }
 
 =head2 evalue('aa')
