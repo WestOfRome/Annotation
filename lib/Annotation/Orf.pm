@@ -6379,10 +6379,30 @@ sub fasta {
 
 sub name {
     my $self = shift;
+    my $args = { @_ };
     $self->throw($self->debug) unless $self->up;
     my $contig = $self->up->id;
     my $organism = $self->up->up->organism;
-    return($organism."_".$contig.".".$self->id);
+    my $name = $organism."_".$contig.".".$self->id;
+
+    if ( $args->{'-genbank'} ) {
+	my $replace;
+	if ( $self->evidence =~ /YGOB|KAKS|NCBI|AA|HSP|HCNF|SYNT|LDA|LENGTH|INTRONS|STRUCT|STOP/ ) {
+	    $replace = 'p';
+	} elsif ( $self->evidence =~ /LTR|TY/ ) {
+	    $replace = 'x';
+	} elsif ( $self->evidence =~ /RNA/ ) {
+	    $replace = 'r';
+	} elsif ( $self->evidence =~ /HMM/ ) {
+	    $replace = 'f';
+	} elsif ( $self->evidence =~ /MANUAL/ ) {
+	    $replace = 'm';
+	} else { return $name; }
+
+	$name =~ s/\./$replace/ || die;
+    }
+
+    return( $name );
 }
 
 =head2 shortname
@@ -6833,6 +6853,7 @@ sub ontology {
 
 sub genbank_evidence {
     my $self = shift;
+    my $args = {@_};
 
     my $string;
     if ( $self->evidence eq 'YGOB' ) {
@@ -6855,6 +6876,12 @@ sub genbank_evidence {
 	$string = "alignment"; # slight abuse of the ontology ... 
     } elsif (  $self->evidence eq 'MANUAL' ) {
 	$string = 'non-experimental evidence, no additional details recorded';
+    }
+
+    if ( $args->{'-existence'} == 1 ) {
+	unless ( $self->evidence =~ /NNNN|MANUAL/ ) {
+	    $string = 'EXISTENCE:'.$string;
+	}
     }
 
     return $string;
@@ -7012,11 +7039,27 @@ sub genbank_tbl {
     #################################
     # standard components 
     #################################
+    
+    my $start = $self->strand == -1 ? $self->stop : $self->start;
+    my $stop = $self->strand == -1 ? $self->start : $self->stop;
+    
+    my ($top,$tail) = $self->_top_tail;
+    if ( $asn eq 'CDS' ) {
+	unless ( $top eq 'ATG' ) {
+	    $start = $self->strand == -1 ? '>'.$start : '<'.$start;
+	}
+	unless ( $tail =~ /TAA|TAG|TGA/ ) {
+	    $stop = $self->strand == -1 ? '<'.$stop : '>'.$stop;
+	}
+    }
 
-    print {$fh} $self->start, $self->stop, $asn, undef, undef;
+    print {$fh} $start, $stop, $asn, undef, undef;
     print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
-    print {$fh} @bump, 'gene', $self->name unless  $asn eq 'assembly_gap';
-    print {$fh} @bump, 'inference', $self->genbank_evidence unless  $asn eq 'assembly_gap';
+    unless (  $asn eq 'assembly_gap' ) {
+	print {$fh} @bump, 'gene', $self->name( -genbank => 1 );
+	print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 1 );
+	print {$fh} @bump, 'locus_tag', (map { s/\+//; $_ } $self->unique_id);
+    }
 
     #print {$fh} @bump, 'standard_name', $self->name; # diff from gene ?
 
@@ -7026,15 +7069,23 @@ sub genbank_tbl {
 
     if ( $asn eq 'CDS' ) {
 
-	# function 
+	# stable database Id
 
+	#print {$fh} @bump, 'protein_id', (map {uc($_)} map { /^(\w{3})/ } $self->organism).'1';
+
+	# homology 
+
+	print {$fh} @bump, 'product', 'hypothetical protein';
 	print {$fh} @bump, 'product', 'homology to '.$self->gene if 
 	    $self->gene && $self->evalue('gene') <= 1e-5;
 	print {$fh} @bump, 'product', 'homology to '.$self->ygob if
 	    $self->ygob && $self->evalue('ygob') <= 1e-5;
-	#print {$fh} @bump, 'protein_id', (map {uc($_)} map { /^(\w{3})/ } $self->organism).'1';
-	print {$fh} @bump, 'function', 
-	join(';', grep {!/molecular_function/} $self->ontology( -attribute => 'F'));
+
+	# function 
+	
+	my @func = join(';', grep {!/molecular_function/} $self->ontology( -attribute => 'F'));
+	print {$fh} @bump, 'function', @func, 
+	'[general function prediction based on homology to S. cerevisiae]'  if $func[0];	
 	
 	# translation 
 
@@ -7046,7 +7097,7 @@ sub genbank_tbl {
 	    print {$fh} @bump, 'pseudo', undef;
 	} else {
 	    print {$fh} @bump, 'translation', $self->sequence( -molecule => 'aa' );
-	    print {$fh} @bump, 'transl_table', 1;
+	    #print {$fh} @bump, 'transl_table', 1;
 	}
 
     } elsif ( $asn eq 'assembly_gap' ) {
@@ -7076,13 +7127,11 @@ sub genbank_tbl {
 
     } else { $self->throw( $asn ); }
 
-    last if ++$XX > 100;
-    
-
     #################################
     # include exon and 'intron' features 
     #################################
 
+    return 1;
 }
 
 
