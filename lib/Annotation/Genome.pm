@@ -8127,11 +8127,10 @@ sub gff {
     return $self;
 }
 
-=head2 genbank_tbl(-file => file.tbl)
+=head2 genbank_tbl(-organism => , -strain => , -taxid => , 
+    -reference => , -note => )
 
-    Write gff file. Evidence is written an tag=value pairs.
-    Use -exon switch to enable exon annotation output.
-    Contigs and higher levels are not currently written. 
+    Write Genbank TBL file and corresponding fasta. 
 
 =cut 
 
@@ -8139,19 +8138,38 @@ sub genbank_tbl {
     my $self = shift;
     my $args = {@_};
 
-    $args->{'-source'} = 'ScannellZill2011G3' unless exists $args->{'-source'};
-    $args->{'-reference'} = '22384314' unless exists $args->{'-reference'};
-    
-    my $fh;
-    if (exists $args->{'-file'}) {
-	$args->{'-file'} = '>'.$args->{'-file'} unless $args->{'-file'} =~ /^\>/;
-        open($fh, $args->{'-file'}) || die($args->{'-file'});
-    } else {
-        $fh = STDOUT;
+    #################################
+    # basic QC
+    #################################
+
+    foreach my $key ( qw(-organism -strain -taxid -note) ) {
+	$self->throw unless exists $args->{ $key } && 
+	    defined $args->{ $key } ;
     }
+
+    #################################
+    # prep files 
+    #################################    
+    
+    $args->{'-file'} = '>'.$self->organism.'.tbl';
+    open(my $fh, $args->{'-file'}) || die($args->{'-file'});
     $args->{'-fh'} = $fh;
 
+    my $args2;
+    unless ( -e $self->organism.'.fsa' ) {
+	open(my $fsa, '>'.$self->organism.'.fsa');
+	my $args2 = $args;
+	$args2->{'-fh'} = $fsa;
+	$args2->{'-genbank'} = 1;
+    }
+
+    #################################
+    # standard components 
+    #################################
+
     foreach my $scaf ( sort {$a->id <=> $b->id} $self->stream ) {
+	next unless !  $args->{'-debug'} || $scaf->id == $args->{'-debug'};
+	$scaf->fasta( %{$args2} ) if $args2;
 	$scaf->genbank_tbl( %{$args} );
     }
 
