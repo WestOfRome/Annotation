@@ -6860,26 +6860,30 @@ sub genbank_evidence {
 	$string = "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob;	    
     } elsif ( $self->evidence =~ /KAKS|NCBI|AA|HSP|HCNF/ ) {
 	$string = "similar to AA sequence:blastall:2.2.17:GenBank:".$self->gene;	    
-    } elsif ( $self->evidence =~ /SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
-	$string = 'non-experimental evidence, no additional details recorded';
+
     } elsif (  $self->evidence eq 'LTR' ) {
 	$string = "similar to DNA sequence:blastall:2.2.17:SGD:".$self->hit('ltr');
     } elsif (  $self->evidence eq 'TY' ) {
 	$string = "similar to AA sequence:blastall:2.2.17:SGD:".$self->hit('ty');
-    } elsif (  $self->evidence eq 'STOP' ) {
-	$string = 'non-experimental evidence, no additional details recorded';
+
     } elsif (  $self->evidence eq 'RNA' ) {
 	$string = "nucleotide motif:tRNAscan-SE:1.23:".$self->gene;	    
     } elsif (  $self->evidence eq 'HMM' ) {
 	$string = "nucleotide motif:HMMER:1.8.4:".$self->gene;
+
     } elsif (  $self->evidence eq 'NNNN' ) {
 	$string = "alignment"; # slight abuse of the ontology ... 
+
+    } elsif ( $self->evidence =~ /SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
+	$string = 'non-experimental evidence, no additional details recorded';
+    } elsif (  $self->evidence eq 'STOP' ) {
+	$string = 'non-experimental evidence, no additional details recorded';
     } elsif (  $self->evidence eq 'MANUAL' ) {
 	$string = 'non-experimental evidence, no additional details recorded';
     }
 
     if ( $args->{'-existence'} == 1 ) {
-	unless ( $self->evidence =~ /NNNN|MANUAL/ ) {
+	unless ( $self->evidence =~ /NNNN|MANUAL|STOP|SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
 	    $string = 'EXISTENCE:'.$string;
 	}
     }
