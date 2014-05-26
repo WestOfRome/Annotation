@@ -2024,21 +2024,34 @@ sub fasta {
     my $args = {@_};
 
     my $fh = (exists $args->{'-fh'} ? $args->{'-fh'} : STDOUT);
-
-    my @info;
-    foreach my $type ( qw(GAP TRNA REAL) ) {
-	push @info, ($type eq 'REAL' ? 'CODING' : $type )."=".scalar(grep {$_->assign eq $type } $self->stream);	
+    
+    my $decoration;
+    if ( $args->{'-genbank'} ) {
+	$decoration = 
+	    join(" ", 
+		 $self->id, 
+		 '[mol=genomic dna]', 
+		 '[org='.($args->{'-organism'} || 'unknown').']',
+		 '[strain='.($args->{'-organism'} || 'unknown').']'
+	    );
+    } else {
+	my @info;
+	foreach my $type ( qw(GAP TRNA REAL) ) {
+	    push @info, ($type eq 'REAL' ? 'CODING' : $type )."=".
+		scalar(grep {$_->assign eq $type } $self->stream);	
+	}
+	
+	$decoration = 
+	    join(' ', 	    
+		 $self->up->organism.'_'.
+		 $self->id,
+		 $self->length.'bp',
+		 '['.join('; ', @info).']'
+	    );
     }
     
-    my $id = join(
-	' ', 
-	$self->up->organism.'_'.$self->id,
-	$self->length.'bp',
-	'['.join('; ', @info).']'
-	);
-
-    print $fh ">".$id."\n".$self->sequence;
-
+    print $fh ">".$decoration."\n".$self->sequence;
+    
     return $self;
 }
 
@@ -2051,19 +2064,29 @@ sub fasta {
 sub genbank_tbl{
     my $self = shift;
     my $args = {@_};
-
+    
+    $self->throw unless exists $args->{'-organism'};
     $self->throw unless exists $args->{'-fh'};
     my $fh = $args->{'-fh'};
 
+    my @bump = (3 x undef);
+
     print {$fh} ">Feature", $self->id;
-    if ( $args->{'-reference'} ) { # Pubmed ID
-	print {$fh} 1, $self->length, 'REFERENCE';
-	print {$fh} undef, undef, undef, 'PubMed', $args->{'-reference'};
+    print {$fh} 1, $self->length, 'REFERENCE';
+    print {$fh} @bump, 'mol_type', 'genomic DNA';
+ 
+    foreach my $key ( grep { defined $args->{$_} } qw(-organism -strain -taxid -reference) ) {
+	my $printkey = $key;
+	$printkey =~ s/^\-//;
+	$printkey = 'db_xref' if $printkey eq 'taxid';
+	print {$fh} @bump, $printkey, $args->{ $key };	
     }
 
     foreach my $feat ( $self->stream ) {
 	$feat->genbank_tbl( %{$args} );
     }
+    
+    exit;
 
     return 1;
 }
