@@ -2032,7 +2032,7 @@ sub fasta {
 		 $self->id, 
 		 '[mol=genomic dna]', 
 		 '[org='.($args->{'-organism'} || 'unknown').']',
-		 '[strain='.($args->{'-organism'} || 'unknown').']'
+		 '[strain='.($args->{'-strain'} || 'unknown').']'
 	    );
     } else {
 	my @info;
