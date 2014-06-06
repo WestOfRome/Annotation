@@ -706,6 +706,25 @@ sub length {
 	return(1+ $self->stop - $self->start);
 }
 
+=head2 genbank_tbl() 
+=cut 
+
+sub genbank_tbl {
+    my $self = shift;
+    my $args = {@_};
+    
+    $self->throw unless exists $args->{'-count'};
+    $self->throw unless exists $args->{'-fh'};
+    my $fh = $args->{'-fh'};
+    
+    my @bump = (3 x undef);
+
+    print {$fh} $self->start(-R=>1),$self->stop(-R=>1),'exon';
+    print {$fh} @bump,'number '.$args->{'-count'};
+    
+    return 1;
+}
+
 =head2 output(-fh => 'STDOUT')
 
     => type, start, stop, length, strand, left_score, right_score
