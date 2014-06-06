@@ -8151,17 +8151,14 @@ sub genbank_tbl {
     # prep files 
     #################################    
     
-    $args->{'-file'} = '>'.$self->organism.'.tbl';
-    open(my $fh, $args->{'-file'}) || die($args->{'-file'});
-    $args->{'-fh'} = $fh;
+    $args->{'-genbank'} = 1;
+    $args->{'-strict'} = 1;
 
-    my $args2;
-    unless ( -e $self->organism.'.fsa' ) {
-	open(my $fsa, '>'.$self->organism.'.fsa');
-	my $args2 = $args;
-	$args2->{'-fh'} = $fsa;
-	$args2->{'-genbank'} = 1;
-    }
+    #################################
+    # standard components 
+    #################################
+
+    $self->_validate_assembly_gaps;
 
     #################################
     # standard components 
@@ -8169,9 +8166,20 @@ sub genbank_tbl {
 
     foreach my $scaf ( sort {$a->id <=> $b->id} $self->stream ) {
 	next unless !  $args->{'-debug'} || $scaf->id == $args->{'-debug'};
-	$scaf->fasta( %{$args2} ) if $args2;
+
+	my $root = $self->organism.$scaf->id;	
+	open(my $fh, '>'.$root.'.tbl') || die($root.'.tbl');
+	$args->{'-fh'} = $fh;
 	$scaf->genbank_tbl( %{$args} );
+	
+	unless ( -e $root.'.fsa' ) {
+	    open(my $fsa, '>'.$root.'.fsa')  || die($root.'.fsa');
+	    $args->{'-fh'} = $fsa;
+	    $scaf->fasta( %{$args} );
+	}
     }
+
+    exit;
 
     return 1;
 }
@@ -8182,6 +8190,32 @@ sub genbank_tbl {
 
 sub species { my $self=shift; return $self->organism(@_); }
 sub orthogroups { my $self = shift; return grep { $_->ogid } $self->orfs(-noncoding => 1); }
+
+#########################################
+# subroutines : private/experimental methods 
+#########################################
+
+sub _validate_assembly_gaps {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-format'} = 'fasta' unless exists $args->{'-format'};	
+
+
+    foreach my $scaf ( $self->stream ) {
+	my @remove;
+	foreach my $o ( grep { $_->assign eq 'GAP' }  $scaf->stream ) { 
+	    if ( $o->sequence !~ /N{1,}/) {
+		$o->output( -fh => \*STDERR );
+		print {STDERR} $o->sequence;
+		push @remove, $o;
+	    }
+	}
+	map { $self->remove( -object => $_ ) } @remove;
+    }
+
+    return $self;
+}
 
 #########################################
 # subroutines : private/experimental methods 
