@@ -6390,13 +6390,13 @@ sub name {
 	if ( $self->evidence =~ /YGOB|KAKS|NCBI|AA|HSP|HCNF|SYNT|LDA|LENGTH|INTRONS|STRUCT|STOP/ ) {
 	    $replace = 'p';
 	} elsif ( $self->evidence =~ /LTR|TY/ ) {
-	    $replace = 'x';
-	} elsif ( $self->evidence =~ /RNA/ ) {
 	    $replace = 'r';
+	} elsif ( $self->evidence =~ /RNA/ ) {
+	    $replace = 't';
 	} elsif ( $self->evidence =~ /HMM/ ) {
 	    $replace = 'f';
 	} elsif ( $self->evidence =~ /MANUAL/ ) {
-	    $replace = 'm';
+	    $replace = 'x';
 	} else { return $name; }
 
 	$name =~ s/\./$replace/ || die;
@@ -6405,7 +6405,7 @@ sub name {
     return( $name );
 }
 
-=head2 shortname
+=head2 shortname()
     
     Orf name that fits within one tab : ChrSpOrf
     Alias 'sn' also works. 
@@ -6422,10 +6422,10 @@ sub shortname {
 
 sub sn { return $_[0]->shortname; }
 
-=head2 unique_id
-
+=head2 unique_id()
+    
     Return a unique stable id.
-
+    
 =cut
 
 sub unique_id {
@@ -6855,11 +6855,22 @@ sub genbank_evidence {
     my $self = shift;
     my $args = {@_};
 
+    $args->{'-rich'} = 0 unless exists $args->{'-rich'};
+    
+    my @kick = ((3 x undef), "inference");
+    
     my $string;
     if ( $self->evidence eq 'YGOB' ) {
-	$string = "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob;	    
+	$string = "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob;  
+	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
+	    "similar to AA sequence:blastall:2.2.17:GenBank:".$self->gene
+	    if $self->evalue('gene') <= 1e-5 && $args->{'-rich'};
+	
     } elsif ( $self->evidence =~ /KAKS|NCBI|AA|HSP|HCNF/ ) {
-	$string = "similar to AA sequence:blastall:2.2.17:GenBank:".$self->gene;	    
+	$string = "similar to AA sequence:blastall:2.2.17:GenBank:".$self->gene;	  
+	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
+	    "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob
+	    if $self->evalue('ygob') <= 1e-5 && $args->{'-rich'};
 
     } elsif (  $self->evidence eq 'LTR' ) {
 	$string = "similar to DNA sequence:blastall:2.2.17:SGD:".$self->hit('ltr');
@@ -6875,13 +6886,16 @@ sub genbank_evidence {
 	$string = "alignment"; # slight abuse of the ontology ... 
 
     } elsif ( $self->evidence =~ /SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
+	return undef;
 	$string = 'non-experimental evidence, no additional details recorded';
     } elsif (  $self->evidence eq 'STOP' ) {
+	return undef;
 	$string = 'non-experimental evidence, no additional details recorded';
     } elsif (  $self->evidence eq 'MANUAL' ) {
+	return undef;
 	$string = 'non-experimental evidence, no additional details recorded';
     }
-
+    
     if ( $args->{'-existence'} == 1 ) {
 	unless ( $self->evidence =~ /NNNN|MANUAL|STOP|SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
 	    $string = 'EXISTENCE:'.$string;
@@ -7026,6 +7040,7 @@ sub genbank_tbl {
     # validate args and organize variables 
     #################################
 
+    $args->{'-recurse'}=1 unless exists $args->{'-recurse'};
     $self->throw unless exists $args->{'-fh'};
     my $fh = $args->{'-fh'};
     
@@ -7037,71 +7052,93 @@ sub genbank_tbl {
 
     my ($asn,$asn_sub) = $self->genbank_feature_key;
     return undef unless $asn;
- 
+    
+    # 
+
+    $self->output( -fh => \*STDOUT, -prepend => [$self->name( -genbank => 1 )], -recurse => 1 ); 
     $self->evaluate( -force => 1);
 
     #################################
-    # standard components 
+    # coordinates 
     #################################
-    
-    my $start = $self->strand == -1 ? $self->stop : $self->start;
-    my $stop = $self->strand == -1 ? $self->start : $self->stop;
-    
+
+    my @exons = $self->stream;
     my ($top,$tail) = $self->_top_tail;
-    if ( $asn eq 'CDS' ) {
-	unless ( $top eq 'ATG' ) {
-	    $start = $self->strand == -1 ? '>'.$start : '<'.$start;
+    
+    foreach my $ex ( @exons ) {
+	my $start = $self->strand == -1 ? $ex->stop : $ex->start;
+	my $stop = $self->strand == -1 ? $ex->start : $ex->stop;
+	if ( $asn eq 'CDS' ) {
+	    if ( $ex eq $exons[0] && $top ne 'ATG' ) {
+		#$start = $self->strand == -1 ? '>'.$start : '<'.$start;
+		$start = '<'.$start;
+	    }
+	    if ( $ex eq $exons[-1] && $tail !~ /TAA|TAG|TGA/ ) {
+		#$stop = $self->strand == -1 ? '<'.$stop : '>'.$stop;
+		$stop = '>'.$stop;
+	    }
 	}
-	unless ( $tail =~ /TAA|TAG|TGA/ ) {
-	    $stop = $self->strand == -1 ? '<'.$stop : '>'.$stop;
+	print {$fh} $start, $stop,  ( $ex eq $exons[0] ? $asn : undef), undef, undef;
+    }
+    
+    #################################
+    # standard components 
+    #################################
+
+    unless ( $args->{'-minimal'} ) {
+	print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
+
+	unless (  $asn eq 'assembly_gap' ) {
+	    print {$fh} @bump, 'gene', $self->name( -genbank => 1 );
+	    print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 0, -rich => 1 ) if 
+		$self->genbank_evidence; # irritating -- we are using the GenBank recommended value 
+	    print {$fh} @bump, 'locus_tag', (map { s/\+//; $_ } $self->unique_id);
 	}
+	#print {$fh} @bump, 'standard_name', $self->name; # diff from gene ?
     }
-
-    print {$fh} $start, $stop, $asn, undef, undef;
-    print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
-    unless (  $asn eq 'assembly_gap' ) {
-	print {$fh} @bump, 'gene', $self->name( -genbank => 1 );
-	print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 1 );
-	print {$fh} @bump, 'locus_tag', (map { s/\+//; $_ } $self->unique_id);
-    }
-
-    #print {$fh} @bump, 'standard_name', $self->name; # diff from gene ?
 
     #################################
     # standard components 
     #################################
 
-    if ( $asn eq 'CDS' ) {
+    if ( $args->{'-minimal'} ) {
+	# 
+    } elsif ( $asn eq 'CDS' ) {
 
 	# stable database Id
 
 	#print {$fh} @bump, 'protein_id', (map {uc($_)} map { /^(\w{3})/ } $self->organism).'1';
-
-	# homology 
-
-	print {$fh} @bump, 'product', 'hypothetical protein';
-	print {$fh} @bump, 'product', 'homology to '.$self->gene if 
-	    $self->gene && $self->evalue('gene') <= 1e-5;
-	print {$fh} @bump, 'product', 'homology to '.$self->ygob if
-	    $self->ygob && $self->evalue('ygob') <= 1e-5;
-
-	# function 
 	
-	my @func = join(';', grep {!/molecular_function/} $self->ontology( -attribute => 'F'));
-	print {$fh} @bump, 'function', @func, 
-	'[general function prediction based on homology to S. cerevisiae]'  if $func[0];	
-	
-	# translation 
+	# types of CDS .... 
 
 	print {$fh} @bump, 'codon_start', $self->fex->frame+1;
 	if ( $self->pseudogene ) {
 	    print {$fh} @bump, 'pseudogene', 'unitary';	 # unknown
+
 	} elsif ( $self->data('STOP') ) {
 	    # use pseudo if not an actual pseudogene but gene is disrupted by sequencing error etc 
 	    print {$fh} @bump, 'pseudo', undef;
+
 	} else {
+
+	    # homology 
+	    
+	    print {$fh} @bump, 'product', 'hypothetical protein';
+	    print {$fh} @bump, 'product', 'homology to '.$self->gene if 
+		$self->gene && $self->evalue('gene') <= 1e-5;
+	    print {$fh} @bump, 'product', 'homology to '.$self->ygob if
+		$self->ygob && $self->evalue('ygob') <= 1e-5;
+	    
+	    # function 
+	    
+	    my @func = join(';', grep {!/molecular_function/} $self->ontology( -attribute => 'F'));
+	    print {$fh} @bump, 'function', @func, 
+	    '[general function prediction based on homology to S. cerevisiae]'  if $func[0];	
+	 
+	    # translation 
+
 	    print {$fh} @bump, 'translation', $self->sequence( -molecule => 'aa' );
-	    #print {$fh} @bump, 'transl_table', 1;
+	    print {$fh} @bump, 'transl_table', 1;
 	}
 
     } elsif ( $asn eq 'assembly_gap' ) {
@@ -7112,11 +7149,12 @@ sub genbank_tbl {
 
     } elsif ( $asn eq 'tRNA' ) {
 	
+	print {$fh} @bump, 'product', $self->gene;
 	print {$fh} @bump, 'pseudogene', 'unitary' if $self->gene =~ /pseudo/i;
 	
     } elsif ( $asn eq 'misc_feature' ) {
 
-	print {$fh} @bump, 'function', $self->description;
+	print {$fh} @bump, 'function', $self->description if $self->description;
 
     } elsif ( $asn eq 'mobile_element' ) {
 
@@ -7134,6 +7172,13 @@ sub genbank_tbl {
     #################################
     # include exon and 'intron' features 
     #################################
+
+    if ( @exons > 1 && $args->{'-recurse'} ) {
+	foreach my $i ( 0..$#exons ) {
+	    $exons[ $i ]->genbank_tbl( %{$args},-count => ($i+1) );
+	}
+    }
+
 
     return 1;
 }
