@@ -2016,7 +2016,12 @@ sub break {
     return $new;
 }
 
-=head2 fasta(-fh => STDOUT)
+=head2 fasta(-fh => STDOUT|*handle, -genbank => 0|1, 
+    -organism => , -strain => )
+
+    -genbank option triggers different fasta line decorations
+    suitable for genbank submission. Uses -orgnaism, -strain. 
+    
 =cut
 
 sub fasta {
@@ -2030,8 +2035,10 @@ sub fasta {
 	$decoration = 
 	    join(" ", 
 		 $self->id, 
-		 '[mol=genomic dna]', 
-		 '[org='.($args->{'-organism'} || 'unknown').']',
+		 '[molecule=dna]', 
+		 '[moltype=genomic]', 
+		 '[gcode=1]', 		 
+		 '[organism='.($args->{'-organism'} || 'unknown').']',
 		 '[strain='.($args->{'-strain'} || 'unknown').']'
 	    );
     } else {
@@ -2050,7 +2057,19 @@ sub fasta {
 	    );
     }
     
-    print $fh ">".$decoration."\n".$self->sequence;
+    print {$fh} ">".$decoration;
+    
+    if ( $args->{'-strict'} ) {
+	my @seq = split//, $self->sequence;
+	
+        my $line_length=60;
+        until ($#seq==-1) {
+            my $lim = (scalar(@seq) > $line_length ? $line_length : scalar(@seq));
+            my $tseq = join('', splice(@seq, 0, $lim));
+            print {$fh} $tseq;
+            # print $#seq, $lim, $tseq;
+        }
+    } else { print {$fh} $self->sequence; }    
     
     return $self;
 }
@@ -2064,12 +2083,20 @@ sub fasta {
 sub genbank_tbl{
     my $self = shift;
     my $args = {@_};
+
+    #################################
+    # defaults and variables 
+    #################################
     
     $self->throw unless exists $args->{'-organism'};
     $self->throw unless exists $args->{'-fh'};
     my $fh = $args->{'-fh'};
 
     my @bump = (3 x undef);
+
+    #################################
+    # scaffold output 
+    #################################
 
     print {$fh} ">Feature", $self->id;
     print {$fh} 1, $self->length, 'REFERENCE';
@@ -2079,14 +2106,20 @@ sub genbank_tbl{
 	my $printkey = $key;
 	$printkey =~ s/^\-//;
 	$printkey = 'db_xref' if $printkey eq 'taxid';
+	$printkey = 'PubMed' if $printkey eq 'reference';
 	print {$fh} @bump, $printkey, $args->{ $key };	
     }
 
+    #################################
+    # orf output 
+    #################################
+
     foreach my $feat ( $self->stream ) {
+	#next if $feat->id =~ /^65|77|78$/;
+	#next unless $feat->stream >1 && $feat->strand < 1;
+	next if $feat->data('STOP');
 	$feat->genbank_tbl( %{$args} );
     }
-    
-    exit;
 
     return 1;
 }
