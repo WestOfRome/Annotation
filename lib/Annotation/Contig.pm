@@ -965,6 +965,98 @@ sub _common_codon_cluster {
     return \%clst;
 }
 
+
+sub _validate_assembly_gaps {
+    my $self = shift;
+    my $args = {@_};
+
+    my @remove;
+    foreach my $gap ( grep { $_->assign eq 'GAP' }  $self->stream ) { 
+	if ( $gap->sequence !~ /N/) {
+	    $gap->output( -fh => \*STDERR );
+	    print {STDERR} $gap->sequence;
+	    push @remove, $gap;
+	}
+    }
+    map { $self->remove( -object => $_ ) } @remove;
+    
+    foreach my $gap ( grep { $_->assign ne 'GAP' }  $self->stream ) { 
+	if ( $gap->sequence =~ /^N{100}$/) {
+	    $gap->output( -fh => \*STDERR );
+	    $gap->throw;
+	}
+    }
+
+    # look for unannotated gaps ....
+
+    return $self;
+}
+
+sub _validate_overlapping_features {
+    my $self = shift;
+    my $args = {@_};
+    
+    my $fh = *STDERR;
+
+    my $clref = $self->cluster(
+	-cluster => 'commoncodon',
+	-stranded => 1,
+	-accelerate => 20
+	);
+    
+    foreach my $cl ( values %{$clref} ) {
+	my ($pop, @others) = @{ $cl };
+	if ( @others ) {
+	    print {$fh} ++$abcd;
+	    map { $_->output( -fh => $fh, -prepend => ['CC'] ) } @{$cl}; 
+
+	    # choose best seq...
+
+	    my ($best,$scr) = $pop->choose( -object => \@others, -verbose => 2 );
+
+	    # deal with possible OGs -- assuming one for now .. 
+
+	    my $newbest;
+	    foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
+		if ( ! $best->orthogroup && $og->sequence == $best->sequence ) {
+		    $newbest = $og;
+		} else { 
+		    # need ot get the scer gene ..
+		    $og->_dissolve_orthogroup;
+		}
+	    }
+	    $best = $newbest if $newbest; 
+	    
+	    # delete redundant genes 
+	    
+	    foreach my $del (  grep { $_ ne $best } @{$cl} ) {
+		$self->remove( -object => $del );
+		$del->DESTROY;
+	    }
+	}
+    }
+
+    #
+
+    my $clref = $self->cluster(
+	-cluster => 'overlap',
+	-stranded => 1,
+	-frame => 0,
+	-accelerate => 20,
+	-param => 0.2
+	);
+
+    foreach my $cl ( values %{$clref} ) {
+	if ( $#{ $cl} >0 ) {
+	    print {$fh} ++$abcd;
+	    map { $_->output( -fh => $fh, -prepend => ['OL'] ) } @{$cl}; 
+	}
+    }
+    
+    return $self;
+}
+
+
 =head2 orfs(-method => 'start', -order => 'undef|up|down', -restrict => ['REAL']
     -strand => 1, -rank => 3, -noncoding => '1|0')
 

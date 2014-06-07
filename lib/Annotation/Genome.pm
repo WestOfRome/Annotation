@@ -8158,7 +8158,7 @@ sub genbank_tbl {
     # standard components 
     #################################
 
-    $self->_validate_assembly_gaps;
+    $self->_make_genbank_compatible( @_ );
 
     #################################
     # standard components 
@@ -8195,27 +8195,22 @@ sub orthogroups { my $self = shift; return grep { $_->ogid } $self->orfs(-noncod
 # subroutines : private/experimental methods 
 #########################################
 
-sub _validate_assembly_gaps {
+sub _make_genbank_compatible {
     my $self = shift;
     my $args = {@_};
 
-    $args->{'-format'} = 'fasta' unless exists $args->{'-format'};	
-
-
     foreach my $scaf ( $self->stream ) {
-	my @remove;
-	foreach my $o ( grep { $_->assign eq 'GAP' }  $scaf->stream ) { 
-	    if ( $o->sequence !~ /N{1,}/) {
-		$o->output( -fh => \*STDERR );
-		print {STDERR} $o->sequence;
-		push @remove, $o;
-	    }
-	}
-	map { $self->remove( -object => $_ ) } @remove;
-    }
+	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
 
+	$scaf->_validate_overlapping_features;
+	
+	$scaf->_validate_assembly_gaps;
+	
+    }
+    
     return $self;
 }
+
 
 #########################################
 # subroutines : private/experimental methods 
