@@ -7064,7 +7064,24 @@ sub genbank_tbl {
 
     my @exons = $self->stream;
     my ($top,$tail) = $self->_top_tail;
-    
+    $self->structure();
+
+    my $newpseudo;
+    if ( $#exons > 0 ) {
+	unless (  $self->data('INTRONS') == $#exons ) {
+	    my $fake = ref($self)->new
+		(
+		 START => $self->start,
+		 STOP => $self->stop,
+		 STRAND => $self->strand,
+		 UP => $self->up
+		);
+	    @exons=();
+	    @exons=($fake->down);
+	    $newpseudo=1;
+	}
+    }
+
     foreach my $ex ( @exons ) {
 	my $start = $self->strand == -1 ? $ex->stop : $ex->start;
 	my $stop = $self->strand == -1 ? $ex->start : $ex->stop;
@@ -7115,7 +7132,7 @@ sub genbank_tbl {
 	if ( $self->pseudogene ) {
 	    print {$fh} @bump, 'pseudogene', 'unitary';	 # unknown
 
-	} elsif ( $self->data('STOP') ) {
+	} elsif ( $self->data('STOP') || $newpseudo ) {
 	    # use pseudo if not an actual pseudogene but gene is disrupted by sequencing error etc 
 	    print {$fh} @bump, 'pseudo', undef;
 
