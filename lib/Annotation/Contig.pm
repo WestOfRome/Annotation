@@ -998,6 +998,18 @@ sub _validate_overlapping_features {
     
     my $fh = *STDERR;
 
+
+    ################################
+    # 
+    ################################
+
+    $self->throw unless my $index = $args->{'-index'};
+    $self->throw unless ref($index) =~ /HASH/;
+
+    ################################
+    # 
+    ################################
+
     my $clref = $self->cluster(
 	-cluster => 'commoncodon',
 	-stranded => 1,
@@ -1007,25 +1019,30 @@ sub _validate_overlapping_features {
     foreach my $cl ( values %{$clref} ) {
 	my ($pop, @others) = @{ $cl };
 	if ( @others ) {
-	    print {$fh} ++$abcd;
-	    map { $_->output( -fh => $fh, -prepend => ['CC'] ) } @{$cl}; 
+	    if ( $args->{'-verbose'} ) {
+		map { $_->output( -fh => $fh, -prepend => ['CC'] ) } @{$cl}; 
+	    }
 
 	    # choose best seq...
 
 	    my ($best,$scr) = $pop->choose( -object => \@others, -verbose => 2 );
-
-	    # deal with possible OGs -- assuming one for now .. 
-
-	    my $newbest;
-	    foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
-		if ( ! $best->orthogroup && $og->sequence == $best->sequence ) {
-		    $newbest = $og;
-		} else { 
-		    # need ot get the scer gene ..
-		    $og->_dissolve_orthogroup;
+	    unless ( $best->orthogroup ) {
+		my $newbest;
+		foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
+		    $newbest =$og if $og->sequence == $best->sequence;
 		}
+		$best = $newbest if $newbest; 
 	    }
-	    $best = $newbest if $newbest; 
+
+	    $best->output( -fh => $fh, -prepend => [">>"] ) if $args->{'-verbose'};
+
+	    # dissolve OGs as required 
+	    
+	    foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
+		$self->throw unless my ($og_king) = 
+		    grep { $self->up->organism eq $_->organism } @{$index->{ $og->ogid }};
+		$og_king->_dissolve_orthogroup;
+	    }
 	    
 	    # delete redundant genes 
 	    
@@ -1036,7 +1053,9 @@ sub _validate_overlapping_features {
 	}
     }
 
-    #
+    ################################
+    # 
+    ################################
 
     my $clref = $self->cluster(
 	-cluster => 'overlap',
