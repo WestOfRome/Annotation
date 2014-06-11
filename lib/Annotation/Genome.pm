@@ -8199,11 +8199,12 @@ sub _make_genbank_compatible {
     my $self = shift;
     my $args = {@_};
 
+    $self->throw unless $args->{'-index'};
+
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
 
-	$scaf->_validate_overlapping_features;
-	
+	$scaf->_validate_overlapping_features( @_ ); # need the index file to handle OGs       
 	$scaf->_validate_assembly_gaps;
 	
     }
