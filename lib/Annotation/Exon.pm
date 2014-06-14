@@ -837,10 +837,15 @@ sub start {
     my $args = {@_};	
 	
     $args->{'-relative'} = 1 if exists $args->{'-rel'} || exists $args->{'-R'};	
-    return $self->SUPER::start(@_) unless exists $args->{'-relative'};
-    
+
+    ####### 2014 / 6 / 11 
+    #return $self->SUPER::start(@_) unless exists $args->{'-relative'};
+    return $self->SUPER::start(@_) if $#_ <= 0; 
+    #######
+
     my $new;	
-    if ($self->strand == -1) {
+    #if ($self->strand == -1) {
+    if ($args->{'-relative'} && $self->strand == -1) { # added relative tag  2014 / 6 / 11 
 	if (exists $args->{'-adjust'}) {
 	    $new = $self->stop - $args->{'-adjust'};
 	} elsif (exists $args->{'-new'}) {
@@ -872,10 +877,15 @@ sub stop {
     my $args = {@_};
     
     $args->{'-relative'} = 1 if exists $args->{'-rel'} || exists $args->{'-R'};	
-    return $self->SUPER::stop(@_) unless exists $args->{'-relative'};
+
+    ####### 2014 / 6 / 11 
+    #return $self->SUPER::stop(@_) unless exists $args->{'-relative'};
+    return $self->SUPER::stop(@_) if $#_ <= 0; 
+    #######
 
     my $new;	
-    if ($self->strand == -1) {
+    #if ($self->strand == -1) {
+    if ($args->{'-relative'} && $self->strand == -1) { # added relative tag  2014 / 6 / 11 
 	if (exists $args->{'-adjust'}) {
 	    $new = $self->start - $args->{'-adjust'};
 	} elsif (exists $args->{'-new'}) {
