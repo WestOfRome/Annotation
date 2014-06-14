@@ -973,9 +973,11 @@ sub _validate_assembly_gaps {
     my @remove;
     foreach my $gap ( grep { $_->assign eq 'GAP' }  $self->stream ) { 
 	if ( $gap->sequence !~ /N/) {
-	    $gap->output( -fh => \*STDERR );
-	    print {STDERR} $gap->sequence;
 	    push @remove, $gap;
+	    if ( $args->{'-verbose'} || 1 ) {
+		$gap->output( -fh => \*STDERR );
+		print {STDERR} $gap->sequence;
+	    }
 	}
     }
     map { $self->remove( -object => $_ ) } @remove;
@@ -997,7 +999,6 @@ sub _validate_overlapping_features {
     my $args = {@_};
     
     my $fh = *STDERR;
-
 
     ################################
     # 
@@ -1054,7 +1055,8 @@ sub _validate_overlapping_features {
     }
 
     ################################
-    # 
+    # Handle any other overlapping features 
+    # with non-trivial overlap 
     ################################
 
     my $clref = $self->cluster(
@@ -1067,11 +1069,72 @@ sub _validate_overlapping_features {
 
     foreach my $cl ( values %{$clref} ) {
 	if ( $#{ $cl} >0 ) {
-	    print {$fh} ++$abcd;
-	    map { $_->output( -fh => $fh, -prepend => ['OL'] ) } @{$cl}; 
+	    if ( $args->{'-verbose'} ) {
+		map { $_->output( -fh => $fh, -prepend => ['OL'] ) } @{$cl}; 
+	    }
 	}
     }
     
+    ################################
+    # Handle features that overlap gaps
+    ################################
+    
+  GAP: foreach my $gap ( grep { $_->assign eq 'GAP' } $self->stream ) {
+      my @nei =  $gap->context( -distance => 10, -all => 1, -trna => 0, -feature => 0, -self => -1 );
+      foreach my $nei ( @nei ) {
+	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
+	  #$self->throw unless $nei->coding( -pseudo => 1 );
+	  
+	  if ( $args->{'-verbose'} || 1 )  {
+	      print {$fh} ">>$olap", join(',',@{$self->scaffold});
+	      $gap->output(-fh => $fh, -prepend => ['GAP'], -append => [ $gap->description ]);
+	      $nei->output(-fh => $fh, -prepend => ['ORF'] );
+	  }
+
+	  # there are three options here 
+	  # 1. Delete the ORF 
+	  # 2. Delete the GAP 
+	  # 3. Modify coordinates (may not prevent an error) 
+	  # 4. Split the ORF in two 
+	  
+	  if ( $olap < 1 ) {
+	      
+	      if ( $gap->start < $nei->start && $gap->stop < $nei->stop ) {
+		  # gap overlaps start of gene 
+		  foreach my $exon ($nei->stream) {
+		      last if $exon->stop > $gap->down->stop;
+		      $nei->remove( -object => $exon );
+		      $exon->DESTROY;
+		  }
+		  $nei->exons(-query => 'first')->start(-adjust => +1) until 
+		      $nei->exons(-query => 'first')->start > $gap->down->start && $nei->length%3==0;
+		  $nei->output( -fh => $fh ) if $args->{'-verbose'};
+		  
+	      } elsif ( $gap->start > $nei->start && $gap->stop > $nei->stop ) {
+		  # gap overlaps backend of gene 
+		  foreach my $exon (reverse $nei->stream) {
+		      last if $exon->start < $gap->down->start;
+		      $nei->remove( -object => $exon );
+		      $exon->DESTROY;
+		  }
+		  #$nei->output( -fh => $fh ) and 
+		  $nei->exons(-query => 'last')->stop(-adjust => -1) until 
+		      $nei->exons(-query => 'last')->stop < $gap->down->start && $nei->length%3==0;
+		  $nei->output( -fh => $fh ) if $args->{'-verbose'};
+		  
+	      } else {
+		  $self->throw;
+	      }
+	      
+	  } else {
+	      $self->remove( -object => $gap );
+	      $gap->DESTROY;
+	      next GAP;
+	  }
+      }
+  }
+    
+    $self->index;
     return $self;
 }
 
