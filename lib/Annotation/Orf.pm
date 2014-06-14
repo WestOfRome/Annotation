@@ -1885,9 +1885,9 @@ sub commoncodon {
     $self->throw unless $self->isa(ref($other));
     return undef unless $self->up eq $other->up; # desired behaviour?
     return undef unless $self->strand==$other->strand;
-    map { $_->oliver(-creator => 1) and $_->throw($_->aa) 
+    map { $_->oliver(-creator => 1) and $_->throw( $_->aa ) 
 	      unless $_->translatable(-fast => 1) } ($self, $other);
-
+    
     ###########################################
     # fast answers? 
     ###########################################
@@ -3052,13 +3052,13 @@ sub merge {
 }
 
 
-=head2 overlap(-object => $orf, -compare => 'coords|seq|homolog', 
+=head2 overlap(-object => $orf, -compare => 'coords|gross|seq|homolog', 
     -evalue => 1e-10, -contig => 1)
 
     Compare caller and object in terms of either their genomics coords, alignability
     (to each other; bl2seq) or their alignment to a shared homoog. In the last case
     we return a 0-1 scale indicating what fraction of the aligned positions in the 
-    homolog covered twice vs once. Consequently, 0 is usually the desired outcome 
+    homolog covered twice vs once. For this use case, 0 is often the desired outcome 
     and return values must be carefully chekced -- undef indicates failure. 
     
     -evalue : specify alignment cutoff for direct sequence comparison 
@@ -3081,7 +3081,7 @@ sub overlap {
 
     ######################
 
-    goto HOMOLOG unless $args->{'-compare'} =~ /coords|seq/;
+    goto HOMOLOG unless $args->{'-compare'} =~ /coords|gross|seq/;
 
     # get shorty
     
@@ -3103,6 +3103,17 @@ sub overlap {
 		$overlap += $x->overlap(-object => $y);
 	    }
 	}
+    } elsif ( $args->{'-compare'} =~ /gross/ ) {
+
+	my ($x, $y) = sort {$a->start <=> $b->start} ($self, $other);				
+	if ($x->stop > $y->stop) {
+	    $overlap = $y->length;
+	} elsif ($x->stop >= $y->start) {
+	    $overlap = ($x->stop - $y->start)+1;
+	} elsif ($x->stop < $y->start) {
+	    $overlap = 0;
+	}
+	
     } elsif ($args->{'-compare'} =~ /seq/) {
 
 	# change bl2seq to exonerate? 
@@ -3687,9 +3698,18 @@ sub homology {
 
 sub coding {
     my $self=shift;
+    my $args = {@_};
+    
+    $args->{'-pseudo'}=0 unless exists $args->{'-pseudo'};
+
     return 1 if $self->evidence =~ /HCNF/;
     return 1 if $self->ygob eq 'Anc_1.380' && $self->hypergob >=5; # HAP1 exception. this is crazy...
-    return ( $self->assign =~ /FEATURE|GAP|TELOMERE|CENTROMERE|RNA|PSEUDO|REPEAT/ ? 0 : 1); # INTER?
+
+    my @non=qw(FEATURE GAP TELOMERE CENTROMERE RNA REPEAT);
+    push @non, 'PSEUDO' unless $args->{'-pseudo'};
+    my $regex = join('|', @non);
+
+    return ( $self->assign =~ /$regex/ ? 0 : 1); # INTER?
 }
 
 =head2 noncoding
@@ -7135,6 +7155,8 @@ sub genbank_tbl {
 	} elsif ( $self->data('STOP') || $newpseudo ) {
 	    # use pseudo if not an actual pseudogene but gene is disrupted by sequencing error etc 
 	    print {$fh} @bump, 'pseudo', undef;
+	    print {$fh} @bump, 'note', ( scalar($self->stream) - $self->data('INTRONS') -1 )
+		.' reading frame interruptions of undetermined origin';
 
 	} else {
 
