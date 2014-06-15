@@ -970,27 +970,101 @@ sub _validate_assembly_gaps {
     my $self = shift;
     my $args = {@_};
 
+    my $fh =  \*STDERR;
+
+    ######################################
+    # 1. remove erroneus gaps (related to 3 below)
+    ######################################
+
     my @remove;
     foreach my $gap ( grep { $_->assign eq 'GAP' }  $self->stream ) { 
-	if ( $gap->sequence !~ /N/) {
+	if ($gap->sequence !~ /N/) {
 	    push @remove, $gap;
-	    if ( $args->{'-verbose'} || 1 ) {
-		$gap->output( -fh => \*STDERR );
-		print {STDERR} $gap->sequence;
-	    }
+	    $gap->output( -fh => $fh, -append => ["\n".$gap->sequence] ) 
+		if $args->{'-verbose'};
 	}
     }
     map { $self->remove( -object => $_ ) } @remove;
+
+    ######################################
+    # 2. look for mislabelled gaps 
+    ######################################
     
     foreach my $gap ( grep { $_->assign ne 'GAP' }  $self->stream ) { 
 	if ( $gap->sequence =~ /^N{100}$/) {
-	    $gap->output( -fh => \*STDERR );
+	    $gap->output( -fh => $fh );
 	    $gap->throw;
 	}
     }
 
-    # look for unannotated gaps ....
+    ######################################
+    # 3. look for unannotated gaps ....
+    ######################################
 
+    my @fake_gaps = ();
+    my @seq = split(//, $self->sequence);
+
+    my $seq;
+    my $changepoint=1;
+    for my $i (0..$#seq) {
+
+	if ( ! $seq ) { #initialize 
+	    # set the change point to 1 and sequence to $seq[0] (below)
+
+	} elsif ( $seq =~ /$seq[$i]/ || # more of the same 
+		  ($seq[$i] ne 'N' && $seq !~ /N/) ) { # short DNA sequences / polyX tracts 
+	    $seq .= $seq[$i];
+	    next;
+
+	} elsif ( $seq[$i] ne 'N' ) { # transition -- ending a GAP seqeunce 
+	    if ( length( $seq ) >= 100 ) {
+		my $fake_gap = ref($self->down)
+		    ->new(
+		    START => $changepoint,
+		    STOP => $i,
+		    STRAND => 0,
+		    UP => $self
+		    );
+		$self->add( -object => $fake_gap );
+		push @fake_gaps, $fake_gap;
+	    }
+
+	} elsif ( $seq[$i] eq 'N' ) {
+	    # transition : ending a non-gap --> No action 
+	} else { $self->throw(); }
+
+	$changepoint = $i+1;
+	$seq = $seq[$i];
+    }
+    
+    ######################################
+    # compare real and fake 
+    ######################################
+    
+    my @real_gaps = sort { $a->start <=> $b->start } grep { $_->assign eq 'GAP' } $self->stream;
+    
+    #print {$fh} $#real_gaps;
+    #print {$fh} $#fake_gaps;
+
+    my (@delete, @new_gaps);
+  GAP: foreach my $nathan ( sort { $a->start <=> $b->start } @fake_gaps ) {
+      foreach my $barley (@real_gaps) {
+	  push @delete, $nathan and next GAP if 
+	      $nathan->overlap( -object => $barley, -compare => 'coords' );
+      }
+      push @new_gaps, $nathan;
+  }
+
+    ######################################
+    # remove un-needed orfs 
+    ######################################
+    
+    map { $self->remove( -object => $ _) } @delete;
+    map { $_->DESTROY } @delete; 
+    $self->index;
+
+    map { $_->output( -fh => $fh ) } @new_gaps if $args->{'-verbose'};
+    
     return $self;
 }
 
