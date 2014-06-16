@@ -1015,7 +1015,7 @@ sub _validate_assembly_gaps {
 		  ($seq[$i] ne 'N' && $seq !~ /N/) ) { # short DNA sequences / polyX tracts 
 	    $seq .= $seq[$i];
 	    next;
-
+	    
 	} elsif ( $seq[$i] ne 'N' ) { # transition -- ending a GAP seqeunce 
 	    if ( length( $seq ) >= 100 ) {
 		my $fake_gap = ref($self->down)
@@ -1026,11 +1026,14 @@ sub _validate_assembly_gaps {
 		    UP => $self
 		    );
 		$self->add( -object => $fake_gap );
+		$fake_gap->output( -fh => $fh, -prepend => ['GAPX'] );
 		push @fake_gaps, $fake_gap;
 	    }
 
 	} elsif ( $seq[$i] eq 'N' ) {
 	    # transition : ending a non-gap --> No action 
+	    print {$fh} ">$changepoint - $i\n$seq";
+
 	} else { $self->throw(); }
 
 	$changepoint = $i+1;
@@ -1049,8 +1052,10 @@ sub _validate_assembly_gaps {
     my (@delete, @new_gaps);
   GAP: foreach my $nathan ( sort { $a->start <=> $b->start } @fake_gaps ) {
       foreach my $barley (@real_gaps) {
-	  push @delete, $nathan and next GAP if 
-	      $nathan->overlap( -object => $barley, -compare => 'coords' );
+	  if ( $nathan->overlap( -object => $barley, -compare => 'coords' ) ) {
+	      push @delete, $nathan;
+	      next GAP;
+	  }
       }
       push @new_gaps, $nathan;
   }
@@ -1062,8 +1067,9 @@ sub _validate_assembly_gaps {
     map { $self->remove( -object => $ _) } @delete;
     map { $_->DESTROY } @delete; 
     $self->index;
-
-    map { $_->output( -fh => $fh ) } @new_gaps if $args->{'-verbose'};
+    
+    map { $_->output( -fh => $fh, -prepend => ['NEW_GAPS'] ) } @new_gaps 
+	if $args->{'-verbose'};
     
     return $self;
 }
@@ -1082,7 +1088,8 @@ sub _validate_overlapping_features {
     $self->throw unless ref($index) =~ /HASH/;
 
     ################################
-    # 
+    # 1. Find and remove redundant features 
+    # Based on commoncodon test so should be identical (+ errors) for the most part 
     ################################
 
     my $clref = $self->cluster(
@@ -1095,7 +1102,7 @@ sub _validate_overlapping_features {
 	my ($pop, @others) = @{ $cl };
 	if ( @others ) {
 	    if ( $args->{'-verbose'} ) {
-		map { $_->output( -fh => $fh, -prepend => ['CC'] ) } @{$cl}; 
+		map { $_->output( -fh => $fh, -prepend => ['COMMON_CODON'] ) } @{$cl}; 
 	    }
 
 	    # choose best seq...
@@ -1129,8 +1136,9 @@ sub _validate_overlapping_features {
     }
 
     ################################
-    # Handle any other overlapping features 
-    # with non-trivial overlap 
+    # 2. Handle any other overlapping features 
+    # Just report for now-- no common codon and overlaps not 
+    # expresely forbidden 
     ################################
 
     my $clref = $self->cluster(
@@ -1144,13 +1152,13 @@ sub _validate_overlapping_features {
     foreach my $cl ( values %{$clref} ) {
 	if ( $#{ $cl} >0 ) {
 	    if ( $args->{'-verbose'} ) {
-		map { $_->output( -fh => $fh, -prepend => ['OL'] ) } @{$cl}; 
+		map { $_->output( -fh => $fh, -prepend => ['OVERLAP'] ) } @{$cl}; 
 	    }
 	}
     }
     
     ################################
-    # Handle features that overlap gaps
+    # 3. Handle features that overlap gaps
     ################################
     
   GAP: foreach my $gap ( grep { $_->assign eq 'GAP' } $self->stream ) {
@@ -1159,10 +1167,10 @@ sub _validate_overlapping_features {
 	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
 	  #$self->throw unless $nei->coding( -pseudo => 1 );
 	  
-	  if ( $args->{'-verbose'} || 1 )  {
+	  if ( $args->{'-verbose'} )  {
 	      print {$fh} ">>$olap", join(',',@{$self->scaffold});
-	      $gap->output(-fh => $fh, -prepend => ['GAP'], -append => [ $gap->description ]);
-	      $nei->output(-fh => $fh, -prepend => ['ORF'] );
+	      $gap->output(-fh => $fh, -prepend => ['GAP_GAP'], -append => [ $gap->description ]);
+	      $nei->output(-fh => $fh, -prepend => ['GAP_ORF'] );
 	  }
 
 	  # there are three options here 
