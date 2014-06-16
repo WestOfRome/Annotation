@@ -8203,10 +8203,8 @@ sub _make_genbank_compatible {
 
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
-
-	$scaf->_validate_assembly_gaps;
-	$scaf->_validate_overlapping_features( @_ ); # need the index file to handle OGs  
-	
+	$scaf->_validate_assembly_gaps( -verbose => 1 );
+	$scaf->_validate_overlapping_features( @_, -verbose => 1 ); # need the index file to handle OGs
     }
     
     return $self;
