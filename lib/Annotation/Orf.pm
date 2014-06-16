@@ -6877,17 +6877,20 @@ sub genbank_evidence {
 
     $args->{'-rich'} = 0 unless exists $args->{'-rich'};
     
-    my @kick = ((3 x undef), "inference");
-    
+    my @kick = ((3 x undef), "inference");    
+    my $database = ( $self->gene =~ /$HOMOLOGY{'SGD'}/ ? 'SGD' : 'YeastGeneOrderBrowser');
+    $database = 'GenBank' if $self->gene =~ /^\d+$/;
+
     my $string;
     if ( $self->evidence eq 'YGOB' ) {
 	$string = "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob;  
 	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
-	    "similar to AA sequence:blastall:2.2.17:GenBank:".$self->gene
+	    "similar to AA sequence:blastall:2.2.17:$database:".$self->gene
 	    if $self->evalue('gene') <= 1e-5 && $args->{'-rich'};
 	
     } elsif ( $self->evidence =~ /KAKS|NCBI|AA|HSP|HCNF/ ) {
-	$string = "similar to AA sequence:blastall:2.2.17:GenBank:".$self->gene;	  
+
+	$string = "similar to AA sequence:blastall:2.2.17:$database:".$self->gene;	  
 	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
 	    "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob
 	    if $self->evalue('ygob') <= 1e-5 && $args->{'-rich'};
@@ -7194,6 +7197,7 @@ sub genbank_tbl {
     } elsif ( $asn eq 'misc_feature' ) {
 
 	print {$fh} @bump, 'function', $self->description if $self->description;
+	print {$fh} @bump, 'note', 'Centromere location identified from synteny and sequence';
 
     } elsif ( $asn eq 'mobile_element' ) {
 
