@@ -970,6 +970,8 @@ sub _validate_assembly_gaps {
     my $self = shift;
     my $args = {@_};
 
+    $args->{'-gap_len'} = 20 unless $args->{'-gap_len'};
+
     my $fh =  \*STDERR;
 
     ######################################
@@ -1017,7 +1019,7 @@ sub _validate_assembly_gaps {
 	    next;
 	    
 	} elsif ( $seq[$i] ne 'N' ) { # transition -- ending a GAP seqeunce 
-	    if ( length( $seq ) >= 100 ) {
+	    if ( length( $seq ) >= $args->{'-gap_len'} ) {
 		my $fake_gap = ref($self->down)
 		    ->new(
 		    START => $changepoint,
@@ -1025,14 +1027,16 @@ sub _validate_assembly_gaps {
 		    STRAND => 0,
 		    UP => $self
 		    );
-		$self->add( -object => $fake_gap );
+		$fake_gap->evidence('NNNN');
+		$fake_gap->evaluate(-structure => 0, -validate => 0);
+		$self->add( -object => $fake_gap );		
 		$fake_gap->output( -fh => $fh, -prepend => ['GAPX'] );
 		push @fake_gaps, $fake_gap;
 	    }
 
 	} elsif ( $seq[$i] eq 'N' ) {
 	    # transition : ending a non-gap --> No action 
-	    print {$fh} ">$changepoint - $i\n$seq";
+	    # print {$fh} ">$changepoint - $i\n$seq";
 
 	} else { $self->throw(); }
 
@@ -1059,6 +1063,9 @@ sub _validate_assembly_gaps {
       }
       push @new_gaps, $nathan;
   }
+
+    #print {$fh} $#delete;
+    #print {$fh} $#new_gaps;
 
     ######################################
     # remove un-needed orfs 
