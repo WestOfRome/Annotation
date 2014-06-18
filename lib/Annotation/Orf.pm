@@ -6883,22 +6883,23 @@ sub genbank_evidence {
 
     my $string;
     if ( $self->evidence eq 'YGOB' ) {
+
 	$string = "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob;  
 	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
-	    "similar to AA sequence:blastall:2.2.17:$database:".$self->gene
-	    if $self->evalue('gene') <= 1e-5 && $args->{'-rich'};
+	    "similar to AA sequence:$database:".$self->gene # :blastall:2.2.17
+	    if ($self->gene && $self->evalue('gene') <= 1e-5 && $args->{'-rich'});
 	
     } elsif ( $self->evidence =~ /KAKS|NCBI|AA|HSP|HCNF/ ) {
 
-	$string = "similar to AA sequence:blastall:2.2.17:$database:".$self->gene;	  
+	$string = "similar to AA sequence:$database:".$self->gene; # :blastall:2.2.17	  
 	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
 	    "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob
-	    if $self->evalue('ygob') <= 1e-5 && $args->{'-rich'};
+	    if ($self->ygob && $self->evalue('ygob') <= 1e-5 && $args->{'-rich'});
 
     } elsif (  $self->evidence eq 'LTR' ) {
-	$string = "similar to DNA sequence:blastall:2.2.17:SGD:".$self->hit('ltr');
+	$string = "similar to DNA sequence:SGD:".$self->hit('ltr'); # blastall:2.2.17:
     } elsif (  $self->evidence eq 'TY' ) {
-	$string = "similar to AA sequence:blastall:2.2.17:SGD:".$self->hit('ty');
+	$string = "similar to AA sequence:SGD:".$self->hit('ty'); # blastall:2.2.17:
 
     } elsif (  $self->evidence eq 'RNA' ) {
 	$string = "nucleotide motif:tRNAscan-SE:1.23:".$self->gene;	    
@@ -7160,7 +7161,7 @@ sub genbank_tbl {
 	    print {$fh} @bump, 'pseudo', undef;
 	    print {$fh} @bump, 'note', ( scalar($self->stream) - $self->data('INTRONS') -1 )
 		.' reading frame interruptions of undetermined origin';
-
+	    
 	} else {
 
 	    # homology 
