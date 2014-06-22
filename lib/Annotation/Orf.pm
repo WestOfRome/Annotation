@@ -5614,6 +5614,15 @@ sub _genericlinks {
 sub firstexon { return $_[0]->exons(-query => 'first'); }
 sub fex { return $_[0]->firstexon; } 
 
+=head2 first_codon
+=cut 
+sub first_codon { return ($_[0]->_top_tail)[0]; }
+
+=head2 last_codon
+=cut 
+
+sub last_codon { return ($_[0]->_top_tail)[1]; }
+
 =head2 dump
 
     Override method for parent dump().
