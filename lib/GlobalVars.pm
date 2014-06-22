@@ -15,6 +15,7 @@ use Exporter;
 	    %DNA
 	    $TRIPLET
 $START_CODON
+$STOP_CODON
 	    $INFINITY
 $NONZERO
 $AUTHOR
@@ -73,6 +74,7 @@ delete $CODONS_CANDIDA{'CTN'};
 
 $TRIPLET = 3;
 $START_CODON='ATG';
+$STOP_COODN=qr/^TAG|TGA|TAA$/;
 
 $INFINITY = 1e100;
 $NONZERO = 1e-20;
