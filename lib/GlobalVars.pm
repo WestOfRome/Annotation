@@ -14,6 +14,7 @@ use Exporter;
 	    %CODONS_CANDIDA
 	    %DNA
 	    $TRIPLET
+$START_CODON
 	    $INFINITY
 $NONZERO
 $AUTHOR
@@ -71,6 +72,7 @@ delete $CODONS_CANDIDA{'CTN'};
 	);
 
 $TRIPLET = 3;
+$START_CODON='ATG';
 
 $INFINITY = 1e100;
 $NONZERO = 1e-20;
