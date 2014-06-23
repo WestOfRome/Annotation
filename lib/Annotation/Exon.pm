@@ -610,6 +610,11 @@ sub _adjust {
 
     $self->throw unless $adj =~ /^\-{0,1}\d+$/;
     
+    if ( ($self->start + $adj) < 1 ||  ($self->stop + $adj) > $self->up->up->length ) {
+	$self->warn("Coords not adjusted");
+	return undef;
+    }
+
     $self->start( $self->start + $adj );
     $self->stop( $self->stop + $adj );
 
