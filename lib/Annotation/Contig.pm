@@ -1227,6 +1227,109 @@ sub _validate_overlapping_features {
     return $self;
 }
 
+=head2 _make_genbank_gene_terminii()
+
+    -tryhard instructs method to continuousy add exons to 
+    'step over' STOP codons until an upstream M is found. 
+    Results are not that pretty. 
+
+=cut 
+
+sub _make_genbank_gene_terminii {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-tryhard'}=0 unless exists $args->{'-tryhard'};
+    
+    my $fh = \*STDERR;
+    
+    foreach my $orf ( grep { $_->coding } $self->stream) {
+	my $fex = $orf->firstexon;
+	
+      FINDSTART:
+	unless ( $orf->first_codon eq $START_CODON ) {	    
+	    $orf->output(-prepend => [$orf->exons+0],  -append => [ $orf->_top_tail ], -fh => $fh );
+	    
+	    #################################
+	    # 1A - play with coords of first exon 
+	    # to find a convenient M 
+	    #################################
+	    
+	    # look upstream for M 
+	    
+	    $fex->start( -adjust => -$TRIPLET, -R => 1 ) until 
+		( $orf->first_codon eq $START_CODON ||             # OK outcome 
+		  $orf->_terminal_dist2( $orf->strand*-1 ) <= 3 || # OK outcome (contig end) 
+		  $orf->first_codon =~ $STOP_CODON ||              # NOT OK 		  
+		  $orf->first_codon eq 'NNN' );                    # NOT OK 		  
+	    
+	    # Do not start on STOP/junk codons 
+	    
+	    $fex->start( -adjust => $TRIPLET, -R => 1) until 
+		$orf->first_codon !~ $STOP_CODON && $orf->first_codon ne 'NNN';
+	    my $mem = $fex->start( -R => 1 );
+	    
+	    # look down stream for M 
+	    
+	    $fex->start( -adjust => $TRIPLET, -R => 1) until 
+		( $orf->first_codon eq $START_CODON || $fex->length <= 6 );
+
+	    #################################
+	    # 1B - add exons 
+	    # skip over upstream STOP or other blocking codon 
+	    #################################
+	    
+	    unless ( $orf->first_codon eq $START_CODON || 
+		     $orf->_terminal_dist2( $orf->strand*-1 ) <= 3 ) {
+
+		if ( $args->{'-tryhard'} ) {		    
+		    my $coord = $fex->start( -R => 1 ) + ( $orf->strand == -1 ? +1 : -2)*$TRIPLET;
+		    my $exon = ref( $orf->down )->new(
+			START => $coord,
+			STOP => $coord + ($TRIPLET-1),
+			STRAND => $orf->strand,
+			INTRON => [0,0],
+			);
+		    $orf->add( -object => $exon );
+		    $orf->index;
+		    $orf->evaluate;
+		    
+		    $fex = $orf->fex;
+		    $self->throw unless $exon eq $fex;
+		    #$fex->_adjust( -$TRIPLET*$orf->strand );
+		    goto FINDSTART;
+
+		} else { $fex->start( -new => $mem, -R => 1 ); }
+	    }
+	    $orf->output( -append => [ $orf->_top_tail ], -fh => $fh );
+	    
+	    #################################
+	    # 1C - repredct the whole thing 
+	    #################################
+
+	    $orf->reoptimise( 
+		-extend => 5000, 
+		-protein => $orf->homolog.'',
+		-hmm => ($orf->pillar || $orf->hit('ygob')),
+		-reference => ($orf->gene || $orf->hit('SGD')), 
+		-verbose => 7
+		) unless $orf->first_codon eq $START_CODON; 		
+		
+	    $orf->output( -append => [ $orf->_top_tail ], -fh => $fh );
+	    print "\n";
+
+	    # 
+
+	    #my ($neigh) = ($orf->strand == -1 ? $orf->right : $orf->left );
+	    #my $D_feat = ($neigh ? $orf->distance( -object => $neigh, -bases => 1) : undef);
+	    #my $D_term = $orf->_terminal_dist2( $orf->strand*-1 ); 
+	    #print {$fh} $orf->name, $orf->start, $orf->stop, $orf->strand, $self->length, 
+	    #$orf->first_codon, $orf->last_codon, $orf->exons, $orf->length;	   
+	}
+    }
+
+    return $self;
+}
 
 =head2 orfs(-method => 'start', -order => 'undef|up|down', -restrict => ['REAL']
     -strand => 1, -rank => 3, -noncoding => '1|0')
