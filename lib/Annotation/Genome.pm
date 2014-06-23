@@ -8177,6 +8177,23 @@ sub genbank_tbl {
 	    $args->{'-fh'} = $fsa;
 	    $scaf->fasta( %{$args} );
 	}
+	
+	##############################
+	# TEMP
+	open(my $gfh, '>'.$root.'.gap')  || die($root.'.gap');
+	my @gaps = sort {$a->start <=> $b->start} grep { $_->assign eq 'GAP' } $scaf->stream;
+	foreach my $i ( 1..$#gaps ) {
+	    my $gap = $gaps[$i];
+	    my $prev = $gaps[$i-1];
+	    foreach my $trig ( 120095,783847,1240489 ) {
+		if ( $trig == $prev->stop+1 ) {
+		    print {$gfh} join(" ", ">$trig",$prev->name,$gap->name,"\n").
+			$gap->intergenic( -seq => 1, -object => $prev );
+		}
+	    }
+	}
+	##############################
+	
     }
 
     exit;
@@ -8203,8 +8220,9 @@ sub _make_genbank_compatible {
 
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
-	$scaf->_validate_assembly_gaps( -verbose => 1 );
-	$scaf->_validate_overlapping_features( @_, -verbose => 1 ); # need the index file to handle OGs
+	$scaf->_validate_assembly_gaps( -verbose => 0 );
+	$scaf->_validate_overlapping_features( @_, -verbose => 0 ); # need the index file to handle OGs
+	$scaf->_make_genbank_gene_terminii( -verbose => 1 );
     }
     
     return $self;
