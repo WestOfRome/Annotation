@@ -3237,6 +3237,8 @@ sub reoptimise {
     # Repredict and generate a panel of alt mdoels 
     ##################################################################
 
+    print {STDERR} %{$args};
+
     # 0. get relevant region 
 
     my ($locus,$adjust) = 
@@ -5637,6 +5639,8 @@ sub dump { return $_[0]->output(-dump => 1); }
     conflict with other models. 
 
     Returns new start coord in safe mode, else return modified self.
+
+    NB: See redundant but superiod code in  _make_genbank_gene_terminii 
 
 =cut 
 
