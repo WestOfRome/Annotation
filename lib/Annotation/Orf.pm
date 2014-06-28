@@ -3237,7 +3237,7 @@ sub reoptimise {
     # Repredict and generate a panel of alt mdoels 
     ##################################################################
 
-    print {STDERR} %{$args};
+    # print {STDERR} %{$args};
 
     # 0. get relevant region 
 
@@ -5481,7 +5481,7 @@ sub _decompose_gene_name {
 
 sub _compute_gene_distance {
     my ($x,$y) = @_;
-    return undef if $y =~ /_YGOB_/ || $x =~ /_YGOB_/;
+    return undef if $y =~ /_YGOB_|^SP/ || $x =~ /_YGOB_|^SP/;
 
     die("$x,$y") unless $x && $y;
     my @x = _decompose_gene_name($x);
