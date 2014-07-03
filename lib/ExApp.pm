@@ -798,21 +798,36 @@ sub wise { #  avg 3.29s/call (for ~20Kb regions)
     $pseudo->DESTROY;
 
     ######################################################    
-    # 
+    # Get the HMM -- default to local otherwise query allele 
     ######################################################
 
     my $hmm = ( $args->{'-hmm'} ? $args->{'-hmm'} : $args->{'-object'}->ygob );
-    $hmm = $ENV{'YGOB_HMMER3_LIB'}.'/'.$hmm unless $hmm =~ /\//; 
-    $hmm .= '.h2m' unless  $hmm =~ /\.h2m$/; 
-    $hmm =~ s/\.h3m//;
-    $self->warn($hmm) and return undef unless -e $hmm;
+    if ( $ENV{'YGOB_HMMER3_LIB'} ) {
+	$hmm = $ENV{'YGOB_HMMER3_LIB'}.'/'.$hmm unless $hmm =~ /\//; 	
+	$hmm .= '.h2m' unless  $hmm =~ /\.h2m$/; 
+	$hmm =~ s/\.h3m//;
+    } else {
+	return undef unless $hmm;
+	my $api = 'http://www.saccharomycessensustricto.org/SaccharomycesSensuStrictoResources//ygobhmms/'.$hmm;
+	$api .= '.h3m' unless  $hmm =~ /\.h3m$/; 
+	
+	my ($fh, $file) = $self->_tempfile('XXXX');
+	close($fh);
+	system( " curl $api > $file 2> /dev/null " );
+	my ($fh2, $file2) = $self->_tempfile('XXXX');
+	close($fh2);
+	system( " hm3.hmmconvert -2 $file > $file2 " );
+	$hmm = $file2;
+    }
 
+    $self->warn($hmm) and return undef unless -e $hmm;
+    
     ######################################################
     # compose cmd, run, parse, fix coords, make object 
     ######################################################
-
+    
     my $cmd = " $binary $hmm $dna $args->{'-params'} ";
-    print "$cmd\n". ` $cmd 2>/dev/null ` if $args->{'-verbose'} >= 2;
+    print {STDERR} "$cmd\n". ` $cmd 2>/dev/null ` if $args->{'-verbose'} >= 2;
 
     my %hash;
     foreach my $r ( split/\n/, ` $cmd 2>/dev/null ` ) {
