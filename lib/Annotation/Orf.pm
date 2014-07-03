@@ -3237,7 +3237,7 @@ sub reoptimise {
     # Repredict and generate a panel of alt mdoels 
     ##################################################################
 
-    # print {STDERR} %{$args};
+    print {STDERR} %{$args};
 
     # 0. get relevant region 
 
@@ -3259,7 +3259,7 @@ sub reoptimise {
     # 3. run GeneWise  
     
     my @wise = 
-	$locus->wise( -hmm => $args->{'-hmm'}, -verbose => ($args->{'-verbose'}>=2 ? 1 :0 ) ) 
+	$locus->wise( -hmm => $args->{'-hmm'}, -verbose => ($args->{'-verbose'}>=2 ? 5 :0 ) ) # 1->5
 	unless ! $args->{'-hmm'};
 
     # post process pseudocontig effects:: all orfs to real contig  
@@ -4967,7 +4967,7 @@ sub evaluate {
 
     unless ( $self->rank < -1 ) {
 	$self->structure unless $args->{'-structure'} == 0;
-	($self->output && $self->throw("Bad structure!\n".$self->debug))
+	($self->output && $self->throw( join("\n", 'Bad structure', $self->debug, $self->aa ) ))
 	    unless $args->{'-validate'} == 0 || $self->translatable;
     }
 
@@ -7092,7 +7092,12 @@ sub genbank_tbl {
     
     # 
 
-    $self->output( -fh => \*STDOUT, -prepend => [$self->name( -genbank => 1 )], -recurse => 1 ); 
+    $self->output( 
+	-fh => \*STDOUT, 
+	-prepend => [$self->name( -genbank => 1 )], 
+	-append => [$self->first_codon, $self->last_codon],
+	-recurse => 1
+	); 
     $self->evaluate( -force => 1);
 
     #################################
@@ -7220,9 +7225,6 @@ sub genbank_tbl {
 	print {$fh} @bump, 'rpt_type', 'dispersed';
 
     } elsif ( $asn eq 'LTR' ) {
-
-	print {$fh} @bump, 'rpt_family', 'TY';
-	print {$fh} @bump, 'rpt_type', 'dispersed';
 
     } else { $self->throw( $asn ); }
 
