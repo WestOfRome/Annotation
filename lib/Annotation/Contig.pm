@@ -1078,6 +1078,8 @@ sub _validate_assembly_gaps {
     map { $_->output( -fh => $fh, -prepend => ['NEW_GAPS'] ) } @new_gaps 
 	if $args->{'-verbose'};
     
+    map { $_->strand( 0 ) } grep {$_->assign eq 'GAP'} $self->stream;
+
     return $self;
 }
 
@@ -1240,15 +1242,17 @@ sub _make_genbank_gene_terminii {
     my $args = {@_};
 
     $args->{'-tryhard'}=0 unless exists $args->{'-tryhard'};
+    $args->{'-verbose'}=0 unless exists $args->{'-verbose'};
     
     my $fh = \*STDERR;
     
-    foreach my $orf ( grep { $_->coding } $self->stream) {
-	my $fex = $orf->firstexon;
-	
+    foreach my $orf ( grep { $_->coding } $self->stream) {	
+
+	my $fex = $orf->firstexon;	
       FINDSTART:
 	unless ( $orf->first_codon eq $START_CODON ) {	    
-	    $orf->output(-prepend => [$orf->exons+0],  -append => [ $orf->_top_tail ], -fh => $fh );
+	    $orf->output(-prepend => ['T1', $orf->exons+0],  -append => [ $orf->_top_tail ], -fh => $fh )
+		if $args->{'-verbose'};
 	    
 	    #################################
 	    # 1A - play with coords of first exon 
@@ -1266,7 +1270,7 @@ sub _make_genbank_gene_terminii {
 	    # Do not start on STOP/junk codons 
 	    
 	    $fex->start( -adjust => $TRIPLET, -R => 1) until 
-		$orf->first_codon !~ $STOP_CODON && $orf->first_codon ne 'NNN';
+		$orf->first_codon !~ $STOP_CODON && $orf->first_codon !~ /N.?N/;
 	    my $mem = $fex->start( -R => 1 );
 	    
 	    # look down stream for M 
@@ -1301,22 +1305,27 @@ sub _make_genbank_gene_terminii {
 
 		} else { $fex->start( -new => $mem, -R => 1 ); }
 	    }
-	    $orf->output( -append => [ $orf->_top_tail ], -fh => $fh );
+	    $orf->output(-prepend => ['T2', $orf->exons+0], -append => [ $orf->_top_tail ], -fh => $fh ) 
+		if $args->{'-verbose'};;
 	    
 	    #################################
 	    # 1C - repredct the whole thing 
 	    #################################
 
+	    my ($pil) = $orf->pillar( -query => 'YGOB');
+
 	    $orf->reoptimise( 
 		-extend => 5000, 
 		-protein => $orf->homolog.'',
-		-hmm => ($orf->pillar || $orf->hit('ygob')),
+		-hmm => ( $pil || $orf->hit('ygob')),
+		-orfmin => undef, 
 		-reference => ($orf->gene || $orf->hit('SGD')), 
-		-verbose => 7
+		-verbose => 5
 		) unless $orf->first_codon eq $START_CODON; 		
 		
-	    $orf->output( -append => [ $orf->_top_tail ], -fh => $fh );
-	    print "\n";
+	    $orf->output(-prepend => ['T3', $orf->exons+0], -append => [ $orf->_top_tail ], -fh => $fh )
+		if $args->{'-verbose'};
+	    print {$fh} "\n";
 
 	    # 
 
@@ -1326,6 +1335,32 @@ sub _make_genbank_gene_terminii {
 	    #print {$fh} $orf->name, $orf->start, $orf->stop, $orf->strand, $self->length, 
 	    #$orf->first_codon, $orf->last_codon, $orf->exons, $orf->length;	   
 	}
+
+
+	################################# 
+	# Last codon 
+	#################################
+
+	my $lex = $orf->exons( -query => 'last' );
+	unless ( $orf->last_codon =~ $STOP_CODON ) {	    
+	    $orf->output(-prepend => ['T4', $orf->exons+0], -append => [ $orf->_top_tail ], -fh => $fh )
+		if $args->{'-verbose'};
+	    
+	    # look downstream for STOP
+	    
+	    $lex->stop( -adjust => $TRIPLET, -R => 1 ) until 
+		( $orf->last_codon =~ $STOP_CODON ||             # OK outcome 
+		  $orf->_terminal_dist2( $orf->strand ) <= 3 || # OK outcome (contig end) 
+		  $orf->last_codon eq 'NNN' );                    # NOT OK 		  
+	    
+	    # Do not start on STOP/junk codons 
+	    
+	    $lex->stop( -adjust => -$TRIPLET, -R => 1) until $orf->last_codon !~ /N.?N/;
+	    $orf->output( -append => [ $orf->_top_tail ], -prepend => ['T5', $orf->exons+0], -fh => $fh ) 
+		if $args->{'-verbose'};;
+	}
+
+	$orf->evaluate( -force => 1 );
     }
 
     return $self;
@@ -2483,7 +2518,7 @@ sub genbank_tbl{
     foreach my $feat ( $self->stream ) {
 	#next if $feat->id =~ /^65|77|78$/;
 	#next unless $feat->stream >1 && $feat->strand < 1;
-	next if $feat->data('STOP');
+	#next if $feat->data('STOP');
 	$feat->genbank_tbl( %{$args} );
     }
 
