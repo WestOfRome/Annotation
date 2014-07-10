@@ -3170,6 +3170,8 @@ sub overlap {
 
 sub adjust {
     my $self = shift;
+    #my $args = {@_};
+    #my $args->{'-adjust'} = $_[0]; 
     map { $_->_adjust(@_) } $self->stream;
     return $self;
 }
@@ -3230,14 +3232,20 @@ sub reoptimise {
     # generic 
     $args->{'-safe'} = 0 unless exists $args->{'-safe'};
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
-    
+    $args->{'-debug'} = undef unless exists $args->{'-debug'};
+
     $self->throw unless $args->{'-reference'};
+
+    ##################################################################
+    # minor prep
+    ##################################################################
+    
+    my $fherr = \*STDERR;    
+    print {$fherr} %{$args} if $args->{'-debug'};
 
     ##################################################################
     # Repredict and generate a panel of alt mdoels 
     ##################################################################
-
-    print {STDERR} %{$args};
 
     # 0. get relevant region 
 
@@ -3259,22 +3267,29 @@ sub reoptimise {
     # 3. run GeneWise  
     
     my @wise = 
-	$locus->wise( -hmm => $args->{'-hmm'}, -verbose => ($args->{'-verbose'}>=2 ? 5 :0 ) ) # 1->5
+	$locus->wise( -hmm => $args->{'-hmm'}, -verbose => ($args->{'-verbose'}>=2 ? 1 :0 ) ) # 1->5
 	unless ! $args->{'-hmm'};
 
     # post process pseudocontig effects:: all orfs to real contig  
     # my @a2 = grep { $_->homology(-object => $self) } grep {defined} @anno;
     
     my @newmodels = grep { $_->commoncodon($self) } #grep { $_->strand == $self->strand }
+    map { $_->adjust($adjust) } # Must happen after transfer // $exon->_adjust() blocks out of range changes
     map { $_->transfer(-from => $locus, -to => $self->up, -warn => 0) }
-    map { $_->adjust($adjust) } grep {defined} (@anno,@exonerate,@wise);
+    grep {defined} (@anno,@exonerate,@wise);
     $locus->DESTROY;    
-
+    
     ##################################################################
     # choose best model from panel and destroy all others 
     ##################################################################
     
     my ($call,@valid) = grep {$_->translatable} grep {defined} ($self, @newmodels);
+    
+    if ( $args->{'-debug'} ) {
+	print {$fherr} @newmodels;
+	print {$fherr} @valid;    
+    }
+
     my ($best,$delta) = $call->choose( # choose uses exonerate protein homology 
 	-object => \@valid,            # to the supplied reference to choose "best"
 	-verbose => $args->{'-verbose'}, 
@@ -3479,13 +3494,13 @@ sub choose {
     ############################################
     
     if ( $args->{'-verbose'} ) {
-	print ">";
+	print "> $delta", $best->score('global'), ( $order[0] ? $order[0]->score('global') : 0 );
         $self->oliver(-prepend => ['1.SELF'], -append => [(caller(1))[3]]);
 	map { $_->oliver(-prepend => ['2.MODEL'], -creator =>1) } 
 	grep {$_ ne $self} (reverse(@order),$best);
 	$best->oliver(-prepend => ['3.BEST'], -creator => 1);
     }
-
+    
     return ( wantarray ? ($best, $delta) : $best );
 }
 
@@ -7105,16 +7120,28 @@ sub genbank_tbl {
     #################################
 
     my @exons = $self->stream;
-    my ($top,$tail) = $self->_top_tail;
     $self->structure();
 
+    # if there are artificial reading frame disruptions 
+    # we just take a range and call it a pseudo
+    
     my $newpseudo;
     if ( $#exons > 0 ) {
 	unless (  $self->data('INTRONS') == $#exons ) {
+	    
+	    # need to look at first/last exons directly in case they have been adjusted
+	    
+	    my $gbk_start = $self->exons( -query => ($self->strand == -1 ? 'last' : 'first' ) )
+		->genbank_coords(-R => 0, -mode => 'start');
+	    my $gbk_stop = $self->exons( -query => ($self->strand == -1 ? 'first' : 'last' ) )
+		->genbank_coords(-R => 0, -mode => 'stop');
+	    
+	    # make simplified gene structure (range) 
+
 	    my $fake = ref($self)->new
 		(
-		 START => $self->start,
-		 STOP => $self->stop,
+		 START => $gbk_start || $self->start,
+		 STOP => $gbk_stop || $self->stop,
 		 STRAND => $self->strand,
 		 UP => $self->up
 		);
@@ -7123,16 +7150,23 @@ sub genbank_tbl {
 	    $newpseudo=1;
 	}
     }
+    
+    #################################
+    # 
+    #################################
 
     foreach my $ex ( @exons ) {
-	my $start = $self->strand == -1 ? $ex->stop : $ex->start;
-	my $stop = $self->strand == -1 ? $ex->start : $ex->stop;
+	my $start = $ex->genbank_coords( -mode => 'start', -R => 1 ) || 
+	    $ex->start( -R => 1); #$self->strand == -1 ? $ex->stop : $ex->start;
+	my $stop = $ex->genbank_coords( -mode => 'stop', -R => 1 ) || 
+	    $ex->stop( -R => 1); #$self->strand == -1 ? $ex->start : $ex->stop;
+
 	if ( $asn eq 'CDS' ) {
-	    if ( $ex eq $exons[0] && $top ne 'ATG' ) {
+	    if ( $ex eq $exons[0] && $self->first_codon ne $START_CODON ) {
 		#$start = $self->strand == -1 ? '>'.$start : '<'.$start;
 		$start = '<'.$start;
 	    }
-	    if ( $ex eq $exons[-1] && $tail !~ /TAA|TAG|TGA/ ) {
+	    if ( $ex eq $exons[-1] && $self->last_codon !~ $STOP_CODON ) {
 		#$stop = $self->strand == -1 ? '<'.$stop : '>'.$stop;
 		$stop = '>'.$stop;
 	    }
