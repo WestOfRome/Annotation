@@ -802,12 +802,13 @@ sub wise { #  avg 3.29s/call (for ~20Kb regions)
     ######################################################
 
     my $hmm = ( $args->{'-hmm'} ? $args->{'-hmm'} : $args->{'-object'}->ygob );
+    $self->warn($hmm) and return undef unless $hmm;
+
     if ( $ENV{'YGOB_HMMER3_LIB'} ) {
 	$hmm = $ENV{'YGOB_HMMER3_LIB'}.'/'.$hmm unless $hmm =~ /\//; 	
 	$hmm .= '.h2m' unless  $hmm =~ /\.h2m$/; 
 	$hmm =~ s/\.h3m//;
     } else {
-	return undef unless $hmm;
 	my $api = 'http://www.saccharomycessensustricto.org/SaccharomycesSensuStrictoResources//ygobhmms/'.$hmm;
 	$api .= '.h3m' unless  $hmm =~ /\.h3m$/; 
 	
