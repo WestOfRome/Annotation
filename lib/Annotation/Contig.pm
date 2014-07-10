@@ -1030,7 +1030,8 @@ sub _validate_assembly_gaps {
 		$fake_gap->evidence('NNNN');
 		$fake_gap->evaluate(-structure => 0, -validate => 0);
 		$self->add( -object => $fake_gap );		
-		$fake_gap->output( -fh => $fh, -prepend => ['GAPX'] );
+		$fake_gap->output( -fh => $fh, -prepend => ['GAP_END'] )
+		    if $args->{'-verbose'};
 		push @fake_gaps, $fake_gap;
 	    }
 
@@ -1078,6 +1079,10 @@ sub _validate_assembly_gaps {
     map { $_->output( -fh => $fh, -prepend => ['NEW_GAPS'] ) } @new_gaps 
 	if $args->{'-verbose'};
     
+    ######################################
+    # Housekeeping .... 
+    ######################################
+
     map { $_->strand( 0 ) } grep {$_->assign eq 'GAP'} $self->stream;
 
     return $self;
@@ -1116,7 +1121,7 @@ sub _validate_overlapping_features {
 
 	    # choose best seq...
 
-	    my ($best,$scr) = $pop->choose( -object => \@others, -verbose => 2 );
+	    my ($best,$scr) = $pop->choose( -object => \@others, -verbose => $args->{'-verbose'} );
 	    unless ( $best->orthogroup ) {
 		my $newbest;
 		foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
@@ -1231,7 +1236,17 @@ sub _validate_overlapping_features {
 
 =head2 _make_genbank_gene_terminii()
 
-    -tryhard instructs method to continuousy add exons to 
+    There is an important decision to be made here about how to implement 
+    Genbank compliance. Should we calc coords when this method is called
+    and update all the features? or compute an alternative set of coords
+    and store those separately (to be used in over-ride manner by genbank_tbl())? 
+    Or should we write just-in-time methods that calc adjusted coords on the fly 
+    but never alter original and are never stored? 
+
+    Implementing #2 but have doubts about design.
+    
+    WIP... 
+    -tryhard : instructs method to continuousy add exons to 
     'step over' STOP codons until an upstream M is found. 
     Results are not that pretty. 
 
@@ -1246,7 +1261,9 @@ sub _make_genbank_gene_terminii {
     
     my $fh = \*STDERR;
     
-    foreach my $orf ( grep { $_->coding } $self->stream) {	
+    foreach my $orf ( grep { $_->coding( -pseudo => 0 ) } $self->stream) {	
+
+	goto FINDSTOP;
 
 	my $fex = $orf->firstexon;	
       FINDSTART:
@@ -1270,7 +1287,7 @@ sub _make_genbank_gene_terminii {
 	    # Do not start on STOP/junk codons 
 	    
 	    $fex->start( -adjust => $TRIPLET, -R => 1) until 
-		$orf->first_codon !~ $STOP_CODON && $orf->first_codon !~ /N.?N/;
+		$orf->first_codon !~ $STOP_CODON && $orf->first_codon !~ /^N/;
 	    my $mem = $fex->start( -R => 1 );
 	    
 	    # look down stream for M 
@@ -1320,12 +1337,12 @@ sub _make_genbank_gene_terminii {
 		-hmm => ( $pil || $orf->hit('ygob')),
 		-orfmin => undef, 
 		-reference => ($orf->gene || $orf->hit('SGD')), 
-		-verbose => 5
+		-verbose => 0,
+		-debug => 0
 		) unless $orf->first_codon eq $START_CODON; 		
 		
 	    $orf->output(-prepend => ['T3', $orf->exons+0], -append => [ $orf->_top_tail ], -fh => $fh )
 		if $args->{'-verbose'};
-	    print {$fh} "\n";
 
 	    # 
 
@@ -1336,30 +1353,47 @@ sub _make_genbank_gene_terminii {
 	    #$orf->first_codon, $orf->last_codon, $orf->exons, $orf->length;	   
 	}
 
+      FINDSTOP:
 
 	################################# 
 	# Last codon 
 	#################################
-
+	
 	my $lex = $orf->exons( -query => 'last' );
 	unless ( $orf->last_codon =~ $STOP_CODON ) {	    
-	    $orf->output(-prepend => ['T4', $orf->exons+0], -append => [ $orf->_top_tail ], -fh => $fh )
-		if $args->{'-verbose'};
 	    
 	    # look downstream for STOP
 	    
 	    $lex->stop( -adjust => $TRIPLET, -R => 1 ) until 
 		( $orf->last_codon =~ $STOP_CODON ||             # OK outcome 
-		  $orf->_terminal_dist2( $orf->strand ) <= 3 || # OK outcome (contig end) 
-		  $orf->last_codon eq 'NNN' );                    # NOT OK 		  
+		  $orf->_terminal_dist2( $orf->strand ) < 3 ||   # almost OK outcome (must be exact) 
+		  $orf->last_codon =~ /N$/);                   # NOT OK 		  
 	    
 	    # Do not start on STOP/junk codons 
-	    
-	    $lex->stop( -adjust => -$TRIPLET, -R => 1) until $orf->last_codon !~ /N.?N/;
-	    $orf->output( -append => [ $orf->_top_tail ], -prepend => ['T5', $orf->exons+0], -fh => $fh ) 
+	
+	    my $stop_gbk;
+	    if ( $orf->last_codon =~ $STOP_CODON ) {
+	        $stop_gbk = $lex->stop( -R => 1 ); # do nothing 
+
+	    } elsif ( $orf->last_codon !~ /N$/ ) { # we are missing a test for $lex->length < 0
+		$lex->stop( -adjust => -1, -R => 1) until $orf->last_codon !~ /N$/;
+	        $stop_gbk = $lex->stop( -R => 1 );
+		$lex->stop( -adjust => -1, -R => 1) until $orf->length % $TRIPLET == 0;
+
+	    } elsif ( $orf->_terminal_dist2( $orf->strand ) < 3 ) {
+		$stop_gbk = ($orf->strand == 1 ? $self->length : 1);
+
+	    } elsif ( $orf->_terminal_dist2( $orf->strand ) == 0 ) {
+		$stop_gbk = $lex->stop( -R => 1 ); # do nothing 
+
+	    } else { $self->throw(); }	    
+
+	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
+
+	    $orf->output( -append => [ $orf->_top_tail ], -prepend => ['T4', $orf->exons+0], -fh => $fh ) 
 		if $args->{'-verbose'};;
 	}
-
+	
 	$orf->evaluate( -force => 1 );
     }
 
