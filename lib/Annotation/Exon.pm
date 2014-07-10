@@ -573,6 +573,74 @@ sub intron {
     return $val;	
 }
 
+=head2 genbank_coords( -mode => 'start|stop', -relative => 1|0, 
+    -set => undef|i) 
+
+    Get/set alternative start|stop coordinate acceptable by Genbank.
+
+=cut 
+
+sub genbank_coords {
+    my $self = shift;
+    my $args = shift;
+
+    $args->{'-limit'} = 3 unless exists $args->{'-limit'};
+    $args->{'-mode'} = 'start' unless exists $args->{'-mode'};
+    $args->{'-relative'} = $args->{'-R'} if exists $args->{'-R'};
+    $args->{'-relative'} = 1 unless exists $args->{'-relative'};
+    $args->{'-set'} = undef unless exists $args->{'-set'};
+
+    #################################
+    # QC and vars 
+    #################################
+
+    $self->throw unless $args->{'-mode'} eq 'start' || $args->{'-mode'} eq 'stop';
+    $self->throw unless $args->{'-relative'} == 1 || $args->{'-relative'} == 0;
+
+    my $method = $args->{'-mode'};
+    my @args = ( '-R' => $args->{'-relative'} );
+
+    #################################
+    # prep 
+    #################################
+
+    # convention is the same as start() and stop()
+    # IFF R==0 : start = 0, stop = 1
+    # IFF R==1 : strand==1 --> as above, strand==-1 --> invert 
+    
+    my $pos;
+    if ( $args->{'-relative'} == 0 ) {
+	$pos = ( $args->{'-mode'} eq 'start' ? 0 : 1);
+    } elsif ( $args->{'-relative'} == 1 ) {
+	if ( $self->up->strand == 1 ) {
+	    $pos = ( $args->{'-mode'} eq 'start' ? 0 : 1);
+	} elsif ( $self->up->strand == -1 ) {
+	    $pos = ( $args->{'-mode'} eq 'start' ? 1 : 0);
+	} else { $self->throw(); }
+    } else { $self->throw(); }
+    
+    #################################
+    # setting 
+    #################################
+
+    if ( my $new = $args->{'-set'} ) {
+	$self->throw unless $new =~ /^\d+$/;
+	my $delta = abs( $new - $self->$method( @args ) );
+	$self->throw( $delta ) if $delta > $limit;
+	$self->{'GENBANK'}->[ $pos ] = $new if $new;
+    }
+
+    #################################
+    # getting 
+    #################################
+
+    my $val = $self->{'GENBANK'}->[ $pos ];
+    my $delta = abs( $val - $self->$method( @args ) );
+    $self->throw( $delta ) if $delta > $limit;
+
+    return $val;
+}
+
 #########################################
 #########################################
 
