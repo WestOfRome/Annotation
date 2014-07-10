@@ -1261,7 +1261,7 @@ sub _make_genbank_gene_terminii {
     
     my $fh = \*STDERR;
     
-    foreach my $orf ( grep { $_->coding( -pseudo => 0 ) } $self->stream) {	
+    foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
 
 	goto FINDSTOP;
 
@@ -1359,26 +1359,41 @@ sub _make_genbank_gene_terminii {
 	# Last codon 
 	#################################
 	
+	# get downstream gap (if there is one) 
+	# this is needed to suport one of the tests below 
+	
+	my $gap = $orf->neighbour( 
+	    -direction => ( $orf->strand==-1 ? 'left' : 'right'),
+	    -gap => +1 # require 
+	    );
+	$self->throw if $gap && $gap->assign ne 'GAP';
+
+	# 
+
 	my $lex = $orf->exons( -query => 'last' );
 	unless ( $orf->last_codon =~ $STOP_CODON ) {	    
 	    
-	    # look downstream for STOP
+	    # adjust last codon to downstream STOP (or other stopping condition)
 	    
 	    $lex->stop( -adjust => $TRIPLET, -R => 1 ) until 
-		( $orf->last_codon =~ $STOP_CODON ||             # OK outcome 
-		  $orf->_terminal_dist2( $orf->strand ) < 3 ||   # almost OK outcome (must be exact) 
-		  $orf->last_codon =~ /N$/);                   # NOT OK 		  
+		( $orf->last_codon =~ $STOP_CODON ||            # OK outcome 
+		  $orf->_terminal_dist2( $orf->strand ) < 3 ||  # almost OK outcome (must be exact) 
+		  ($gap && $orf->overlap( -object => $gap )));  # NOT OK 
+		  #$orf->last_codon =~ /N$/);                   # NOT OK 		  	   
 	    
-	    # Do not start on STOP/junk codons 
-	
-	    my $stop_gbk;
+	    # Further adjust coords if no STOP to satisfy Genbank conventions 
+	    
+	    my ($stop_gbk, $path)=(undef, 'contig_end');
 	    if ( $orf->last_codon =~ $STOP_CODON ) {
 	        $stop_gbk = $lex->stop( -R => 1 ); # do nothing 
+		$path='stop';
 
-	    } elsif ( $orf->last_codon !~ /N$/ ) { # we are missing a test for $lex->length < 0
-		$lex->stop( -adjust => -1, -R => 1) until $orf->last_codon !~ /N$/;
+	    } elsif ( $gap && $orf->overlap(-object => $gap) ) { 
+		# we are missing a test for $lex->length < 0
+		$lex->stop( -adjust => -1, -R => 1) until ! $orf->overlap(-object => $gap);
 	        $stop_gbk = $lex->stop( -R => 1 );
 		$lex->stop( -adjust => -1, -R => 1) until $orf->length % $TRIPLET == 0;
+		$path='gap';
 
 	    } elsif ( $orf->_terminal_dist2( $orf->strand ) < 3 ) {
 		$stop_gbk = ($orf->strand == 1 ? $self->length : 1);
@@ -1387,11 +1402,14 @@ sub _make_genbank_gene_terminii {
 		$stop_gbk = $lex->stop( -R => 1 ); # do nothing 
 
 	    } else { $self->throw(); }	    
-
+	    	    
 	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
 
-	    $orf->output( -append => [ $orf->_top_tail ], -prepend => ['T4', $orf->exons+0], -fh => $fh ) 
-		if $args->{'-verbose'};;
+	    $orf->output( 
+		-prepend => [ $orf->_top_tail ], 
+		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
+		-fh => $fh 
+		) if $args->{'-verbose'}; # && $lex->stop(-R => 1) != $stop_gbk;
 	}
 	
 	$orf->evaluate( -force => 1 );
