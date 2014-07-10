@@ -582,7 +582,7 @@ sub intron {
 
 sub genbank_coords {
     my $self = shift;
-    my $args = shift;
+    my $args = { @_ };
 
     $args->{'-limit'} = 3 unless exists $args->{'-limit'};
     $args->{'-mode'} = 'start' unless exists $args->{'-mode'};
@@ -609,34 +609,31 @@ sub genbank_coords {
     # IFF R==1 : strand==1 --> as above, strand==-1 --> invert 
     
     my $pos;
-    if ( $args->{'-relative'} == 0 ) {
+    if ( $args->{'-relative'} == 1 && $self->up->strand == -1) {
+	$pos = ( $args->{'-mode'} eq 'start' ? 1 : 0);
+    } else {
 	$pos = ( $args->{'-mode'} eq 'start' ? 0 : 1);
-    } elsif ( $args->{'-relative'} == 1 ) {
-	if ( $self->up->strand == 1 ) {
-	    $pos = ( $args->{'-mode'} eq 'start' ? 0 : 1);
-	} elsif ( $self->up->strand == -1 ) {
-	    $pos = ( $args->{'-mode'} eq 'start' ? 1 : 0);
-	} else { $self->throw(); }
-    } else { $self->throw(); }
+    } 
     
     #################################
     # setting 
     #################################
 
-    if ( my $new = $args->{'-set'} ) {
+    if ( $args->{'-set'} ) {
+	my $new =  $args->{'-set'};
 	$self->throw unless $new =~ /^\d+$/;
 	my $delta = abs( $new - $self->$method( @args ) );
-	$self->throw( $delta ) if $delta > $limit;
-	$self->{'GENBANK'}->[ $pos ] = $new if $new;
+	$self->throw( "$delta / $new / $pos / $method / @args" ) if $delta > $args->{'-limit'};
+	$self->{'GENBANK'}->[ $pos ] = $new;
     }
 
     #################################
     # getting 
     #################################
 
-    my $val = $self->{'GENBANK'}->[ $pos ];
+    return undef unless my $val = $self->{'GENBANK'}->[ $pos ];
     my $delta = abs( $val - $self->$method( @args ) );
-    $self->throw( $delta ) if $delta > $limit;
+    $self->warn( "$delta / $val / $pos / $method / @args // ".$args->{'-set'} ) if $delta > $args->{'-limit'};
 
     return $val;
 }
