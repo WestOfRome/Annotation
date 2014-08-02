@@ -2955,6 +2955,8 @@ sub optimise {
     Merge two ORF objects into one. Return caller on success 
     and destroy other. Else return undef.
 
+    NB: -reference is not used. why?
+
     Rather than deal with how to integrate the existing models, 
     we generate a range of new models and choose the best one. 
     Since homology is invariably the basis for merging two
@@ -6001,8 +6003,8 @@ sub fragment {
     my $self = shift;
     my $args = {@_};
 
-    my $gs = $self->score('global');
-    my $ls = $self->score('local');
+    my $gs = $self->score('global') || $self->exonerate2( -model => 'global' );
+    my $ls = $self->score('local') || $self->exonerate2( -model => 'local' );
     return undef unless defined $gs && defined $ls;
     return undef unless $ls;    
     
