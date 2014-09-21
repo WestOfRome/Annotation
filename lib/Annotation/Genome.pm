@@ -221,7 +221,7 @@ sub annotate {
 
 	$orf->exonerate2( -model => 'global', -return => 'score' );
 	$orf->exonerate2( -model => 'local', -return => 'score' );
-	$orf->fragment();
+	$orf->fragment(); # This is the "main" point where this is run 
 
 	# becuase we now have access to proper homologs, we can 
 	# reoptimise gene prediction using WISE/exonerate (reoptimise).
@@ -2211,7 +2211,8 @@ sub _synteny {
     # 
     
     if ( my $orf = $args->{'-object'} ) {
-	$self->throw("$self,$orf") unless $self->down->down->isa(ref($orf));
+	my ($test) = grep {defined} $self->orfs;
+	$self->throw("$self ($test),$orf") unless $test->isa(ref($orf));
 
 	my $mat = 
 	    $orf->_compose_synteny_delta_matrix(@_); # [pos]->{species} == delta 
@@ -8155,9 +8156,18 @@ sub genbank_tbl {
     $args->{'-strict'} = 1;
 
     #################################
-    # standard components 
+    # prep... 
     #################################
 
+    unless ( $self->_access_synteny_null_dist() ) {
+	$self->_synteny( -nulldist => 2 );
+	map { $_->pillar(-force => 1) } grep { $_->rank >= -1 } $self->orfs;	
+    }
+
+    #################################
+    # standard components 
+    #################################
+    
     $self->_make_genbank_compatible( @_ );
 
     #################################
@@ -8177,23 +8187,6 @@ sub genbank_tbl {
 	    $args->{'-fh'} = $fsa;
 	    $scaf->fasta( %{$args} );
 	}
-	
-	##############################
-	# TEMP
-	open(my $gfh, '>'.$root.'.gap')  || die($root.'.gap');
-	my @gaps = sort {$a->start <=> $b->start} grep { $_->assign eq 'GAP' } $scaf->stream;
-	foreach my $i ( 1..$#gaps ) {
-	    my $gap = $gaps[$i];
-	    my $prev = $gaps[$i-1];
-	    foreach my $trig ( 120095,783847,1240489 ) {
-		if ( $trig == $prev->stop+1 ) {
-		    print {$gfh} join(" ", ">$trig",$prev->name,$gap->name,"\n").
-			$gap->intergenic( -seq => 1, -object => $prev );
-		}
-	    }
-	}
-	##############################
-	
     }
 
     exit;
@@ -8216,13 +8209,37 @@ sub _make_genbank_compatible {
     my $self = shift;
     my $args = {@_};
 
-    $self->throw unless $args->{'-index'};
-
+    $self->throw unless my $index = $args->{'-index'};
+    
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
+
+	# A. gross asssembly issues ....
+
 	$scaf->_validate_assembly_gaps( -verbose => 0 );
-	$scaf->_validate_overlapping_features( @_, -verbose => 0 ); # need the index file to handle OGs
-	$scaf->_make_genbank_gene_terminii( -verbose => 1 );
+
+	# B. relationships among features 
+
+	$scaf->_validate_overlapping_features(-index => $index, -verbose => 0);
+
+	$scaf->merge(-index => $index, -verbose => 0);	
+
+	# D. individual gene details 
+	
+	$scaf->_make_genbank_gene_terminii(-index => $index, -verbose => 0); 
+
+	# C. toss rubbish genes ... 
+
+	$scaf->_genbank_quality_filter(-index => $index, -verbose => 0);
+
+	foreach my $o ( 
+	    grep {$_->first_codon ne $START_CODON}
+	    grep {$_->coding} $scaf->stream ) {
+	    print {STDERR} $o->name, $o->assign, $o->ogid, $o->_top_tail, 
+	    $o->gene, $o->ygob, $o->loss, $o->hypergob, $o->evalue('gene'),
+	    $o->score('global'), $o->score('local'), $o->fragment, 
+	    $o->partial, $o->data('STOP'), $o->data('INTRONS');
+	}
     }
     
     return $self;
