@@ -2497,7 +2497,7 @@ sub glyph {
     # if on a non-local server, put in web dir so I can look at it 
 
     chomp(my $host = `hostname`);
-    if ( $host !~ /local/ ) {
+    if ( $host =~ /allele/i ) {
 	my $svg = "/Library/WebServer/Documents/Anna/".$fileid;
 	my $current = "/Library/WebServer/Documents/Anna/current.svg";
 	system("cp $fileid $svg");
@@ -2989,15 +2989,15 @@ sub merge {
     # basic QC 
 
     map { return $self unless $_->assign eq 'GAP' } $self->intervening(-object => $other);
-    my ($ortho, $two) = grep {defined} map {$_->orthogroup || $_->ogid} ($self, $other);
-    $self->throw and return undef if $two;
     my ($ohno, $ohtwo) = grep {defined} map {$_->ohnolog} ($self, $other);
     $self->warn("Two Ohnologs!", $other) and return undef if $ohtwo;
-
+    my ($ortho, $two) = grep {defined} map { ($_->orthogroup)[0] || $_->ogid } ($self, $other); 
+    $self->warn and return undef if $two;    # cannot handle two OGs in reference (or any) species
+    
     # 
-
+    
     return undef unless my $hom = $self->homolog( -object => [$other] );
-
+    
     # we want to compare a few possibilities 
     # 1. just sticking two halves together and not thinking 
     # 2. take 2 parts and "optimise" 
@@ -3039,10 +3039,25 @@ sub merge {
 	#$self->ohnolog($other) unless $self->ohnolog eq $other;
     }
 
-    if ( $ortho && ($ortho ne $self) && $ortho->orthogroup ) { # if non ref memeber cannot do transfers. 
-	map { $self->$_( $other->$_ ); } map { lc($_) } $self->up->up->bound;
-	my $test = ($self->up->up->bound)[0];
-	$self->throw unless $self->$test->id == $other->$test->id;
+    if ($ortho) {
+	if ( $ortho eq  ($self->orthogroup)[0] || $ortho == $self->ogid ) {
+	    # no stransfer needed ..
+
+	} elsif ($ortho eq ($other->orthogroup)[0] ) { # reference species 
+	    map { $self->$_( $other->$_ ); } map { lc($_) } $self->up->up->bound;
+	    my $test = ($self->up->up->bound)[0];
+	    $self->throw unless $self->$test->id == $other->$test->id;
+	    
+	} elsif ( $ortho == $other->ogid ) { # non-reference species 
+	    $self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
+	    my @og = @{$args->{'-index'}->{ $other->ogid }};
+	    my $og_master = shift(@og);
+	    $og_master->_dissolve_orthogroup;
+	    map { $og[$_]=$self if $og[$_]->organism eq $other->organism } (0..$#og);
+	    $og_master->_define_orthogroup( -object => [ @og ] );
+	    $args->{'-index'}->{ $ortho } = [ @og ];
+	    
+	} else { $self->throw($ortho);}
     }
 
     $other->DESTROY;
@@ -5199,7 +5214,8 @@ sub pillar {
     my $args = {@_};
 
     # pillar uses LOSS matrices to choose among candidates. 
-    # test if available 
+    # test if available
+
     return undef unless defined $self->up->up->_access_synteny_null_dist();
 
     # mode 
@@ -6002,7 +6018,7 @@ sub pseudo {
 sub fragment {
     my $self = shift;
     my $args = {@_};
-
+    
     my $gs = $self->score('global') || $self->exonerate2( -model => 'global' );
     my $ls = $self->score('local') || $self->exonerate2( -model => 'local' );
     return undef unless defined $gs && defined $ls;
@@ -7220,11 +7236,11 @@ sub genbank_tbl {
 
 	    # homology 
 	    
-	    print {$fh} @bump, 'product', 'hypothetical protein';
 	    print {$fh} @bump, 'product', 'homology to '.$self->gene if 
 		$self->gene && $self->evalue('gene') <= 1e-5;
 	    print {$fh} @bump, 'product', 'homology to '.$self->ygob if
 		$self->ygob && $self->evalue('ygob') <= 1e-5;
+	    print {$fh} @bump, 'product', 'hypothetical protein';
 	    
 	    # function 
 	    
