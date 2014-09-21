@@ -346,6 +346,8 @@ sub merge {
     $args->{'-tandem'} = .5 unless exists $args->{'-tandem'};
     $args->{'-overwrite'} = 2.5 unless exists $args->{'-overwrite'};
 
+    my $fh = \*STDERR;
+    
     ######################################### 
     # initial clusters by homology. consider only neighbouring genes on same strand. 
     #########################################
@@ -373,11 +375,9 @@ sub merge {
 	next if scalar(@order) == scalar(grep { $_->assign eq 'REPEAT' } @order);
 	
 	if ($args->{'-verbose'}) {
-	    print '>';
-	    map { $_->oliver } @order;
+	    print {$fh} '>';
+	    map { $_->oliver( -fh => $fh ) } @order;
 	}
-
-	# 
 
 	my %lookup; # handles merge order issues 
 	for my $i (1..$#order) {
@@ -386,9 +386,9 @@ sub merge {
 	    my $orf = (exists $lookup{$order[$i]->_internal_id} ? 
 		       $lookup{$order[$i]->_internal_id} : $order[$i] );
 	    $self->throw unless $orf && $lorf;
-
-	    #print 0, $lorf->name, $orf->name, $orf->distance(-object => $lorf, -bases => 1); 
-
+	    
+	    #print  {$fh} 0, $lorf->name, $orf->name, $orf->distance(-object => $lorf, -bases => 1); 
+	    
 	    #########################################
 	    # do some basic proximity tests
 	    #########################################
@@ -401,12 +401,10 @@ sub merge {
 	    # is it a single rogue homology? or is join well supported? 
 	    #########################################
 
-	    my @syn = map { $orf->synteny(-object => $lorf, -difference => $_) } (0,2);
-
-	    #print 1, $lorf->name, $orf->name, $homolog, $syn, $scr, @syn; 
-
-	    next unless $syn[0] > $syn[1]; # if there are compelling cases where they are not same
-
+	    #my @syn = map { $_->loss } ($orf, $lorf);	    
+	    #print {$fh} 1, $lorf->name, $orf->name,  @syn;    
+	    #map { next unless $_->loss > 100 || $_->hypergob > 10} ($orf, $lorf);
+	    
 	    #########################################
 	    # find the specific homolog and ensure it is also supported. 
 	    #########################################
@@ -423,20 +421,15 @@ sub merge {
 
 	    # use SGD if all other things equal 
 	    
-	    $homolog = ( $count{$homolog} eq $count{'SGD'} && $homolog !~ /Y[A-P][LR]/ ? 'SGD' : $homolog);
+	    $homolog = ( $count{$homolog} == $count{'SGD'} && $homolog !~ /Y[A-P][LR]/ ? 'SGD' : $homolog);
+	    my $ref = (
+		$homolog eq 'YGOB' ?
+		$orf->homolog(-object => $lorf, -pillar => $orf->data($homolog)) : 
+		$orf->data($homolog)
+		);
 
-	    # get the reference sequence 
+	    #print {$fh} 2, $lorf->name, $orf->name, $homolog, $ref, $orf->data('SGD'); 
 	    
-	    unless ( $args->{'-reference'} ) {
-		$args->{'-reference'} = (
-		    $homolog eq 'YGOB' ?
-		    $orf->homolog(-object => $lorf, -pillar => $orf->data($homolog)) : 
-		    $orf->data($homolog)
-		    );
-	    }
-
-	    #print 2, $lorf->name, $orf->name, $homolog, $syn, $scr, @syn; 
-
 	    #########################################
 	    # generate required test values 
 	    #########################################
@@ -446,13 +439,12 @@ sub merge {
 	    
 	    my $scr = $orf->exonerate2(
 		-object => $lorf, 
-		-homolog => $ref, 
+		-homolog => $ref,
 		-model => 'local',
 		-return => 'overlap'
 		);
-
-
-	    #print 3, $lorf->name, $orf->name, $homolog, $syn, $scr, @syn; 
+	    
+	    #print {$fh} 3, $lorf->name, $orf->name, $homolog, $syn, $scr, @syn; 
 	    
 	    #########################################
 	    # OK. lets start making some decisions. 
@@ -464,13 +456,18 @@ sub merge {
 	    # 3. alt version of same gene (choose not merge) -> sig align, sig overlap 
 
 	    my ($call,$reason) = qw(reject overlap);
-	    if ( $syn && $scr > 0 ) { # scr is positive. we should merge. 
+	    if ( $orf->fragments( -object => $lorf ) || ($syn && $scr > 0) ){
+
 		# intron separated exons ? frameshifted HSPs ? orf->merge handles details.
-		next unless my $success = $orf->merge(-object => $lorf, -reference => $file);
+		next unless my $success = $orf->merge(
+		    -object => $lorf, 
+		    -reference => $ref, 
+		    -index => $args->{'-index'} 
+		    );
 		$lookup{$lorf->_internal_id}=$orf;
 		($call,$reason) = ('merge', undef);
-
-		$orf->output(-prepend => ['MERGE']) if $args->{'-verbose'};
+		
+		$orf->output(-fh => $fh, -prepend => ['MERGE']) if $args->{'-verbose'};
 
 	    } elsif ( $syn ) { # alt versions of same gene ? or tandems ?
 		my $frame = $orf->commoncodon(-object => $lorf);
@@ -490,7 +487,7 @@ sub merge {
 		}
 
 	    } elsif ( $scr > 0 ) { ($call,$reason) = ('reject', 'synteny'); } # repeats 
-	    #print "$call ($reason): $scr, $syn, $frame, $olap, $align, @syn, $file\n";
+	    #print  {$fh} "$call ($reason): $scr, $syn, $frame, $olap, $align, @syn, $file\n";
 	}
     }
     
@@ -1256,101 +1253,133 @@ sub _make_genbank_gene_terminii {
     my $self = shift;
     my $args = {@_};
 
+    ################################# 
+    # Defaults 
+    #################################    
+
     $args->{'-tryhard'}=0 unless exists $args->{'-tryhard'};
     $args->{'-verbose'}=0 unless exists $args->{'-verbose'};
-    
+
+    ################################# 
+    # Set some variables 
+    #################################    
+
     my $fh = \*STDERR;
     
+    ################################# 
+    # Main loop...
+    #################################    
+        
+    # We run 2 sets of tests -- for START codon and for STOP codon.
+    # M more interesting than * . True start could be :
+    # 1. upstream of initial location 
+    # 2. downstream of initial location 
+    # 3. we might be starting the search in the wrong place completely
+    # due to challenging upstream exon or addition of 'exon' to 
+    # step over frameshift. 
+    # By contrast it is fairly trivial to always find a STOP codon .. 
+
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
+	next unless $orf->up; #this may arise due to merging genes out of sequence (below) .. 
 
-	goto FINDSTOP;
-
-	my $fex = $orf->firstexon;	
+	################################# 
+	# First codon 
       FINDSTART:
+	#################################
+
+	# get surrounding features to conduct necessary tests
+	
+	my $upstream =
+	    $orf->neighbour(-direction => ($orf->strand==-1 ? 'right' : 'left'));	
+	my $gap = 
+	    $orf->neighbour(-direction => ($orf->strand==-1 ? 'right' : 'left'), -gap => +1); 
+	$self->throw if $gap && $gap->assign ne 'GAP';
+
+	# start tests 
+	
+	my $fex = $orf->firstexon;
 	unless ( $orf->first_codon eq $START_CODON ) {	    
-	    $orf->output(-prepend => ['T1', $orf->exons+0],  -append => [ $orf->_top_tail ], -fh => $fh )
-		if $args->{'-verbose'};
-	    
+	    $orf->output(-prepend => ['INIT', $orf->_top_tail ], -fh => $fh ) if $args->{'-verbose'};
+
+	    my $path=undef;
+
+	    #################################	    
+	    # 1A - look upstream for M 
 	    #################################
-	    # 1A - play with coords of first exon 
-	    # to find a convenient M 
-	    #################################
-	    
-	    # look upstream for M 
 	    
 	    $fex->start( -adjust => -$TRIPLET, -R => 1 ) until 
-		( $orf->first_codon eq $START_CODON ||             # OK outcome 
-		  $orf->_terminal_dist2( $orf->strand*-1 ) <= 3 || # OK outcome (contig end) 
-		  $orf->first_codon =~ $STOP_CODON ||              # NOT OK 		  
-		  $orf->first_codon eq 'NNN' );                    # NOT OK 		  
+		( $orf->first_codon eq $START_CODON ||            # OK outcome 
+		  $orf->_terminal_dist2( $orf->strand*-1 ) < 3 || # Almost OK (contig end) 
+		  ($gap && $orf->overlap( -object => $gap )) ||   # Almost OK 
+		  $orf->first_codon =~ $STOP_CODON);              # NOT OK 		  
+
+	    #################################	    
+	    # 1B - Look for downstream M 
+	    #################################
+	    # It would neater to do 1B before 1A but we prefer upstream M 
+	    # E.g., where *XXXMXXX+XXXXMXXXXXXX* and + is starting position. 
 	    
-	    # Do not start on STOP/junk codons 
-	    
+	    my $mark = $fex->start( -R => 1 );
 	    $fex->start( -adjust => $TRIPLET, -R => 1) until 
-		$orf->first_codon !~ $STOP_CODON && $orf->first_codon !~ /^N/;
-	    my $mem = $fex->start( -R => 1 );
-	    
-	    # look down stream for M 
-	    
-	    $fex->start( -adjust => $TRIPLET, -R => 1) until 
-		( $orf->first_codon eq $START_CODON || $fex->length <= 6 );
+		( $orf->first_codon eq $START_CODON || $fex->length < 3 );
 
-	    #################################
-	    # 1B - add exons 
-	    # skip over upstream STOP or other blocking codon 
-	    #################################
-	    
-	    unless ( $orf->first_codon eq $START_CODON || 
-		     $orf->_terminal_dist2( $orf->strand*-1 ) <= 3 ) {
-
-		if ( $args->{'-tryhard'} ) {		    
-		    my $coord = $fex->start( -R => 1 ) + ( $orf->strand == -1 ? +1 : -2)*$TRIPLET;
-		    my $exon = ref( $orf->down )->new(
-			START => $coord,
-			STOP => $coord + ($TRIPLET-1),
-			STRAND => $orf->strand,
-			INTRON => [0,0],
-			);
-		    $orf->add( -object => $exon );
-		    $orf->index;
-		    $orf->evaluate;
-		    
-		    $fex = $orf->fex;
-		    $self->throw unless $exon eq $fex;
-		    #$fex->_adjust( -$TRIPLET*$orf->strand );
-		    goto FINDSTART;
-
-		} else { $fex->start( -new => $mem, -R => 1 ); }
-	    }
-	    $orf->output(-prepend => ['T2', $orf->exons+0], -append => [ $orf->_top_tail ], -fh => $fh ) 
-		if $args->{'-verbose'};;
+	    if ($orf->first_codon eq $START_CODON ) {		
+		$path='move';
+		goto PRINTX;
+	    } else { $fex->start( -R => 1, -new => $mark ); }
 	    
 	    #################################
-	    # 1C - repredct the whole thing 
+	    # 1C - deal with failures -- contig ends, GAPs, STOP etc 
 	    #################################
-
-	    my ($pil) = $orf->pillar( -query => 'YGOB');
-
-	    $orf->reoptimise( 
-		-extend => 5000, 
-		-protein => $orf->homolog.'',
-		-hmm => ( $pil || $orf->hit('ygob')),
-		-orfmin => undef, 
-		-reference => ($orf->gene || $orf->hit('SGD')), 
-		-verbose => 0,
-		-debug => 0
-		) unless $orf->first_codon eq $START_CODON; 		
+	    
+	    my $start_gbk;
+	    if ( $gap && $orf->overlap( -object => $gap ) ) {
+		$self->throw if $gap->start <= $fex->start && $gap->stop >= $fex->stop;
+		$fex->start( -adjust => +1, -R => 1) until ! $orf->overlap(-object => $gap);
+	        $start_gbk = $fex->start( -R => 1 );
+		$fex->start( -adjust => +1, -R => 1) until $orf->length % $TRIPLET == 0;
+		$path='gap';
 		
-	    $orf->output(-prepend => ['T3', $orf->exons+0], -append => [ $orf->_top_tail ], -fh => $fh )
-		if $args->{'-verbose'};
+	    } elsif ( $orf->_terminal_dist2( $orf->strand*-1 ) == 0 ) {
+		$start_gbk = $fex->stop( -R => 1 ); # do nothing 
+		$path = 'contig_end';
 
-	    # 
+	    } elsif ( $orf->_terminal_dist2( $orf->strand*-1 ) < 3 ) {
+		$start_gbk = ($orf->strand == 1 ? 1 : $self->length);
+		$path = 'contig_end';
 
-	    #my ($neigh) = ($orf->strand == -1 ? $orf->right : $orf->left );
-	    #my $D_feat = ($neigh ? $orf->distance( -object => $neigh, -bases => 1) : undef);
-	    #my $D_term = $orf->_terminal_dist2( $orf->strand*-1 ); 
-	    #print {$fh} $orf->name, $orf->start, $orf->stop, $orf->strand, $self->length, 
-	    #$orf->first_codon, $orf->last_codon, $orf->exons, $orf->length;	   
+	    } elsif ( $orf->first_codon =~ $STOP_CODON )  {
+		$fex->start( -adjust => $TRIPLET, -R => 1);		
+		
+		# add a filter for garbage genes? (e.g., 339 / 704) No, this should occur above   
+		# add test for pseudo genes? Eg., 57 
+		# YBL027W? YDR188W 
+		
+		$path = ( 
+		    ($upstream && 
+		     $upstream->coding(-pseudo => 1) && 
+		     $orf->homology(-object => $upstream) && 
+		     ($orf->fragment + $upstream->fragment) < 1) ? 'merge' : 'stop'
+		    );
+		
+		if ( $path eq 'merge' ) {
+		    $orf->merge( -object => $upstream, @_ ); # OGID index hash 
+		}
+		#$orf->update();
+		$orf->glyph( -print => 'SGD', -tag => $path );		
+		
+	    } else { $self->throw( $orf->first_codon ); } 
+	    
+	  PRINTX:
+	    unless ( $orf->first_codon eq $START_CODON ) { 
+		#print {$fh} $orf->name, $path, $orf->_top_tail, 
+		($orf->first_codon eq $START_CODON ? '***' : ++$fail),
+		$orf->gene, $orf->logscore('ygob'), $orf->hypergob, 		
+		$orf->data('STOP'), $orf->fragment, $orf->partial;
+		$count_atg{ $path }++;
+	    }
+
+	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
 	}
 
       FINDSTOP:
@@ -1406,7 +1435,7 @@ sub _make_genbank_gene_terminii {
 	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
 
 	    $orf->output( 
-		-prepend => [ $orf->_top_tail ], 
+		-prepend => ['STOP', $orf->_top_tail ], 
 		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
 		-fh => $fh 
 		) if $args->{'-verbose'}; # && $lex->stop(-R => 1) != $stop_gbk;
@@ -1415,8 +1444,51 @@ sub _make_genbank_gene_terminii {
 	$orf->evaluate( -force => 1 );
     }
 
+    foreach my $path ( keys %count_atg ) {
+	print {$fh} $path, $count_atg{ $path };
+    }
+
     return $self;
 }
+
+=head2 _genbank_quality_filter
+
+
+=cut 
+
+sub _genbank_quality_filter {
+    my $self = shift;
+    my $args = {@_};
+
+    foreach my $orf ( grep { $_->coding } $self->stream ) {
+
+	# make sure it looks like a pseudogene 
+
+	next if
+	    $_->first_codon eq $START_CODON ||
+	    $orf->data('STOP') == 0 ||
+	    $orf->hypergob > 5;
+
+	# break OGs as required .... they do not have synteny anyway. 
+
+	if ( $orf->ogid ) {
+	    $self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
+	    my @og = @{$args->{'-index'}->{ $orf->ogid }};
+	    my $og_master = shift(@og);
+	    $og_master->_dissolve_orthogroup;
+	}
+
+	# 
+
+	$orf->output( -fh => \*STDERR, -prepend => ['TOSS'] );
+	$self->remove( -object => $orf );
+	$orf->DESTROY();
+    }
+
+    $self->index;
+    return $self;
+}
+
 
 =head2 orfs(-method => 'start', -order => 'undef|up|down', -restrict => ['REAL']
     -strand => 1, -rank => 3, -noncoding => '1|0')
