@@ -7129,7 +7129,7 @@ sub genbank_tbl {
     return undef unless $asn;
     
     # 
-
+    
     $self->output( 
 	-fh => \*STDOUT, 
 	-prepend => [$self->name( -genbank => 1 )], 
@@ -7150,7 +7150,7 @@ sub genbank_tbl {
     
     my $newpseudo;
     if ( $#exons > 0 ) {
-	unless (  $self->data('INTRONS') == $#exons ) {
+	unless ( $self->data('INTRONS') == $#exons ) {
 	    
 	    # need to look at first/last exons directly in case they have been adjusted
 	    
