@@ -1321,11 +1321,11 @@ sub _make_genbank_gene_terminii {
 	    
 	    my $mark = $fex->start( -R => 1 );
 	    $fex->start( -adjust => $TRIPLET, -R => 1) until 
-		( $orf->first_codon eq $START_CODON || $fex->length < 3 );
-
+		( $orf->first_codon eq $START_CODON || $fex->length < 4 );
+	    
 	    if ($orf->first_codon eq $START_CODON ) {		
 		$path='move';
-		goto PRINTX;
+		goto FINDSTOP;
 	    } else { $fex->start( -R => 1, -new => $mark ); }
 	    
 	    #################################
@@ -1341,9 +1341,9 @@ sub _make_genbank_gene_terminii {
 		$path='gap';
 		
 	    } elsif ( $orf->_terminal_dist2( $orf->strand*-1 ) == 0 ) {
-		$start_gbk = $fex->stop( -R => 1 ); # do nothing 
+		$start_gbk = $fex->start( -R => 1 ); # do nothing 
 		$path = 'contig_end';
-
+		
 	    } elsif ( $orf->_terminal_dist2( $orf->strand*-1 ) < 3 ) {
 		$start_gbk = ($orf->strand == 1 ? 1 : $self->length);
 		$path = 'contig_end';
@@ -1365,20 +1365,33 @@ sub _make_genbank_gene_terminii {
 		if ( $path eq 'merge' ) {
 		    $orf->merge( -object => $upstream, @_ ); # OGID index hash 
 		}
+		
+		# Run reoptimize (really exonerate) with relaxed params 
+		# where we think missing intron may be the problem. 
+		# Mising intron fail mode is indicated by uninterrupted reading frame. 
+		# Interrupted reading frame usually a sign of pseudgenization. 
+
+		if ( $orf->first_codon ne $START_CODON ) {
+		    $orf->structure();
+		    if ( $orf->data('STOP') == 0 ) {
+			my ($best) = sort {$orf->logscore($a) <=> $orf->logscore($b)} qw(gene sgd);
+			if ( $best && $orf->logscore($best) < -10) {
+			    $orf->reoptimise(
+				-reference => $orf->data( uc($best) ),
+				-atg => undef,
+				-intron => 1, # make introns favorable 
+				-verbose => 5
+			    );
+			    $orf->structure();
+			}
+		    }
+		}
+		
 		#$orf->update();
-		$orf->glyph( -print => 'SGD', -tag => $path );		
+		#$orf->glyph( -print => 'SGD', -tag => $path );		
 		
 	    } else { $self->throw( $orf->first_codon ); } 
-	    
-	  PRINTX:
-	    unless ( $orf->first_codon eq $START_CODON ) { 
-		#print {$fh} $orf->name, $path, $orf->_top_tail, 
-		($orf->first_codon eq $START_CODON ? '***' : ++$fail),
-		$orf->gene, $orf->logscore('ygob'), $orf->hypergob, 		
-		$orf->data('STOP'), $orf->fragment, $orf->partial;
-		$count_atg{ $path }++;
-	    }
-
+	    	    
 	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
 	}
 
@@ -1403,8 +1416,8 @@ sub _make_genbank_gene_terminii {
 	unless ( $orf->last_codon =~ $STOP_CODON ) {	    
 	    
 	    # adjust last codon to downstream STOP (or other stopping condition)
-	    
-	    $lex->stop( -adjust => $TRIPLET, -R => 1 ) until 
+
+	    $lex->stop( -adjust => +$TRIPLET, -R => 1 ) until 
 		( $orf->last_codon =~ $STOP_CODON ||            # OK outcome 
 		  $orf->_terminal_dist2( $orf->strand ) < 3 ||  # almost OK outcome (must be exact) 
 		  ($gap && $orf->overlap( -object => $gap )));  # NOT OK 
@@ -1429,7 +1442,7 @@ sub _make_genbank_gene_terminii {
 
 	    } elsif ( $orf->_terminal_dist2( $orf->strand ) == 0 ) {
 		$stop_gbk = $lex->stop( -R => 1 ); # do nothing 
-
+		
 	    } else { $self->throw(); }	    
 	    	    
 	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
@@ -1440,13 +1453,10 @@ sub _make_genbank_gene_terminii {
 		-fh => $fh 
 		) if $args->{'-verbose'}; # && $lex->stop(-R => 1) != $stop_gbk;
 	}
-	
 	$orf->evaluate( -force => 1 );
     }
 
-    foreach my $path ( keys %count_atg ) {
-	print {$fh} $path, $count_atg{ $path };
-    }
+    map { $_->structure } $self->stream;
 
     return $self;
 }
@@ -1465,7 +1475,7 @@ sub _genbank_quality_filter {
 	# make sure it looks like a pseudogene 
 
 	next if
-	    $_->first_codon eq $START_CODON ||
+	    $orf->first_codon eq $START_CODON ||
 	    $orf->data('STOP') == 0 ||
 	    $orf->hypergob > 5;
 
