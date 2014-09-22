@@ -3243,6 +3243,7 @@ sub reoptimise {
     $args->{'-protein'} = $self->homolog(-fast => 1) unless exists $args->{'-protein'}; # also uses pillar()
     #$args->{'-reference'} = undef unless exists $args->{'-reference'}; 
 
+    $args->{'-intron'} = undef unless exists $args->{'-intron'};
     # post processing 
     $args->{'-update'} = 1 unless exists $args->{'-update'};
     $args->{'-atg'} = 300 unless exists $args->{'-atg'};
@@ -3251,7 +3252,8 @@ sub reoptimise {
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
     $args->{'-debug'} = undef unless exists $args->{'-debug'};
 
-    $self->throw unless $args->{'-reference'};
+    $self->throw("Must supply a reference to evaluate alteranative predictions") 
+	unless $args->{'-reference'};
 
     ##################################################################
     # minor prep
@@ -3276,10 +3278,13 @@ sub reoptimise {
 	unless ! $args->{'-orfmin'};
 
     # 2. use Exonerate. 
-
+    
     my @exonerate = #  -intron => -10,
-	$locus->exonerate( -protein => $args->{'-protein'}, -verbose => ($args->{'-verbose'}>=2 ? 2 :0 ) ) 
-	unless ! $args->{'-protein'};
+	$locus->exonerate(
+	    ( $args->{'-intron'} ? ('-intron' => $args->{'-intron'}) : () ), 
+	    -protein => $args->{'-protein'}, 
+	    -verbose => ($args->{'-verbose'}>=2 ? 5 :0 ) 
+	) unless ! $args->{'-protein'};
 
     # 3. run GeneWise  
     
@@ -7845,10 +7850,9 @@ sub _invert_coords {
 
 sub _top_tail {
     my $self = shift;
-    my $first = $self->exons(-query => 'first');
-    my $last = $self->exons(-query => 'last');
-    my ($ftop, $ftail) = $first->_top_tail;
-    my ($ltop, $ltail) = $last->_top_tail;
+    my $seq = $self->sequence();
+    my $ftop = substr( $seq, 0, 3);
+    my $ltail = substr( $seq, length($seq)-3, 3);
     return ($ftop, $ltail);
 }
 
