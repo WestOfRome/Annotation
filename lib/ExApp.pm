@@ -564,7 +564,7 @@ sub exonerate {
   $args->{'-params'} = " --model protein2genome --exhaustive 0 --bestn 1 " 
       unless exists  $args->{'-params'};
   $args->{'-intron'} = -30 unless exists $args->{'-intron'};
-  $self->throw unless $args->{'-intron'} <= 0 ;
+  #$self->throw unless $args->{'-intron'} <= 0 ;
   $args->{'-params'} .= " --intronpenalty $args->{'-intron'} ";
   # 
   $args->{'-safe'} = 1 unless exists $args->{'-safe'};
