@@ -8210,6 +8210,8 @@ sub _make_genbank_compatible {
     my $args = {@_};
 
     $self->throw unless my $index = $args->{'-index'};
+
+    my $fh = \*STDERR;
     
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
@@ -8235,6 +8237,7 @@ sub _make_genbank_compatible {
 	foreach my $o ( 
 	    grep {$_->first_codon ne $START_CODON}
 	    grep {$_->coding} $scaf->stream ) {
+	    
 	    print {STDERR} $o->name, $o->assign, $o->ogid, $o->_top_tail, 
 	    $o->gene, $o->ygob, $o->loss, $o->hypergob, $o->evalue('gene'),
 	    $o->score('global'), $o->score('local'), $o->fragment, 
