@@ -646,11 +646,11 @@ sub warn {
         $go->{'_LOG'} = $fh;
     }
     
-    my $string = join(
+    $string = join(
 	"\n",
 	'>##################################',
 	$string,
-	join("\t", caller(1) ),
+	join("\t", (caller(1))[0..4] ),
 	$self->output(-string => 1, -creator => 1),
 	#( map {$_->output(-string => 1, -creator => 1)} grep {defined} @objs ),     
 	'###################################'
