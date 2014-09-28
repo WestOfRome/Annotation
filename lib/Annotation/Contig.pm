@@ -1284,6 +1284,7 @@ sub _make_genbank_gene_terminii {
 
 	################################# 
 	# First codon 
+	my $poison;
       FINDSTART:
 	#################################
 
@@ -1373,28 +1374,31 @@ sub _make_genbank_gene_terminii {
 
 		if ( $orf->first_codon ne $START_CODON ) {
 		    $orf->structure();
-		    if ( $orf->data('STOP') == 0 ) {
+		    if ( $orf->data('STOP') == 0 && ! $poison ) {
 			my ($best) = sort {$orf->logscore($a) <=> $orf->logscore($b)} qw(gene sgd);
 			if ( $best && $orf->logscore($best) < -10) {
 			    $orf->reoptimise(
 				-reference => $orf->data( uc($best) ),
-				-atg => undef,
-				-intron => 1, # make introns favorable 
+				-atg => undef, # let's not complicate 
+				-hmm => undef, # TEMP / DEBUG 
+				-intron => 1,  # make introns favorable 
 				-verbose => 5
 			    );
 			    $orf->structure();
+			    $poison=1;
+			    goto FINDSTART if $orf->first_codon ne $START_CODON;
 			}
 		    }
 		}
 		
-		#$orf->update();
-		#$orf->glyph( -print => 'SGD', -tag => $path );		
+		#$orf->update(); # TEMP / DEBUG 
+		$orf->glyph( -print => 'SGD', -tag => $path );		
 		
 	    } else { $self->throw( $orf->first_codon ); } 
 	    	    
 	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
 	}
-
+	
       FINDSTOP:
 
 	################################# 
