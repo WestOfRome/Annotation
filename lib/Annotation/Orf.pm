@@ -7210,10 +7210,10 @@ sub genbank_tbl {
 	print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
 	
 	unless (  $asn eq 'assembly_gap' ) {
-	    print {$fh} @bump, 'gene', $self->name( -genbank => 1 );
+	    #print {$fh} @bump, 'gene', $self->name( -genbank => 1 );
 	    print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 0, -rich => 1 ) if 
 		$self->genbank_evidence; # irritating -- we are using the GenBank recommended value 
-	    print {$fh} @bump, 'locus_tag', (map { s/\+//; $_ } $self->unique_id);
+	    #print {$fh} @bump, 'locus_tag', (map { s/\+//; $_ } $self->unique_id);
 	}
 	#print {$fh} @bump, 'standard_name', $self->name; # diff from gene ?
     }
