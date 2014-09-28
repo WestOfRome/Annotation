@@ -623,7 +623,7 @@ sub exonerate {
   my $outcmd = "  $binary $args->{'-params'} -q $prot -t $dna ".
       ($args->{'-verbose'} >= 2 ? " --showalignment 1 --showtargetgff 1 " : " $outformat $postprocess " );
   print "$cmd\n". ` $outcmd ` if $args->{'-verbose'}; 
- 
+  
   ###############################################
   # compose cmd, run, parse, fix coords, make object
   ###############################################
@@ -667,7 +667,8 @@ sub exonerate {
       #$orf->data('SCORE' => $hash{$best}{'SCR'});
       $orf->data('EXONERATE.DNA.LOCAL' => $hash{$best}{'SCR'} );
       
-      $orf->output( -prepend => [ '>>>'.$orf->score ] ) if $args->{'-verbose'};
+      $orf->output( -prepend => [ '>>>'.$orf->score ], -append => [$orf->_top_tail] ) 
+	  if $args->{'-verbose'};
 
       # deal with unreported frameshifts etc 
       # we miss a 12AA extension to a YCL002W induced by a frameshift.
