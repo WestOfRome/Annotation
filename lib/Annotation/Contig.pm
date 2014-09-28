@@ -1383,9 +1383,9 @@ sub _make_genbank_gene_terminii {
 				-hmm => undef, # TEMP / DEBUG 
 				-intron => 1,  # make introns favorable 
 				-verbose => 5
-			    );
-			    $orf->structure();
+				);
 			    $poison=1;
+			    $orf->structure();
 			    goto FINDSTART if $orf->first_codon ne $START_CODON;
 			}
 		    }
