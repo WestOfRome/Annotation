@@ -3018,7 +3018,11 @@ sub merge {
     
     $merge->update( -evaluate => 0 ); # call update on $merge 
     my $success =     # calls update on $success 
-	$merge->reoptimise(-reference => $hom, -verbose => 0); # can return  merge proposal 
+	$merge->reoptimise(
+	    -reference => $hom, 
+	    -verbose => 0, 
+	    -hmm => undef # TEMP / DEBUG 
+	); # can return  merge proposal 
     return undef unless $success && $success->translatable;
     
     # compare to self? pointless? 
@@ -3237,16 +3241,17 @@ sub reoptimise {
     # basic prediction 
     $args->{'-extend'} = 5000 unless exists $args->{'-extend'};
     $args->{'-orfmin'} = undef unless exists $args->{'-orfmin'};
+
     # homology 
-    $args->{'-hmm'} = ( $self->pillar('YGOB') )[0] unless exists $args->{'-hmm'};  # 
-    $args->{'-hmm'} = $self->ygob unless defined $args->{'-hmm'};
+    $args->{'-hmm'} = ( ($self->pillar('YGOB'))[0] || $self->ygob) unless exists $args->{'-hmm'};  # 
     $args->{'-protein'} = $self->homolog(-fast => 1) unless exists $args->{'-protein'}; # also uses pillar()
     #$args->{'-reference'} = undef unless exists $args->{'-reference'}; 
-
     $args->{'-intron'} = undef unless exists $args->{'-intron'};
+
     # post processing 
     $args->{'-update'} = 1 unless exists $args->{'-update'};
     $args->{'-atg'} = 300 unless exists $args->{'-atg'};
+
     # generic 
     $args->{'-safe'} = 0 unless exists $args->{'-safe'};
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
@@ -3287,7 +3292,7 @@ sub reoptimise {
 	) unless ! $args->{'-protein'};
 
     # 3. run GeneWise  
-    
+
     my @wise = 
 	$locus->wise( -hmm => $args->{'-hmm'}, -verbose => ($args->{'-verbose'}>=2 ? 1 :0 ) ) # 1->5
 	unless ! $args->{'-hmm'};
@@ -3517,10 +3522,10 @@ sub choose {
     
     if ( $args->{'-verbose'} ) {
 	print "> $delta", $best->score('global'), ( $order[0] ? $order[0]->score('global') : 0 );
-        $self->oliver(-prepend => ['1.SELF'], -append => [(caller(1))[3]]);
-	map { $_->oliver(-prepend => ['2.MODEL'], -creator =>1) } 
+        $self->oliver(-prepend => ['1.SELF'], -append => [(caller(1))[3]], -append => [$self->_top_tail]);
+	map { $_->oliver(-prepend => ['2.MODEL'], -creator =>1, -append => [$_->_top_tail]) } 
 	grep {$_ ne $self} (reverse(@order),$best);
-	$best->oliver(-prepend => ['3.BEST'], -creator => 1);
+	$best->oliver(-prepend => ['3.BEST'], -creator => 1, -append => [$best->_top_tail]);
     }
     
     return ( wantarray ? ($best, $delta) : $best );
@@ -6028,7 +6033,9 @@ sub fragment {
     my $ls = $self->score('local') || $self->exonerate2( -model => 'local' );
     return undef unless defined $gs && defined $ls;
     return undef unless $ls;    
-    
+
+    # if local score >> global, it is a candiate for a fragment rather than 
+    # a full gene (or a pseudo gene) 
     return $self->data( 'HSP' => sprintf("%.2f", ($ls-$gs)/($ls+$gs)) );
 }
 
@@ -7183,15 +7190,13 @@ sub genbank_tbl {
 	    $ex->start( -R => 1); #$self->strand == -1 ? $ex->stop : $ex->start;
 	my $stop = $ex->genbank_coords( -mode => 'stop', -R => 1 ) || 
 	    $ex->stop( -R => 1); #$self->strand == -1 ? $ex->start : $ex->stop;
-
-	if ( $asn eq 'CDS' ) {
-	    if ( $ex eq $exons[0] && $self->first_codon ne $START_CODON ) {
-		#$start = $self->strand == -1 ? '>'.$start : '<'.$start;
-		$start = '<'.$start;
+	
+	if ( $asn eq 'CDS' && ! ($newpseudo || $self->pseudogene) ) {
+	    if ( $ex eq $exons[0] ) {
+		$start = '<'.$start unless $self->first_codon eq $START_CODON
 	    }
-	    if ( $ex eq $exons[-1] && $self->last_codon !~ $STOP_CODON ) {
-		#$stop = $self->strand == -1 ? '<'.$stop : '>'.$stop;
-		$stop = '>'.$stop;
+	    if ( $ex eq $exons[-1] ) {
+		$stop = '>'.$stop unless $self->last_codon =~ $STOP_CODON
 	    }
 	}
 	print {$fh} $start, $stop,  ( $ex eq $exons[0] ? $asn : undef), undef, undef;
@@ -7203,7 +7208,7 @@ sub genbank_tbl {
 
     unless ( $args->{'-minimal'} ) {
 	print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
-
+	
 	unless (  $asn eq 'assembly_gap' ) {
 	    print {$fh} @bump, 'gene', $self->name( -genbank => 1 );
 	    print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 0, -rich => 1 ) if 
@@ -7228,7 +7233,7 @@ sub genbank_tbl {
 	# types of CDS .... 
 
 	print {$fh} @bump, 'codon_start', $self->fex->frame+1;
-	if ( $self->pseudogene ) {
+	if ( $self->pseudogene ) { # method does not exist yet ...
 	    print {$fh} @bump, 'pseudogene', 'unitary';	 # unknown
 
 	} elsif ( $self->data('STOP') || $newpseudo ) {
