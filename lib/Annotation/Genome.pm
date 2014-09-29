@@ -3872,8 +3872,37 @@ sub groupBySynteny {
 
 sub _orthogroup_index {
     my $self = shift;
+
+    my $class = ref( $self->down->down );
     
     my %index = map { $_->ogid => [$_->_orthogroup] } grep { $_->ogid } $self->orfs;
+
+    # do all OGs have right #members ?
+    # members have correct ->ogid ?
+
+    foreach my $ogid (keys %index) {
+	unless ( scalar( grep { $_->isa($class) } @{$index{$ogid}} ) == scalar( $self->bound )+1 ) {
+	    print {STDERR} $ogid, @{$index{$ogid}};
+	    $self->throw;
+	}
+	foreach my $o ( @{ $index{$ogid} } ) {
+	    unless ( $o->ogid == $ogid ) {
+		$o->output(-fh => \*STDERR, -append => [$o->ogid] );
+		$self->throw;
+	    }
+	}
+    }
+
+    # Check other organisms 
+
+    foreach my $g ( map { $self->bound($_) }  $self->bound ) {
+	foreach my $o ( grep { $_->ogid } $g->stream ) {
+	    unless (scalar( grep { $_->isa($class) } @{$index{$o->ogid}} ) == scalar( $self->bound )+1) {
+		$o->output(-fh => \*STDERR, -append => [$o->ogid] );
+		$self->throw;
+	    }
+	}
+    }
     
     return \%index;
 }
@@ -8215,6 +8244,7 @@ sub _make_genbank_compatible {
     
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
+	print {$fh} $scaf->id;
 
 	# A. gross asssembly issues ....
 
