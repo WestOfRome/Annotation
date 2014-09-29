@@ -1490,10 +1490,11 @@ sub _genbank_quality_filter {
 	    my @og = @{$args->{'-index'}->{ $orf->ogid }};
 	    my $og_master = shift(@og);
 	    $og_master->_dissolve_orthogroup;
+	    delete $args->{'-index'}->{ $orf->ogid };
 	}
 
 	# 
-
+	
 	$orf->output( -fh => \*STDERR, -prepend => ['TOSS'] );
 	$self->remove( -object => $orf );
 	$orf->DESTROY();
