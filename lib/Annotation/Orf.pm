@@ -3059,8 +3059,8 @@ sub merge {
 	    $og_master->_dissolve_orthogroup;
 	    map { $og[$_]=$self if $og[$_]->organism eq $other->organism } (0..$#og);
 	    $og_master->_define_orthogroup( -object => [ @og ] );
-	    $args->{'-index'}->{ $ortho } = [ @og ];
-	    
+	    delete $args->{'-index'}->{ $ortho };
+	    $args->{'-index'}->{ $og_master->ogid } = [ $og_master->_orthogroup ];	    
 	} else { $self->throw($ortho);}
     }
 
@@ -6718,9 +6718,10 @@ sub _dissolve_orthogroup {
     my @meth = map { uc($_) } $self->up->up->bound;
 
     if ( $args->{'-verbose'} ) {
-	map { $_->oliver(-prepend => ['DISSOLVE']), 
-	      -append => [$_->ogid] } ($self, $self->orthogroup);
-	print;
+	my $fh = \*STDERR;
+	print {$fh} ">".$self->ogid, caller();
+	map { $_->oliver(-fh => $fh, -prepend => ['DISSOLVE', $_->ogid]), 
+	      -append => [$_->ogid] } ($self->_orthogroup);
     }
     
     foreach my $m ( @meth ) {
