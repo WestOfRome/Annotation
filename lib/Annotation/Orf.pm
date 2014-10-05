@@ -2989,7 +2989,7 @@ sub merge {
     # basic QC 
 
     map { return $self unless $_->assign eq 'GAP' } $self->intervening(-object => $other);
-    my ($ohno, $ohtwo) = grep {defined} map {$_->ohnolog} ($self, $other);
+    my ($has_ohno, $ohtwo) = grep {defined} grep {$_->ohnolog} ($self, $other);
     $self->warn("Two Ohnologs!", $other) and return undef if $ohtwo;
     my ($ortho, $two) = grep {defined} map { ($_->orthogroup)[0] || $_->ogid } ($self, $other); 
     $self->warn and return undef if $two;    # cannot handle two OGs in reference (or any) species
@@ -3038,9 +3038,11 @@ sub merge {
     # EXTRA is depracated and no longer set. 
     # $self->data('EXTRA' => join(';', (grep {defined} $self->data('EXTRA'),$other->data('EXTRA')))  );
 
-    if ( $ohno && ($ohno ne $self) ) { # ohno == other 
-	$other->ohnolog($self) unless $other->ohnolog eq $self;
-	#$self->ohnolog($other) unless $self->ohnolog eq $other;
+    if ( $has_ohno && ($has_ohno eq $other) ) { 
+	my $ohno = $other->ohnolog;
+	$self->throw if $ohno eq $self; # neighbours cannot be ohnos
+	$other->ohnolog(undef);
+	$self->ohnolog( $ohno );
     }
 
     if ($ortho) {
@@ -3300,12 +3302,14 @@ sub reoptimise {
     # post process pseudocontig effects:: all orfs to real contig  
     # my @a2 = grep { $_->homology(-object => $self) } grep {defined} @anno;
     
-    my @newmodels = grep { $_->commoncodon($self) } #grep { $_->strand == $self->strand }
-    map { $_->adjust($adjust) } # Must happen after transfer // $exon->_adjust() blocks out of range changes
+    my @new = map { $_->adjust($adjust) } # Must happen after transfer // $exon->_adjust() blocks out of range changes
     map { $_->transfer(-from => $locus, -to => $self->up, -warn => 0) }
     grep {defined} (@anno,@exonerate,@wise);
     $locus->DESTROY;    
-    
+
+    map { $_->output( -fh => $fherr, -prepend => ['DS'] ) } @new;
+
+    my @newmodels = grep { $_->commoncodon($self) } @new; #grep { $_->strand == $self->strand }
     ##################################################################
     # choose best model from panel and destroy all others 
     ##################################################################
