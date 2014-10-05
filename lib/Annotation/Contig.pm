@@ -444,7 +444,7 @@ sub merge {
 		-return => 'overlap'
 		);
 	    
-	    #print {$fh} 3, $lorf->name, $orf->name, $homolog, $syn, $scr, @syn; 
+	    #print {$fh} 3, $lorf->name, $orf->name, $homolog, $syn, $scr; 
 	    
 	    #########################################
 	    # OK. lets start making some decisions. 
@@ -457,18 +457,19 @@ sub merge {
 
 	    my ($call,$reason) = qw(reject overlap);
 	    if ( $orf->fragments( -object => $lorf ) || ($syn && $scr > 0) ){
-
+		my ($master, $slave) = sort { $b->ogid <=> $a->ogid } ($orf, $lorf);
+		
 		# intron separated exons ? frameshifted HSPs ? orf->merge handles details.
-		next unless my $success = $orf->merge(
-		    -object => $lorf, 
+		next unless my $success = $master->merge(
+		    -object => $slave, 
 		    -reference => $ref, 
 		    -index => $args->{'-index'} 
 		    );
-		$lookup{$lorf->_internal_id}=$orf;
+		$lookup{$slave->_internal_id}=$master;
 		($call,$reason) = ('merge', undef);
 		
-		$orf->output(-fh => $fh, -prepend => ['MERGE']) if $args->{'-verbose'};
-
+		$master->output(-fh => $fh, -prepend => ['MERGE']) if $args->{'-verbose'};
+		
 	    } elsif ( $syn ) { # alt versions of same gene ? or tandems ?
 		my $frame = $orf->commoncodon(-object => $lorf);
 		my $olap = $orf->overlap(-object => $lorf, -compare => 'coords');
