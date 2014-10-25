@@ -809,8 +809,8 @@ sub wise { #  avg 3.29s/call (for ~20Kb regions)
 	$hmm = $ENV{'YGOB_HMMER3_LIB'}.'/'.$hmm unless $hmm =~ /\//; 	
 	$hmm .= '.h2m' unless  $hmm =~ /\.h2m$/; 
 	$hmm =~ s/\.h3m//;
-    } else {
-	my $api = 'http://www.saccharomycessensustricto.org/SaccharomycesSensuStrictoResources//ygobhmms/'.$hmm;
+    } elsif ( $ENV{'YGOB_HMMER3_URL'} ) {
+	my $api = $ENV{'YGOB_HMMER3_URL'}.'/ygobhmms/'.$hmm;
 	$api .= '.h3m' unless  $hmm =~ /\.h3m$/; 
 	
 	my ($fh, $file) = $self->_tempfile('XXXX');
@@ -820,9 +820,9 @@ sub wise { #  avg 3.29s/call (for ~20Kb regions)
 	close($fh2);
 	system( " hm3.hmmconvert -2 $file > $file2 " );
 	$hmm = $file2;
-    }
+    } else { $self->warn("No HMMER3 library set (API or local).") and return undef; }
 
-    $self->warn($hmm) and return undef unless -e $hmm;
+    $self->warn("No model for ".$hmm) and return undef unless -e $hmm;
     
     ######################################################
     # compose cmd, run, parse, fix coords, make object 
