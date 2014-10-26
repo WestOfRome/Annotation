@@ -3306,10 +3306,8 @@ sub reoptimise {
     map { $_->transfer(-from => $locus, -to => $self->up, -warn => 0) }
     grep {defined} (@anno,@exonerate,@wise);
     $locus->DESTROY;    
-
-    map { $_->output( -fh => $fherr, -prepend => ['DS'] ) } @new;
-
-    my @newmodels = grep { $_->commoncodon($self) } @new; #grep { $_->strand == $self->strand }
+    
+    my @newmodels = grep { $_->commoncodon($self) } grep {$_->translatable} @new; #grep { $_->strand == $self->strand }
     ##################################################################
     # choose best model from panel and destroy all others 
     ##################################################################
@@ -5518,8 +5516,10 @@ sub _decompose_gene_name {
     } elsif ($gene =~ /(\w{3,4})_(\d+)\.(\d+)([a-z])?/) { # Standard
 	($sp,$chr,$index,$other,$arm,$strain)=( $1, $2, $3, $4, undef, undef);
     #} else { return undef; } 
+    } elsif ($gene =~ /^HM([LR])|MAT$/) {
+	($sp,$chr,$index,$other,$arm,$strain)=( 'SGD', 'C', undef, undef, ($1 eq 'R' ? 'R' : 'L'), undef);
     } else { print (caller(1)); die($gene); } 
-
+    
     $sp = uc($sp);
     $sp = $SPECIES{$sp} unless ( exists $HOMOLOGY{$sp} );
 
@@ -5536,7 +5536,8 @@ sub _compute_gene_distance {
 
     die("$x,$y,$x[0],$y[0]") unless $x[0] && $x[0] eq $y[0];
     return $INFINITY unless $x[1] eq $y[1];
-    
+    return 20 unless $x[2] && $y[2]; # HML / HMR / MAT -- this is a sorry tale... 
+
     my $delta;
     if ( defined $x[4] && $x[4] ne $y[4] ) { # arm 
 	$delta = $x[2] + $y[2] -1; # counts from 0 not 1 
