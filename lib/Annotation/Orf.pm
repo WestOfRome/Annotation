@@ -6026,7 +6026,7 @@ sub pseudo {
     Test whether model meets the criteria for a full
     model or a fragment using the local - global score test.
     
-    Set the FRAG evidence attribute. 
+    Set the HSP evidence attribute. 
 
 =cut 
 
@@ -6034,8 +6034,9 @@ sub fragment {
     my $self = shift;
     my $args = {@_};
     
-    my $gs = $self->score('global') || $self->exonerate2( -model => 'global' );
-    my $ls = $self->score('local') || $self->exonerate2( -model => 'local' );
+    my $gs = $self->score('global') || $self->exonerate2( -model => 'global', -return => 'score' );
+    my $ls = $self->score('local') || $self->exonerate2( -model => 'local', -return => 'score' );
+    print {STDERR} $gs, $ls;
     return undef unless defined $gs && defined $ls;
     return undef unless $ls;    
 
@@ -6048,6 +6049,8 @@ sub fragment {
 
     Compare length to lengths of YGOB homologs 
     and compute Z-score. 
+
+    Set the FRAG evidence attribute. 
 
 =cut
 
