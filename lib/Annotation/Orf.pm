@@ -5073,6 +5073,26 @@ sub evaluate {
     return($self->assign);     
 }
 
+=head2 reset
+=cut 
+
+sub reset {
+    my $self = shift;
+    my $args = {@_};
+    
+    $args->{'-hard'}=0 unless exists  $args->{'-hard'};
+
+    $self->throw('Evidence not defined') unless 
+	my $now = $self->evidence;
+    
+    return() if ($now eq 'MANUAL' || $now eq 'NNNN') && ! $args->{'-hard'};
+
+    $self->evidence('NONE');
+    $self->throw unless $self->evidence eq 'NONE';
+
+    return $self;
+}
+
 =head2 structure(-exons => 1|0)
 
     Returns a numeric value based on whther the gene has good structure: 
@@ -6036,9 +6056,10 @@ sub fragment {
     
     my $gs = $self->score('global') || $self->exonerate2( -model => 'global', -return => 'score' );
     my $ls = $self->score('local') || $self->exonerate2( -model => 'local', -return => 'score' );
-    print {STDERR} $gs, $ls;
     return undef unless defined $gs && defined $ls;
     return undef unless $ls;    
+
+    print {STDERR} $gs, $ls;
 
     # if local score >> global, it is a candiate for a fragment rather than 
     # a full gene (or a pseudo gene) 
