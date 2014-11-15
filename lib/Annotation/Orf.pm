@@ -5090,6 +5090,9 @@ sub reset {
     $self->evidence('NONE');
     $self->throw unless $self->evidence eq 'NONE';
 
+    $self->{ASSIGN}=$self->_evidence( -evidence => $self->evidence, -query => 'infer' );
+    $self->{RANK}=$self->_evidence( -evidence => $self->evidence, -query => 'rank' );
+
     return $self;
 }
 
