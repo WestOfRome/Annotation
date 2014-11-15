@@ -2986,7 +2986,11 @@ sub merge {
     $self->throw unless $self->strand == $other->strand;
     map { $_->throw unless $_->translatable } ($self, $other);
 
+    return undef unless my $hom = $self->homolog( -object => [$other] );
+
+    ######################################### 
     # basic QC 
+    ######################################### 
 
     map { return $self unless $_->assign eq 'GAP' } $self->intervening(-object => $other);
     my ($has_ohno, $ohtwo) = grep {defined} grep {$_->ohnolog} ($self, $other);
@@ -2994,15 +2998,15 @@ sub merge {
     my ($ortho, $two) = grep {defined} map { ($_->orthogroup)[0] || $_->ogid } ($self, $other); 
     $self->warn and return undef if $two;    # cannot handle two OGs in reference (or any) species
     
-    # 
-    
-    return undef unless my $hom = $self->homolog( -object => [$other] );
-    
     # we want to compare a few possibilities 
     # 1. just sticking two halves together and not thinking 
     # 2. take 2 parts and "optimise" 
     # 3. repredict the whole region using exonerate 
     # 4. reannotate region using a lower intron threshold 
+
+    ######################################### 
+    # Make a simple merged model 
+    ######################################### 
 
     # make a proxy merge: this can be really messed up. vorsicht! 
     # this does not have to be exact since we only look in region around model
@@ -3014,7 +3018,9 @@ sub merge {
     $temp->DESTROY;
     map { $_->stop(-R => 1, -adjust => -3) if $_->length > 3  } $merge->stream; # remove STOP codons
     
+    ######################################### 
     # optimize around the merged model 
+    ######################################### 
     
     $merge->update( -evaluate => 0 ); # call update on $merge 
     my $success =     # calls update on $success 
@@ -3024,52 +3030,88 @@ sub merge {
 	    -hmm => undef # TEMP / DEBUG 
 	); # can return  merge proposal 
     return undef unless $success && $success->translatable;
-    
-    # compare to self? pointless? 
+
+    #########################################     
+    # Compare to self
+    ######################################### 
+
     # my ($best,$delta) = $self->choose(-object => [$merge], -reference => $ref);
     # not implemented. or desirable? 
+
+    #########################################     
+    # Move exons from optimized temporary merged model to self 
+    #########################################     
     
     map { $self->remove(-object => $_, -warn => 0); $_->DESTROY; } $self->stream;
     map { $_->transfer(-from => $merge, -to => $self, -warn => 0) } $merge->stream;
     print $self->aa and $self->throw unless $self->translatable;
     $merge->DESTROY;
 
-    # update does not handle the following: 
-    # EXTRA is depracated and no longer set. 
-    # $self->data('EXTRA' => join(';', (grep {defined} $self->data('EXTRA'),$other->data('EXTRA')))  );
+    #########################################     
+    # 
+    #########################################     
 
-    if ( $has_ohno && ($has_ohno eq $other) ) { 
-	my $ohno = $other->ohnolog;
-	$self->throw if $ohno eq $self; # neighbours cannot be ohnos
-	$other->ohnolog(undef);
-	$self->ohnolog( $ohno );
-    }
+    $self->integrate( -object => $other, -index => $args->{'-index'} );
 
-    if ($ortho) {
-	if ( $ortho eq  ($self->orthogroup)[0] || $ortho == $self->ogid ) {
-	    # no stransfer needed ..
+    #########################################     
+    # 
+    #########################################     
 
-	} elsif ($ortho eq ($other->orthogroup)[0] ) { # reference species 
-	    map { $self->$_( $other->$_ ); } map { lc($_) } $self->up->up->bound;
-	    my $test = ($self->up->up->bound)[0];
-	    $self->throw unless $self->$test->id == $other->$test->id;
-	    
-	} elsif ( $ortho == $other->ogid ) { # non-reference species 
-	    $self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
-	    my @og = @{$args->{'-index'}->{ $other->ogid }};
-	    my $og_master = shift(@og);
-	    $og_master->_dissolve_orthogroup;
-	    map { $og[$_]=$self if $og[$_]->organism eq $other->organism } (0..$#og);
-	    $og_master->_define_orthogroup( -object => [ @og ] );
-	    delete $args->{'-index'}->{ $ortho };
-	    $args->{'-index'}->{ $og_master->ogid } = [ $og_master->_orthogroup ];	    
-	} else { $self->throw($ortho);}
-    }
-
-    $other->DESTROY;
-    $self->_creator( (caller(0))[3] );
     $self->update();
+    $self->_creator( (caller(0))[3] );
+    # $self->data('EXTRA' => join(';', (grep {defined} $self->data('EXTRA'),$other->data('EXTRA')))  );
+    $other->DESTROY;
     #$self->output(-creator => 1);
+
+    #########################################     
+    # 
+    #########################################     
+
+    return $self;
+}
+
+=head2 integrate() 
+
+    Combine logical relations of two (neighbouring) genes
+    into a single model. 
+
+=cut 
+
+sub integrate {
+    my $self = shift;
+    my $args = {@_};
+
+    $self->throw unless my $obj = $args->{'-object'};
+    $self->throw unless $self->isa( ref($obj) );
+    $self->throw unless $self->up == $obj->up;
+
+    # Resolve ohnolog conflicts 
+    
+    my $oh1 = $self->ohnolog;
+    my $oh2 = $obj->ohnolog;
+    $self->throw if $oh2 eq $self;
+    $obj->ohnolog( undef );
+    $self->ohnolog( $oh2 ) if ( $oh2 && ! $oh1 );
+
+    # Resolve orthogroup conflicts  
+
+    my $og1 = $self->ogid;
+    my $og2 = $obj->ogid;
+    
+    if ( $og2 ) {
+	$self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
+	my @og = @{$args->{'-index'}->{ $og2 }};
+	delete $args->{'-index'}->{ $og2 };
+	my $master = shift(@og);
+	$master->_dissolve_orthogroup;
+	
+	if ( ! $og1 ) {
+	    map { $og[$_]=$self if $og[$_]->organism eq $other->organism } (0..$#og);
+	    $master = $self if $master->organism eq $self->organism; 
+	    $master->_define_orthogroup( -object => [ @og ] );
+	    $args->{'-index'}->{ $master->ogid } = [ $master->_orthogroup ];
+	}
+    }
 
     return $self;
 }
@@ -6051,6 +6093,13 @@ sub pseudo {
     
     Set the HSP evidence attribute. 
 
+    We currrntly evaluate >0.5 as a fragment. On the basis that: 
+    <0   : Should not happen? May occur for genes with internal duplications?
+    >0   : Local alignment favoured but possibly ambiguous
+    >0.5 : Partial alignment indication likely fragment 
+
+    We should really optimize the cut-off based on the genome, context etc.
+
 =cut 
 
 sub fragment {
@@ -6061,8 +6110,6 @@ sub fragment {
     my $ls = $self->score('local') || $self->exonerate2( -model => 'local', -return => 'score' );
     return undef unless defined $gs && defined $ls;
     return undef unless $ls;    
-
-    print {STDERR} $gs, $ls;
 
     # if local score >> global, it is a candiate for a fragment rather than 
     # a full gene (or a pseudo gene) 
@@ -6114,7 +6161,7 @@ sub partial {
     $self->data($key => $zscr);
     
     print $self->name,$self->gene,$self->length, $pil->{ID}, $pil->{YGOB}->[0], 
-    $pil->{MEAN},$pil->{SD}, $self->data($key) if $args->{'-verbose'};
+    $pil->{MEAN},$pil->{SD}, $self->data($key), $self->fragment if $args->{'-verbose'};
 
     return $self->data($key);
 }
