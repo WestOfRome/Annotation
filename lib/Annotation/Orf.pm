@@ -3048,10 +3048,12 @@ sub merge {
     $merge->DESTROY;
 
     #########################################     
-    # 
+    # Combine ohnologs, orthologs etc 
     #########################################     
 
     $self->integrate( -object => $other, -index => $args->{'-index'} );
+    # $self->data('EXTRA' => join(';', (grep {defined} $self->data('EXTRA'),$other->data('EXTRA')))  );
+    $other->DESTROY;
 
     #########################################     
     # 
@@ -3059,8 +3061,6 @@ sub merge {
 
     $self->update();
     $self->_creator( (caller(0))[3] );
-    # $self->data('EXTRA' => join(';', (grep {defined} $self->data('EXTRA'),$other->data('EXTRA')))  );
-    $other->DESTROY;
     #$self->output(-creator => 1);
 
     #########################################     
@@ -3090,7 +3090,7 @@ sub integrate {
     my $oh1 = $self->ohnolog;
     my $oh2 = $obj->ohnolog;
     $self->throw if $oh2 eq $self;
-    $obj->ohnolog( undef );
+    $obj->ohnolog( undef ) if $oh2;
     $self->ohnolog( $oh2 ) if ( $oh2 && ! $oh1 );
 
     # Resolve orthogroup conflicts  
@@ -3106,7 +3106,7 @@ sub integrate {
 	$master->_dissolve_orthogroup;
 	
 	if ( ! $og1 ) {
-	    map { $og[$_]=$self if $og[$_]->organism eq $other->organism } (0..$#og);
+	    map { $og[$_]=$self if $og[$_]->organism eq $obj->organism } (0..$#og);
 	    $master = $self if $master->organism eq $self->organism; 
 	    $master->_define_orthogroup( -object => [ @og ] );
 	    $args->{'-index'}->{ $master->ogid } = [ $master->_orthogroup ];
@@ -6129,8 +6129,11 @@ sub fragment {
     my $self = shift;
     my $args = {@_};
     
-    my $gs = $self->score('global') || $self->exonerate2( -model => 'global', -return => 'score' );
-    my $ls = $self->score('local') || $self->exonerate2( -model => 'local', -return => 'score' );
+    my $gs = $self->score('global') || 
+	$self->exonerate2( -model => 'global', -return => 'score' );
+    my $ls = $self->score('local') || 
+	$self->exonerate2( -model => 'local', -return => 'score' );
+    
     return undef unless defined $gs && defined $ls;
     return undef unless $ls;    
 
@@ -6176,24 +6179,27 @@ sub partial {
     return undef unless my $pil = $self->lookup( -query => $id );
     return undef unless $pil && $pil->{ID};
     return undef unless $pil->{MEAN};
-    return undef unless $pil->{SD}>0;
+    #return undef unless $pil->{SD}>0;
 
     # 
     
-    my $zscr = ($self->length - $pil->{MEAN} )/ $pil->{SD};
+    my $zscr = ( $pil->{SD}==0 ? undef : ($self->length - $pil->{MEAN})/$pil->{SD} );
     $self->data($key => $zscr);
-    
+
     print $self->name,$self->gene,$self->length, $pil->{ID}, $pil->{YGOB}->[0], 
     $pil->{MEAN},$pil->{SD}, $self->data($key), $self->fragment if $args->{'-verbose'};
-
-    return $self->data($key);
+    
+    return ($args->{'-pillar'} ? ($self->data($key), $pil) : $self->data($key)) ;
 }
 
 =head2 fragments( -object => , -overlap => , -score => )
 
     We require evidence from direct alignment to a homolog to 
     determine that two models represent fragments of the same gene. 
-    However, we have a variety of methods to rapidly reject this idea:
+    Specifically, we compare the sum of the scores of the individual genes
+    to the score obtained from a "fused" gene to the homolog. 
+
+    We have a variety of methods to rapidly reject this idea:
     1. If the genes are confidently assigned to different pillars. 
     2. If assigned to different pillars and have matching length profiles.
     3. If both preferentially align to the same region of the homolog.
