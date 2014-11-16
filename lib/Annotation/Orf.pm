@@ -3084,7 +3084,9 @@ sub integrate {
     $self->throw unless my $obj = $args->{'-object'};
     $self->throw unless $self->isa( ref($obj) );
     $self->throw unless $self->up == $obj->up;
-
+    
+    my $verb=0;
+    
     # Resolve ohnolog conflicts 
     
     my $oh1 = $self->ohnolog;
@@ -3097,19 +3099,20 @@ sub integrate {
 
     my $og1 = $self->ogid;
     my $og2 = $obj->ogid;
-    
+
     if ( $og2 ) {
 	$self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
 	my @og = @{$args->{'-index'}->{ $og2 }};
 	delete $args->{'-index'}->{ $og2 };
 	my $master = shift(@og);
-	$master->_dissolve_orthogroup;
+	$master->_dissolve_orthogroup(-verbose => $verb );
 	
 	if ( ! $og1 ) {
 	    map { $og[$_]=$self if $og[$_]->organism eq $obj->organism } (0..$#og);
 	    $master = $self if $master->organism eq $self->organism; 
-	    $master->_define_orthogroup( -object => [ @og ] );
+	    $master->_define_orthogroup( -object => [ @og ], -verbose => $verb );
 	    $args->{'-index'}->{ $master->ogid } = [ $master->_orthogroup ];
+	    #} else { map { $_->oliver(-fh => \*STDERR ) }  @{$args->{'-index'}->{ $og1 }}; 	    
 	}
     }
 
@@ -6821,9 +6824,9 @@ sub _dissolve_orthogroup {
    
     $args->{'-verbose'}=1 unless exists  $args->{'-verbose'};
 
-    map { $self->throw unless $self->isa(ref($_)) && $_->up } @_;
-    
+    $self->throw unless $self->orthogroup && $self->ogid;
     my @meth = map { uc($_) } $self->up->up->bound;
+    map { $self->throw unless $self->isa(ref( $self->$_ )) } @meth;
 
     if ( $args->{'-verbose'} ) {
 	my $fh = \*STDERR;
@@ -6868,15 +6871,11 @@ sub _define_orthogroup {
     $args->{'-sowh'}=0 unless exists $args->{'-sowh'};
     $args->{'-debug'}=0 unless exists $args->{'-debug'};
 
+    my $fh = STDERR;
+
     ################################
     # Basic param checking 
     ################################
-
-    if ( $args->{'-debug'} ) {
-	my $fh = STDERR;
-	print $fh caller(1);
-	map { $_->oliver(-og => 1, -fh => $fh) } ($self,@og);
-    }
 
     $self->throw( $#og ) unless scalar(@og) == scalar($self->up->up->bound);
     map { $self->throw unless $self->isa(ref($_)) && $_->up } @og;
@@ -6902,7 +6901,7 @@ sub _define_orthogroup {
     if ( $args->{'-sowh'} && $#og >= 1 && $self->coding ) {
 	if ( my $sowh = $self->phyml( -object => [values %sp], -sowh => $args->{'-sowh'}, -verbose => 1 ) ) {
 	    print ">>>".++$success, #$o->identify, $o->outgroup(), $o->outgroup(-ygob => 1),
-	    $sowh->{DELTA}, $sowh->{MEAN}, $sowh->{SD}, $sowh->{PVAL}, $sowh->{RESULT} if $args->{'-verbose'};
+	    $sowh->{DELTA}, $sowh->{MEAN}, $sowh->{SD}, $sowh->{PVAL}, $sowh->{RESULT} if $args->{'-verbose'}>=2;
 	    return undef unless $sowh->{PVAL} < 0.05;
 	}
     }
@@ -6944,12 +6943,12 @@ sub _define_orthogroup {
     # verbose 
     ################################
     
-    if ( $args->{'-verbose'} ) {
-	print ">$newogid",$self->identify, 
+    if ( $args->{'-verbose'} || 1) {
+	print {$fh} ">$newogid",$self->identify, 
 	( map { $self->data($_) } qw(KA KS KAKS) ),
 	( $self->data('KAKS') > .5 ? '*' : undef ).
 	    ( $self->data('KAKS') > 1 ? '*' : undef );
-	map { $_->oliver(-prepend => [$_->ogid] ) } $self->_orthogroup;
+	map { $_->oliver(-fh => $fh, -prepend => [$_->ogid] ) } $self->_orthogroup;
     }
     
     return $self;
