@@ -371,12 +371,14 @@ sub merge {
 	# order candidates and process pairs left -> right 
 	
 	my @order = sort {$a->start <=> $b->start} @{$cl};
-	map { $self->throw unless $_->up eq $order[0]->up } @order;      
-	next if scalar(@order) == scalar(grep { $_->assign eq 'REPEAT' } @order);
-	
+	map { $self->throw unless $_->up eq $order[0]->up } @order;
+	next if scalar(@order) == scalar(grep { $_->assign eq 'REPEAT' } @order); # exlude repeats 
+
+	# ouptut ...
+
 	if ($args->{'-verbose'}) {
 	    print {$fh} '>';
-	    map { $_->oliver( -fh => $fh ) } @order;
+	    map { $_->output( -fh => $fh ) } @order;
 	}
 
 	my %lookup; # handles merge order issues 
@@ -397,15 +399,6 @@ sub merge {
 	    next unless $orf->distance(-object => $lorf, -bases => 1) <= $args->{'-gap'};
 
 	    #########################################
-	    # exmaine homology claims more carefully. 
-	    # is it a single rogue homology? or is join well supported? 
-	    #########################################
-
-	    #my @syn = map { $_->loss } ($orf, $lorf);	    
-	    #print {$fh} 1, $lorf->name, $orf->name,  @syn;    
-	    #map { next unless $_->loss > 100 || $_->hypergob > 10} ($orf, $lorf);
-	    
-	    #########################################
 	    # find the specific homolog and ensure it is also supported. 
 	    #########################################
 
@@ -421,74 +414,107 @@ sub merge {
 
 	    # use SGD if all other things equal 
 	    
-	    $homolog = ( $count{$homolog} == $count{'SGD'} && $homolog !~ /Y[A-P][LR]/ ? 'SGD' : $homolog);
+	    $homolog = ( $count{$homolog} == $count{'SGD'} && 
+			 $homolog !~ /Y[A-P][LR]/ ? 'SGD' : $homolog);
+	    
+	    # gathter contextual information 
+
 	    my $ref = (
 		$homolog eq 'YGOB' ?
 		$orf->homolog(-object => $lorf, -pillar => $orf->data($homolog)) : 
 		$orf->data($homolog)
 		);
-
-	    #print {$fh} 2, $lorf->name, $orf->name, $homolog, $ref, $orf->data('SGD'); 
-	    
-	    #########################################
-	    # generate required test values 
-	    #########################################
+	    my $pil = $orf->lookup( -query => $orf->data($homolog) );
+	    my $exp_len = $pil->{'MEAN'} || 100; # we test onlt for shortness realitive to exp 
 	    
 	    my $syn = $lorf->synteny(-direction => 'left', -restrict => [$homolog]) +
 		$orf->synteny(-direction => 'right', -restrict => [$homolog]) || 0;	    
 	    
-	    my $scr = $orf->exonerate2(
-		-object => $lorf, 
-		-homolog => $ref,
-		-model => 'local',
-		-return => 'overlap'
+	    #print {$fh} 2, $lorf->name, $orf->name, $homolog, $ref, $syn, $orf->data('SGD'); 
+	    
+	    #########################################
+	    # Generate required test values 
+	    #########################################
+	    
+	    my $frame = $orf->commoncodon(-object => $lorf);
+
+	    my $frag1 = $lorf->fragment; # >0 means fragment (local align > global) 
+	    my $frag2 = $orf->fragment;  # >0 means fragment (local align > global) 
+	    my $plen1 = 100*$lorf->length/$exp_len;
+	    my $plen2 = 100*$orf->length/$exp_len;
+
+	    my $percent_overlap = $orf->overlap(-object => $lorf, -compare => 'seq');
+	    my $additive_score = $orf->fragments( -object => $lorf ); # yes or no 	    
+	    my $additive_tiling = # -ve for double tiling; +ve for single tiling 
+		$orf->exonerate2( # normalized to total tiled region of homolog (untiled excluded)
+		    -object => $lorf, 
+		    -homolog => $ref,
+		    -model => 'local',
+		    -return => 'overlap'
 		);
-	    
-	    #print {$fh} 3, $lorf->name, $orf->name, $homolog, $syn, $scr; 
-	    
+
 	    #########################################
 	    # OK. lets start making some decisions. 
 	    #########################################
 
 	    # what are the possibilities ? 
-	    # 1. tandems (no merge, no choose) -> sig align, min overlap 
 	    # 2. fragments of same gene (merge) -> min align, min overlap
+	    # -
+	    # 1. tandems (no merge, no choose) -> sig align, min overlap 
+	    # 6. partial tandem duplication 
+	    # -
 	    # 3. alt version of same gene (choose not merge) -> sig align, sig overlap 
-
-	    my ($call,$reason) = qw(reject overlap);
-	    if ( $orf->fragments( -object => $lorf ) || ($syn && $scr > 0) ){
-		my ($master, $slave) = sort { $b->ogid <=> $a->ogid } ($orf, $lorf);
+	    # - 
+	    # 4. chance homology 
+	    # 5. repeats 
+	    
+	    my ($call,$reason, $master,$slave);
+	    if ( $additive_score || ( $overlap < 0.2 && $additive_tiling > 0.5 ) ) {
+		($call,$reason) = qw(merge additive);
 		
-		# intron separated exons ? frameshifted HSPs ? orf->merge handles details.
+	        ($master, $slave) = sort { $b->ogid <=> $a->ogid } ($orf, $lorf);
 		next unless my $success = $master->merge(
 		    -object => $slave, 
 		    -reference => $ref, 
 		    -index => $args->{'-index'} 
 		    );
-		$lookup{$slave->_internal_id}=$master;
-		($call,$reason) = ('merge', undef);
+
+	    } elsif ( $frame ) {
+		($call,$reason) = qw(reject altmodel);
+
+		($master,$delta) = $orf->choose(-object => $lorf, -reference => $file);
+		($slave) = ( $master eq $orf ? $lorf : $orf );
+		$master->integrate( -object => $slave, -index => $args->{'-index'} );
+		$slave->DESTROY;
 		
-		$master->output(-fh => $fh, -prepend => ['MERGE']) if $args->{'-verbose'};
+	    } elsif ( $percent_overlap > $args->{'-tandem'} && $syn ) {
+		($call,$reason) = qw(reject tandem);
+		map { $_->data('TANDEM' => ($_ eq $lorf ? 'right' : 'left' ) ) } ($lorf, $orf);
 		
-	    } elsif ( $syn ) { # alt versions of same gene ? or tandems ?
-		my $frame = $orf->commoncodon(-object => $lorf);
-		my $olap = $orf->overlap(-object => $lorf, -compare => 'coords');
-		my $align = $orf->overlap(-object => $lorf, -compare => 'seq');		
+	    } else {
+		($call,$reason) = qw(reject passthrough);
+		# do not fit together nicely 
+		# do not have overlapping codons 
+		# do not align to each other (or only a little) 
+	    }
 
-		if ( $frame ) { # alt versions 
-		    my ($new,$delta) = $orf->choose(-object => $lorf, -reference => $file);
-		    my ($lose) = ( $new eq $orf ? $lorf : $orf );
-		    $lookup{$lose->_internal_id}=$new;
-		    $lose->DESTROY;
-		    ($call,$reason) = ('reject', 'altmodel');
+	    #########################################
+	    # Cleanup 
+	    #########################################
 
-		} elsif ( $align > $args->{'-tandem'} ) { # tandems 
-		    map { $_->data('TANDEM' => ($_ eq $lorf ? 'right' : 'left' ) ) } ($lorf, $orf);
-		    ($call,$reason) = ('reject', 'tandem');
-		}
-
-	    } elsif ( $scr > 0 ) { ($call,$reason) = ('reject', 'synteny'); } # repeats 
-	    #print  {$fh} "$call ($reason): $scr, $syn, $frame, $olap, $align, @syn, $file\n";
+	    $lookup{$slave->_internal_id}=$master if $master;
+	    
+	    #########################################
+	    # Output 
+	    #########################################
+	    
+	    if ( $args->{'-verbose'} ) {
+		$master->output(-fh => $fh, -prepend => [ $call ]) if $master;
+		print {$fh} "$call ($reason):", $lorf->name, $orf->name, $homolog, $syn,
+		(map { sprintf("%.2f", $_) } 
+		 ($plen1, $plen2, $percent_overlap, $frag1, $frag2, 
+		  $additive_score,$additive_tiling));
+	    }
 	}
     }
     
@@ -1282,6 +1308,7 @@ sub _make_genbank_gene_terminii {
 
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
 	next unless $orf->up; #this may arise due to merging genes out of sequence (below) .. 
+	next unless $orf->gene eq 'YNR073C';
 
 	################################# 
 	# First codon 
@@ -1315,6 +1342,8 @@ sub _make_genbank_gene_terminii {
 		  ($gap && $orf->overlap( -object => $gap )) ||   # Almost OK 
 		  $orf->first_codon =~ $STOP_CODON);              # NOT OK 		  
 
+	    print {STDERR} __LINE__, $orf->length; #DEBUG 
+
 	    #################################	    
 	    # 1B - Look for downstream M 
 	    #################################
@@ -1330,6 +1359,8 @@ sub _make_genbank_gene_terminii {
 		goto FINDSTOP;
 	    } else { $fex->start( -R => 1, -new => $mark ); }
 	    
+	    print {STDERR} __LINE__, $orf->length; #DEBUG 
+	    
 	    #################################
 	    # 1C - deal with failures -- contig ends, GAPs, STOP etc 
 	    #################################
@@ -1337,9 +1368,14 @@ sub _make_genbank_gene_terminii {
 	    my $start_gbk;
 	    if ( $gap && $orf->overlap( -object => $gap ) ) {
 		$self->throw if $gap->start <= $fex->start && $gap->stop >= $fex->stop;
+		$gap->output( -fh => $fh, -prepend => ['GAP'], -recurse => 1);
+		$orf->output( -fh => $fh, -prepend => ['ORF'], -recurse => 1);
+		
 		$fex->start( -adjust => +1, -R => 1) until ! $orf->overlap(-object => $gap);
+	    print {STDERR} __LINE__, $orf->length; #DEBUG 
 	        $start_gbk = $fex->start( -R => 1 );
 		$fex->start( -adjust => +1, -R => 1) until $orf->length % $TRIPLET == 0;
+	    print {STDERR} __LINE__, $orf->length; #DEBUG 
 		$path='gap';
 		
 	    } elsif ( $orf->_terminal_dist2( $orf->strand*-1 ) == 0 ) {
@@ -1378,29 +1414,36 @@ sub _make_genbank_gene_terminii {
 		    if ( $orf->data('STOP') == 0 && ! $poison ) {
 			my ($best) = sort {$orf->logscore($a) <=> $orf->logscore($b)} qw(gene sgd);
 			if ( $best && $orf->logscore($best) < -10) {
+
+   $orf->glyph( -print => 'SGD', -tag => 'preopt' );
+
 			    $orf->reoptimise(
 				-reference => $orf->data( uc($best) ),
 				-atg => undef, # let's not complicate 
-				-hmm => undef, # TEMP / DEBUG 
+				-hmm => undef, # ($orf->evalue('ygob') < 1e-5 ? $orf->hit('ygob') : undef),
 				-intron => 1,  # make introns favorable 
 				-verbose => 5
 				);
 			    $poison=1;
 			    $orf->structure();
+			    $orf->glyph( -print => 'SGD', -tag => 'reopt' );		
 			    goto FINDSTART if $orf->first_codon ne $START_CODON;
 			}
 		    }
 		}
 		
-		#$orf->update(); # TEMP / DEBUG 
-		$orf->glyph( -print => 'SGD', -tag => $path );		
-		
 	    } else { $self->throw( $orf->first_codon ); } 
-	    	    
+
+	    #$orf->update(); # TEMP / DEBUG 
+	    $orf->glyph( -print => 'SGD', -tag => $path );
+	    
+	    print {STDERR} __LINE__, $orf->length, $path; #DEBUG 
 	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
 	}
 	
       FINDSTOP:
+
+	    print {STDERR} __LINE__, $orf->length; #DEBUG 
 
 	################################# 
 	# Last codon 
@@ -1427,7 +1470,9 @@ sub _make_genbank_gene_terminii {
 		  $orf->_terminal_dist2( $orf->strand ) < 3 ||  # almost OK outcome (must be exact) 
 		  ($gap && $orf->overlap( -object => $gap )));  # NOT OK 
 		  #$orf->last_codon =~ /N$/);                   # NOT OK 		  	   
-	    
+
+	    print {STDERR} __LINE__, $orf->length; #DEBUG 
+
 	    # Further adjust coords if no STOP to satisfy Genbank conventions 
 	    
 	    my ($stop_gbk, $path)=(undef, 'contig_end');
@@ -1450,7 +1495,11 @@ sub _make_genbank_gene_terminii {
 		
 	    } else { $self->throw(); }	    
 	    	    
+	    print {STDERR} __LINE__,$orf->length, $path; #DEBUG 
+
 	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
+
+	    print {STDERR} __LINE__,$orf->length, $path; #DEBUG 
 
 	    $orf->output( 
 		-prepend => ['STOP', $orf->_top_tail ], 
