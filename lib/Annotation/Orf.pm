@@ -3691,6 +3691,29 @@ sub distance {
     return $dist;
 }
 
+=head2 linked( -object => , -distance => )
+
+    Test whether two objects are in the same linkage group
+    as defined by contiguous DNA and distance (no required). 
+
+=cut 
+
+sub linked {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-distance'} = undef unless exists  $args->{'-distance'};
+
+    $self->throw unless my $obj = ($args->{'-object'} || $_[0]);
+    $self->throw unless $self->isa( ref($obj) );
+
+    return undef unless $self->up == $obj->up;
+    return undef unless ! $args->{'-distance'} ||
+	$self->distance( -object => $obj, -bases => 1 );
+
+    return $self;
+}
+
 #########################################
 #########################################
 
