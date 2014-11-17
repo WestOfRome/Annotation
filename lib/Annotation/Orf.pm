@@ -3296,6 +3296,7 @@ sub reoptimise {
     $args->{'-intron'} = undef unless exists $args->{'-intron'};
 
     # post processing 
+    $args->{'-filter'} = undef unless exists $args->{'-filter'}; # exclude if many introns .. 
     $args->{'-update'} = 1 unless exists $args->{'-update'};
     $args->{'-atg'} = 300 unless exists $args->{'-atg'};
 
@@ -3351,18 +3352,30 @@ sub reoptimise {
     map { $_->transfer(-from => $locus, -to => $self->up, -warn => 0) }
     grep {defined} (@anno,@exonerate,@wise);
     $locus->DESTROY;    
+
+    ##################################################################
+    # Apply some filters to clean things up a little 
+    ##################################################################
     
     my @newmodels = grep { $_->commoncodon($self) } grep {$_->translatable} @new; #grep { $_->strand == $self->strand }
-    ##################################################################
-    # choose best model from panel and destroy all others 
-    ##################################################################
+
+    my @filter = (
+	$args->{'-filter'} 
+	? grep { $_->stream <= $args->{'-filter'} } @newmodels
+	: @newmodels 
+	);
     
-    my ($call,@valid) = grep {$_->translatable} grep {defined} ($self, @newmodels);
+    my ($call,@valid) = grep {$_->translatable} grep {defined} ($self, @filter);
     
     if ( $args->{'-debug'} ) {
 	print {$fherr} @newmodels;
+	print {$fherr} @filter;
 	print {$fherr} @valid;    
     }
+
+    ##################################################################
+    # choose best model from panel and destroy all others 
+    ##################################################################
 
     my ($best,$delta) = $call->choose( # choose uses exonerate protein homology 
 	-object => \@valid,            # to the supplied reference to choose "best"
