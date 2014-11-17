@@ -1212,7 +1212,7 @@ sub _validate_overlapping_features {
 	      $gap->output(-fh => $fh, -prepend => ['GAP_GAP'], -append => [ $gap->description ]);
 	      $nei->output(-fh => $fh, -prepend => ['GAP_ORF'] );
 	  }
-
+	  
 	  # there are three options here 
 	  # 1. Delete the ORF 
 	  # 2. Delete the GAP 
@@ -1270,11 +1270,6 @@ sub _validate_overlapping_features {
     but never alter original and are never stored? 
 
     Implementing #2 but have doubts about design.
-    
-    WIP... 
-    -tryhard : instructs method to continuousy add exons to 
-    'step over' STOP codons until an upstream M is found. 
-    Results are not that pretty. 
 
 =cut 
 
@@ -1310,7 +1305,6 @@ sub _make_genbank_gene_terminii {
 
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
 	next unless $orf->up; #this may arise due to merging genes out of sequence (below) .. 
-	next unless $orf->gene eq 'YNR073C';
 
 	################################# 
 	# First codon 
@@ -1330,7 +1324,8 @@ sub _make_genbank_gene_terminii {
 	
 	my $fex = $orf->firstexon;
 	unless ( $orf->first_codon eq $START_CODON ) {	    
-	    $orf->output(-prepend => ['INIT', $orf->_top_tail ], -fh => $fh ) if $args->{'-verbose'};
+	    $orf->output(-prepend => ['INIT', $orf->_top_tail ], -recurse => 0, -fh => $fh ) 
+		if $args->{'-verbose'};
 
 	    my $path=undef;
 
@@ -1343,8 +1338,6 @@ sub _make_genbank_gene_terminii {
 		  $orf->_terminal_dist2( $orf->strand*-1 ) < 3 || # Almost OK (contig end) 
 		  ($gap && $orf->overlap( -object => $gap )) ||   # Almost OK 
 		  $orf->first_codon =~ $STOP_CODON);              # NOT OK 		  
-
-	    print {STDERR} __LINE__, $orf->length; #DEBUG 
 
 	    #################################	    
 	    # 1B - Look for downstream M 
@@ -1361,8 +1354,6 @@ sub _make_genbank_gene_terminii {
 		goto FINDSTOP;
 	    } else { $fex->start( -R => 1, -new => $mark ); }
 	    
-	    print {STDERR} __LINE__, $orf->length; #DEBUG 
-	    
 	    #################################
 	    # 1C - deal with failures -- contig ends, GAPs, STOP etc 
 	    #################################
@@ -1370,14 +1361,12 @@ sub _make_genbank_gene_terminii {
 	    my $start_gbk;
 	    if ( $gap && $orf->overlap( -object => $gap ) ) {
 		$self->throw if $gap->start <= $fex->start && $gap->stop >= $fex->stop;
-		$gap->output( -fh => $fh, -prepend => ['GAP'], -recurse => 1);
-		$orf->output( -fh => $fh, -prepend => ['ORF'], -recurse => 1);
-		
-		$fex->start( -adjust => +1, -R => 1) until ! $orf->overlap(-object => $gap);
-	    print {STDERR} __LINE__, $orf->length; #DEBUG 
+
+		$fex->start( -adjust => +1, -R => 1) until 
+		    ! $orf->overlap(-object => $gap) || $fex->length == 1;
 	        $start_gbk = $fex->start( -R => 1 );
-		$fex->start( -adjust => +1, -R => 1) until $orf->length % $TRIPLET == 0;
-	    print {STDERR} __LINE__, $orf->length; #DEBUG 
+		$fex->start( -adjust => ( $fex->length < 3 ? -1 : +1 ), -R => 1) until 
+		    $orf->length % $TRIPLET == 0;
 		$path='gap';
 		
 	    } elsif ( $orf->_terminal_dist2( $orf->strand*-1 ) == 0 ) {
@@ -1410,25 +1399,24 @@ sub _make_genbank_gene_terminii {
 		# where we think missing intron may be the problem. 
 		# Mising intron fail mode is indicated by uninterrupted reading frame. 
 		# Interrupted reading frame usually a sign of pseudgenization. 
-
+		
 		if ( $orf->first_codon ne $START_CODON ) {
 		    $orf->structure();
 		    if ( $orf->data('STOP') == 0 && ! $poison ) {
 			my ($best) = sort {$orf->logscore($a) <=> $orf->logscore($b)} qw(gene sgd);
-			if ( $best && $orf->logscore($best) < -10) {
-
-   $orf->glyph( -print => 'SGD', -tag => 'preopt' );
-
-			    $orf->reoptimise(
+			if ( $best && $orf->logscore($best) < -10) {			    
+			    #$orf->glyph( -print => 'SGD', -tag => 'preopt' );
+			    my $new = $orf->reoptimise(
 				-reference => $orf->data( uc($best) ),
 				-atg => undef, # let's not complicate 
-				-hmm => undef, # ($orf->evalue('ygob') < 1e-5 ? $orf->hit('ygob') : undef),
+				-hmm => ($orf->evalue('ygob') < 1e-5 ? $orf->hit('ygob') : undef),
 				-intron => 1,  # make introns favorable 
+				-filter => 5,
 				-verbose => 5
 				);
 			    $poison=1;
 			    $orf->structure();
-			    $orf->glyph( -print => 'SGD', -tag => 'reopt' );		
+			    #$orf->glyph( -print => 'SGD', -tag => 'reopt' );		
 			    goto FINDSTART if $orf->first_codon ne $START_CODON;
 			}
 		    }
@@ -1437,15 +1425,10 @@ sub _make_genbank_gene_terminii {
 	    } else { $self->throw( $orf->first_codon ); } 
 
 	    #$orf->update(); # TEMP / DEBUG 
-	    $orf->glyph( -print => 'SGD', -tag => $path );
-	    
-	    print {STDERR} __LINE__, $orf->length, $path; #DEBUG 
 	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
 	}
 	
       FINDSTOP:
-
-	    print {STDERR} __LINE__, $orf->length; #DEBUG 
 
 	################################# 
 	# Last codon 
@@ -1473,8 +1456,6 @@ sub _make_genbank_gene_terminii {
 		  ($gap && $orf->overlap( -object => $gap )));  # NOT OK 
 		  #$orf->last_codon =~ /N$/);                   # NOT OK 		  	   
 
-	    print {STDERR} __LINE__, $orf->length; #DEBUG 
-
 	    # Further adjust coords if no STOP to satisfy Genbank conventions 
 	    
 	    my ($stop_gbk, $path)=(undef, 'contig_end');
@@ -1496,17 +1477,14 @@ sub _make_genbank_gene_terminii {
 		$stop_gbk = $lex->stop( -R => 1 ); # do nothing 
 		
 	    } else { $self->throw(); }	    
-	    	    
-	    print {STDERR} __LINE__,$orf->length, $path; #DEBUG 
 
 	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
-
-	    print {STDERR} __LINE__,$orf->length, $path; #DEBUG 
-
+	    
 	    $orf->output( 
 		-prepend => ['STOP', $orf->_top_tail ], 
 		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
-		-fh => $fh 
+		-fh => $fh,
+		-recurse => 0
 		) if $args->{'-verbose'}; # && $lex->stop(-R => 1) != $stop_gbk;
 	}
 	$orf->evaluate( -force => 1 );
@@ -1541,7 +1519,7 @@ sub _genbank_quality_filter {
 	    $self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
 	    my @og = @{$args->{'-index'}->{ $orf->ogid }};
 	    my $og_master = shift(@og);
-	    $og_master->_dissolve_orthogroup;
+	    $og_master->_dissolve_orthogroup( -verbose => 0 );
 	    delete $args->{'-index'}->{ $orf->ogid };
 	}
 
