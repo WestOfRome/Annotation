@@ -8259,7 +8259,7 @@ sub _make_genbank_compatible {
 
 	# D. individual gene details 
 
-	$scaf->_make_genbank_gene_terminii(-index => $index, -verbose => 3); 
+	$scaf->_make_genbank_gene_terminii(-index => $index, -verbose => 0); 
 
 	# C. toss rubbish genes ... 
 
