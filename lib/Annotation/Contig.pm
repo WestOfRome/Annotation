@@ -502,7 +502,7 @@ sub merge {
 	    # Cleanup 
 	    #########################################
 
-	    if ($master) {
+	    if ($master && $reason ne 'fail') {
 		$lookup{$slave->_internal_id}=$master;
 		$slave->DESTROY if $slave;
 	    }
