@@ -8244,6 +8244,8 @@ sub _make_genbank_compatible {
     
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
+	#goto JUMP if $args->{'-debug'};
+
 	print {$fh} $scaf->id;
 
 	# A. gross asssembly issues ....
@@ -8253,12 +8255,11 @@ sub _make_genbank_compatible {
 	# B. relationships among features 
 
 	$scaf->_validate_overlapping_features(-index => $index, -verbose => 0);
-
 	$scaf->merge(-index => $index, -verbose => 0);	
 
 	# D. individual gene details 
-	
-	$scaf->_make_genbank_gene_terminii(-index => $index, -verbose => 0); 
+
+	$scaf->_make_genbank_gene_terminii(-index => $index, -verbose => 3); 
 
 	# C. toss rubbish genes ... 
 

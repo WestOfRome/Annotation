@@ -427,6 +427,8 @@ sub exonerate2 {
 
     } elsif ( $args->{'-homolog'} ) { # assume gene name and fetch from DB 
 	($file) = $self->fetch(-id => $args->{'-homolog'}, -molecule => 'aa', -file => 1);
+	$self->warn("$args->{'-homolog'},$species, $homolog,$seqlen,$file") 
+	    and return () unless -e $file
 
     } else { $self->throw; }
 
@@ -462,7 +464,7 @@ sub exonerate2 {
 	my $qfile = $seq->_write_temp_seq;
 	my $cmd = " $binary $args->{'-params'} $model -q $qfile -t $file $output $ryo $post ";
 
-	print $cmd if $args->{'-verbose'};
+	print {STDERR} $cmd if $args->{'-verbose'};
 	print ` $binary $args->{'-params'} $model -q $qfile -t $file $output2 $ryo  ` 
 	    if $args->{'-verbose'} >= 2;
 

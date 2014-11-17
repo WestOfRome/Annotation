@@ -378,7 +378,7 @@ sub merge {
 
 	if ($args->{'-verbose'}) {
 	    print {$fh} '>';
-	    map { $_->output( -fh => $fh ) } @order;
+	    map { $_->output( -fh => $fh, -recurse => 0 ) } @order;
 	}
 
 	my %lookup; # handles merge order issues 
@@ -397,7 +397,7 @@ sub merge {
 
 	    map { $self->throw unless $_->assign eq 'GAP' } $orf->intervening($lorf);
 	    next unless $orf->distance(-object => $lorf, -bases => 1) <= $args->{'-gap'};
-
+	    
 	    #########################################
 	    # find the specific homolog and ensure it is also supported. 
 	    #########################################
@@ -430,7 +430,8 @@ sub merge {
 	    my $syn = $lorf->synteny(-direction => 'left', -restrict => [$homolog]) +
 		$orf->synteny(-direction => 'right', -restrict => [$homolog]) || 0;	    
 	    
-	    #print {$fh} 2, $lorf->name, $orf->name, $homolog, $ref, $syn, $orf->data('SGD'); 
+	    my @names = ($lorf->name, $orf->name);
+	    #print {$fh} 2, @names, $homolog, $ref, $syn, $orf->data('SGD'); 
 	    
 	    #########################################
 	    # Generate required test values 
@@ -473,7 +474,7 @@ sub merge {
 		($call,$reason) = qw(merge additive);
 		
 	        ($master, $slave) = sort { $b->ogid <=> $a->ogid } ($orf, $lorf);
-		next unless my $success = $master->merge(
+		$reason='fail' unless $master->merge(
 		    -object => $slave, 
 		    -reference => $ref, 
 		    -index => $args->{'-index'} 
@@ -482,10 +483,9 @@ sub merge {
 	    } elsif ( $frame ) {
 		($call,$reason) = qw(reject altmodel);
 
-		($master,$delta) = $orf->choose(-object => $lorf, -reference => $file);
+		($master,$delta) = $orf->choose(-object => $lorf, -reference => $ref);
 		($slave) = ( $master eq $orf ? $lorf : $orf );
 		$master->integrate( -object => $slave, -index => $args->{'-index'} );
-		$slave->DESTROY;
 		
 	    } elsif ( $percent_overlap > $args->{'-tandem'} && $syn ) {
 		($call,$reason) = qw(reject tandem);
@@ -502,15 +502,18 @@ sub merge {
 	    # Cleanup 
 	    #########################################
 
-	    $lookup{$slave->_internal_id}=$master if $master;
-	    
+	    if ($master) {
+		$lookup{$slave->_internal_id}=$master;
+		$slave->DESTROY if $slave;
+	    }
+
 	    #########################################
 	    # Output 
 	    #########################################
 	    
 	    if ( $args->{'-verbose'} ) {
-		$master->output(-fh => $fh, -prepend => [ $call ]) if $master;
-		print {$fh} "$call ($reason):", $lorf->name, $orf->name, $homolog, $syn,
+		$master->output(-fh => $fh, -prepend => [ $call ], -recurse => 0) if $master;
+		print {$fh} "$call ($reason):", @names, $homolog, $syn, $exp_len,
 		(map { sprintf("%.2f", $_) } 
 		 ($plen1, $plen2, $percent_overlap, $frag1, $frag2, 
 		  $additive_score,$additive_tiling));
@@ -1159,9 +1162,8 @@ sub _validate_overlapping_features {
 	    # dissolve OGs as required 
 	    
 	    foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
-		$self->throw unless my ($og_king) = 
-		    grep { $self->up->organism eq $_->organism } @{$index->{ $og->ogid }};
-		$og_king->_dissolve_orthogroup;
+		$self->throw unless my $og_king = shift @{$index->{ $og->ogid }};
+		$og_king->_dissolve_orthogroup( -verbose => 0 );
 	    }
 	    
 	    # delete redundant genes 
