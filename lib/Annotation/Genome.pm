@@ -8244,7 +8244,7 @@ sub _make_genbank_compatible {
     
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
-	#goto JUMP if $args->{'-debug'};
+	goto JUMP if $args->{'-debug'};
 
 	print {$fh} $scaf->id;
 
@@ -8259,6 +8259,7 @@ sub _make_genbank_compatible {
 
 	# D. individual gene details 
 
+      JUMP:
 	$scaf->_make_genbank_gene_terminii(-index => $index, -verbose => 0); 
 
 	# C. toss rubbish genes ... 

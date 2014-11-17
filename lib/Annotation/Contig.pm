@@ -1281,9 +1281,9 @@ sub _make_genbank_gene_terminii {
     # Defaults 
     #################################    
 
-    $args->{'-tryhard'}=0 unless exists $args->{'-tryhard'};
+    $args->{'-index'}=undef unless exists $args->{'-index'};
     $args->{'-verbose'}=0 unless exists $args->{'-verbose'};
-
+    
     ################################# 
     # Set some variables 
     #################################    
@@ -1305,6 +1305,7 @@ sub _make_genbank_gene_terminii {
 
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
 	next unless $orf->up; #this may arise due to merging genes out of sequence (below) .. 
+	#next unless $orf->gene eq 'YOL053W';
 
 	################################# 
 	# First codon 
@@ -1524,8 +1525,9 @@ sub _genbank_quality_filter {
 	}
 
 	# 
-	
-	$orf->output( -fh => \*STDERR, -prepend => ['TOSS'] );
+
+	$orf->output( -fh => \*STDERR, -prepend => ['TOSS'], -recurse => 0) 
+	    if $args->{'-verbose'};
 	$self->remove( -object => $orf );
 	$orf->DESTROY();
     }

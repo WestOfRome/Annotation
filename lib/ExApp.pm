@@ -571,9 +571,13 @@ sub exonerate {
   # 
   $args->{'-safe'} = 1 unless exists $args->{'-safe'};
   $args->{'-verbose'} = undef unless exists $args->{'-verbose'};
+  $args->{'-debug'} = undef unless exists $args->{'-debug'};
   
   # 
 
+  my $fh = \*STDERR;    
+  print {$fh} %{$args} if $args->{'-debug'};
+  
   $self->throw unless my $binary = 
       $self->_external_app(-application => $args->{'-application'});	  
 

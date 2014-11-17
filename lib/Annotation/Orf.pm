@@ -3312,9 +3312,9 @@ sub reoptimise {
     # minor prep
     ##################################################################
     
-    my $fherr = \*STDERR;    
+    my $fherr = \*STDERR;
     print {$fherr} %{$args} if $args->{'-debug'};
-
+    
     ##################################################################
     # Repredict and generate a panel of alt mdoels 
     ##################################################################
@@ -3336,16 +3336,19 @@ sub reoptimise {
 	$locus->exonerate(
 	    ( $args->{'-intron'} ? ('-intron' => $args->{'-intron'}) : () ), 
 	    -protein => $args->{'-protein'}, 
-	    -verbose => ($args->{'-verbose'}>=2 ? 5 :0 ) 
+	    -verbose => ($args->{'-verbose'}>=2 ? 5 :0 )
 	) unless ! $args->{'-protein'};
-
+    
     # 3. run GeneWise  
 
     my @wise = 
 	$locus->wise( -hmm => $args->{'-hmm'}, -verbose => ($args->{'-verbose'}>=2 ? 1 :0 ) ) # 1->5
 	unless ! $args->{'-hmm'};
 
+    ##################################################################
     # post process pseudocontig effects:: all orfs to real contig  
+    ##################################################################
+
     # my @a2 = grep { $_->homology(-object => $self) } grep {defined} @anno;
     
     my @new = map { $_->adjust($adjust) } # Must happen after transfer // $exon->_adjust() blocks out of range changes
@@ -3382,7 +3385,7 @@ sub reoptimise {
 	-verbose => $args->{'-verbose'}, 
 	-reference => $args->{'-reference'}
 	) if $call;
-
+    
     # transfer scores from WISE etc. not 100% accurate but still useful. 
 
     my ($wisest) = sort { $b->score('global') <=> $a->score('global') } grep {$_->_creator =~ /wise/i} grep {defined} @wise;
