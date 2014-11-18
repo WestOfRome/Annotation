@@ -7998,11 +7998,11 @@ sub _terminal_dist2 {
     if ( $args->{'-direction'} ) {
 	return( 
 	    ($args->{'-direction'} eq 'left' || $args->{'-direction'} == -1) ?  
-	    $self->start : ($self->up->length - $self->stop +1) 
+	    ($self->start-1) : ($self->up->length - $self->stop) 
 	    );
     }
 
-    return( $self->start, ($self->up->length - $self->stop +1) );
+    return( ($self->start-1), ($self->up->length - $self->stop) );
 }
 
 # this method is incomprehensible. 
