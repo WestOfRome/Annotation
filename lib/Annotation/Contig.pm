@@ -1307,6 +1307,8 @@ sub _make_genbank_gene_terminii {
 	next unless $orf->up; #this may arise due to merging genes out of sequence (below) .. 
 	#next unless $orf->gene eq 'YOL053W';
 
+	$self->throw unless $orf->translatable;
+
 	################################# 
 	# First codon 
 	my $poison;
@@ -1349,11 +1351,11 @@ sub _make_genbank_gene_terminii {
 	    my $mark = $fex->start( -R => 1 );
 	    $fex->start( -adjust => $TRIPLET, -R => 1) until 
 		( $orf->first_codon eq $START_CODON || $fex->length < 4 );
-	    
+
 	    if ($orf->first_codon eq $START_CODON ) {		
 		$path='move';
 		goto FINDSTOP;
-	    } else { $fex->start( -R => 1, -new => $mark ); }
+	    } else { $fex->start( -R => 1, -new => $mark ); } # failed so revert 
 	    
 	    #################################
 	    # 1C - deal with failures -- contig ends, GAPs, STOP etc 
@@ -1376,7 +1378,7 @@ sub _make_genbank_gene_terminii {
 		
 	    } elsif ( $orf->_terminal_dist2( $orf->strand*-1 ) < 3 ) {
 		$start_gbk = ($orf->strand == 1 ? 1 : $self->length);
-		$path = 'contig_end';
+		$path = 'contig_end2';
 
 	    } elsif ( $orf->first_codon =~ $STOP_CODON )  {
 		$fex->start( -adjust => $TRIPLET, -R => 1);		
@@ -1413,7 +1415,7 @@ sub _make_genbank_gene_terminii {
 				-hmm => ($orf->evalue('ygob') < 1e-5 ? $orf->hit('ygob') : undef),
 				-intron => 1,  # make introns favorable 
 				-filter => 5,
-				-verbose => 5
+				-verbose => 0
 				);
 			    $poison=1;
 			    $orf->structure();
@@ -1488,6 +1490,7 @@ sub _make_genbank_gene_terminii {
 		-recurse => 0
 		) if $args->{'-verbose'}; # && $lex->stop(-R => 1) != $stop_gbk;
 	}
+
 	$orf->evaluate( -force => 1 );
     }
 
