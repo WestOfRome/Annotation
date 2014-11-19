@@ -1305,7 +1305,7 @@ sub _make_genbank_gene_terminii {
 
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
 	next unless $orf->up; #this may arise due to merging genes out of sequence (below) .. 
-	#next unless $orf->gene eq 'YOL053W';
+	next unless $orf->gene eq 'YOL053W';
 
 	$self->throw unless $orf->translatable;
 
@@ -1327,7 +1327,7 @@ sub _make_genbank_gene_terminii {
 	
 	my $fex = $orf->firstexon;
 	unless ( $orf->first_codon eq $START_CODON ) {	    
-	    $orf->output(-prepend => ['INIT', $orf->_top_tail ], -recurse => 0, -fh => $fh ) 
+	    $orf->output(-prepend => [__LINE__, $orf->_top_tail ], -recurse => 0, -fh => $fh ) 
 		if $args->{'-verbose'};
 
 	    my $path=undef;
@@ -1405,33 +1405,45 @@ sub _make_genbank_gene_terminii {
 		
 		if ( $orf->first_codon ne $START_CODON ) {
 		    $orf->structure();
-		    if ( $orf->data('STOP') == 0 && ! $poison ) {
+		    #$orf->glyph( -print => 'SGD', -tag => 'pre' );
+
+		    if ( $orf->data('STOP') == 0 ) {
 			my ($best) = sort {$orf->logscore($a) <=> $orf->logscore($b)} qw(gene sgd);
-			if ( $best && $orf->logscore($best) < -10) {			    
-			    #$orf->glyph( -print => 'SGD', -tag => 'preopt' );
-			    my $new = $orf->reoptimise(
+			if ($best && $orf->logscore($best) < -10) {
+			    $orf->reoptimise(
 				-reference => $orf->data( uc($best) ),
 				-atg => undef, # let's not complicate 
 				-hmm => ($orf->evalue('ygob') < 1e-5 ? $orf->hit('ygob') : undef),
-				-intron => 1,  # make introns favorable 
-				-filter => 5,
+				-intron => 1, # make introns favorable 
+				-filter => 5, # but not to many introns ... coarse 
 				-verbose => 0
-				);
-			    $poison=1;
-			    $orf->structure();
-			    #$orf->glyph( -print => 'SGD', -tag => 'reopt' );		
-			    goto FINDSTART if $orf->first_codon ne $START_CODON;
+				) unless $poison;
+			    $poison++;
 			}
+		    } else {
+			
+			$orf->remove( -object => $fex );
+			$fex->DESTROY;
+			$fex = $orf->firstexon;
+			$fex->start( -adjust => +1, -R => 1) until 
+			    $orf->length % $TRIPLET == 0;
 		    }
+		    
+		    $orf->structure();
+		    #$orf->glyph( -print => 'SGD', -tag => 'reopt' );
+		    $orf->output(-prepend => [__LINE__, $orf->_top_tail], -recurse => 0, -fh => $fh) 
+			if $args->{'-verbose'};
+		    goto FINDSTART if $orf->first_codon ne $START_CODON && $poison<=1;
 		}
-		
 	    } else { $self->throw( $orf->first_codon ); } 
-
 	    #$orf->update(); # TEMP / DEBUG 
 	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
 	}
 	
       FINDSTOP:
+	
+	$orf->output(-prepend => [__LINE__, $orf->_top_tail ], -recurse => 0, -fh => $fh ) 
+	    if $args->{'-verbose'};
 
 	################################# 
 	# Last codon 
