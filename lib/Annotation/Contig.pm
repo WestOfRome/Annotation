@@ -1280,7 +1280,7 @@ sub _make_genbank_gene_terminii {
     ################################# 
     # Defaults 
     #################################    
-
+    
     $args->{'-index'}=undef unless exists $args->{'-index'};
     $args->{'-verbose'}=0 unless exists $args->{'-verbose'};
     
@@ -1311,7 +1311,7 @@ sub _make_genbank_gene_terminii {
 
 	################################# 
 	# First codon 
-	my $poison;
+	my ($poison, $force_reoptimise)=(0,1);
       FINDSTART:
 	#################################
 
@@ -1407,7 +1407,7 @@ sub _make_genbank_gene_terminii {
 		    $orf->structure();
 		    #$orf->glyph( -print => 'SGD', -tag => 'pre' );
 
-		    if ( $orf->data('STOP') == 0 ) {
+		    if ( $orf->data('STOP') == 0 || $force_reoptimise ) {
 			my ($best) = sort {$orf->logscore($a) <=> $orf->logscore($b)} qw(gene sgd);
 			if ($best && $orf->logscore($best) < -10) {
 			    $orf->reoptimise(
@@ -1420,13 +1420,37 @@ sub _make_genbank_gene_terminii {
 				) unless $poison;
 			    $poison++;
 			}
+
 		    } else {
 			
+			# if there are NO reasonable exons, 
+			# we just go directly to reoptimise()
+			
+			$force_reoptimise=1;		
+			map { $force_reoptimise=0 if $_->length > $TRIPLET } 
+			grep {$_ ne $fex} $orf->stream;
+			goto FINDSTART if $force_reoptimise;
+			
+			# remove the first exon so we can try again 
+			# from a different starting point
+
 			$orf->remove( -object => $fex );
 			$fex->DESTROY;
-			$fex = $orf->firstexon;
-			$fex->start( -adjust => +1, -R => 1) until 
-			    $orf->length % $TRIPLET == 0;
+			undef $fex;
+
+			# need to restore frame for whole gene  
+			# and ensure that the next 
+			
+			until ( $fex && $orf->length % $TRIPLET == 0 ) {
+			    $fex = $orf->firstexon;
+			    $fex->start( -adjust => +1, -R => 1) until
+				( ($orf->length % $TRIPLET == 0) || ($fex->length == 1) );
+			    unless ( $orf->length % $TRIPLET == 0 ) {
+				$orf->remove( -object => $fex );
+				$fex->DESTROY;
+				undef $fex;
+			    }
+			}
 		    }
 		    
 		    $orf->structure();
