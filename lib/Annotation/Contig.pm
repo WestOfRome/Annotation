@@ -1311,7 +1311,7 @@ sub _make_genbank_gene_terminii {
 
 	################################# 
 	# First codon 
-	my ($poison, $force_reoptimise)=(0,1);
+	my ($poison, $force_reoptimise)=(0,0);
       FINDSTART:
 	#################################
 
@@ -1451,6 +1451,10 @@ sub _make_genbank_gene_terminii {
 				undef $fex;
 			    }
 			}
+
+			# what do we do if we have screwed up? 
+			# can we restore a previous gene model?
+			
 		    }
 		    
 		    $orf->structure();
