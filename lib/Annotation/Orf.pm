@@ -3230,6 +3230,63 @@ sub overlap {
     return ( @res && exists $res[2] ? $res[2]->[0] : undef);
 }     
 
+=head2 prune_fiveprime_exon( -intron_max => 4 )
+=cut 
+
+sub prune_fiveprime_exon {
+    my $self = shift;
+    my $args = {@_};
+
+    ##################################
+    # 
+    ##################################
+
+    $args->{'-intron_max'} = 4 unless exists $args->{'-intron_max'};
+
+    ##################################
+    # 
+    ##################################
+
+    $self->throw if $self->exons==1;
+    
+    ##################################
+    # Check if 5' exon is safely prunable 
+    ##################################
+
+    # If an exon has a right_intron score <4 it is safe to remove 
+    # If an exon is >3nt it is safe to edit 
+    # To remove an exon, one must know that either the next or a further
+    # exon - that you can get to - is >3nt.
+
+    my $edit_exon; # we can guarantee to restore the reading frame by adjusting this exon 
+    map { $edit_exon=$_ if ( ($_->length >= $TRIPLET) && (! $edit_exon) ) } grep {$_ ne $self->firstexon} $self->stream;
+    return () unless $edit_exon;
+
+    # can we get to the editable exon? 
+
+    foreach my $exon ( grep {$_ ne $self->firstexon} $self->stream ) {
+	return () unless $exon eq $edit_exon ||
+	    $exon->intron( -direction => 'right' ) == $INFINITY ||
+	    $exon->intron( -direction => 'right' ) < $args->{'-intron_max'};
+    }
+
+    ##################################
+    # 
+    ##################################
+
+    my @exons = $self->remove( -object => $self->firstexon );
+    until ( $self->length % $TRIPLET == 0 ) {
+	my $fex = $self->firstexon; # convenience
+	$fex->start( -adjust => +1, -R => 1) until
+	    ( ($self->length % $TRIPLET == 0) || ($fex->length == 1) );
+
+	push @exons, $self->remove( -object => $self->firstexon ) 
+	    unless $self->length % $TRIPLET == 0;
+    }
+
+    return @exons;
+}
+
 =head2 adjust(adjustment)
 
     Change coordinates by sliding gene model along sequence.
