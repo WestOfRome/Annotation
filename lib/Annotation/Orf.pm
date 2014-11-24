@@ -7427,6 +7427,7 @@ sub genbank_tbl {
 
 	    # homology 
 	    
+	    print {$fh} @bump, 'product', $self->name; # debugging 
 	    print {$fh} @bump, 'product', 'homology to '.$self->gene if 
 		$self->gene && $self->evalue('gene') <= 1e-5;
 	    print {$fh} @bump, 'product', 'homology to '.$self->ygob if
