@@ -8217,9 +8217,9 @@ sub genbank_tbl {
 	    $scaf->fasta( %{$args} );
 	}
     }
-
+    
     exit;
-
+    
     return 1;
 }
 
@@ -8244,9 +8244,8 @@ sub _make_genbank_compatible {
     
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
-	goto JUMP if $args->{'-debug'};
-
-	print {$fh} $scaf->id;
+	#goto JUMP if $args->{'-debug'};	
+	#print {$fh} $scaf->id;
 
 	# A. gross asssembly issues ....
 
@@ -8258,25 +8257,14 @@ sub _make_genbank_compatible {
 	$scaf->merge(-index => $index, -verbose => 0);	
 
 	# D. individual gene details 
-
-      JUMP:
-	$scaf->_make_genbank_gene_terminii(-index => $index, -verbose => 0); 
-
+	
+	$scaf->_make_genbank_gene_terminii(-index => $index, -verbose => 0 ); #  $args->{'-debug'}
+	
 	# C. toss rubbish genes ... 
-
-	$scaf->_genbank_quality_filter(-index => $index, -verbose => 0);
-
-	foreach my $o ( 
-	    grep {$_->first_codon ne $START_CODON}
-	    grep {$_->coding} $scaf->stream ) {
-	    
-	    print {STDERR} $o->name, $o->assign, $o->ogid, $o->_top_tail, 
-	    $o->gene, $o->ygob, $o->loss, $o->hypergob, $o->evalue('gene'),
-	    $o->score('global'), $o->score('local'), $o->fragment, 
-	    $o->partial, $o->data('STOP'), $o->data('INTRONS');
-	}
+	
+	$scaf->_genbank_quality_filter(-index => $index, -verbose => 1); # $args->{'-debug'} );
     }
-    
+
     return $self;
 }
 
