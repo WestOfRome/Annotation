@@ -1557,40 +1557,60 @@ sub _make_genbank_gene_terminii {
 
 =head2 _genbank_quality_filter
 
-
 =cut 
 
 sub _genbank_quality_filter {
     my $self = shift;
     my $args = {@_};
+    
+    my $fh = \*STDERR;
+    
+    my %path;
+    foreach my $orf ( 	
+	grep {$_->first_codon ne $START_CODON}
+	grep { $_->coding } $self->stream ) {	
 
-    foreach my $orf ( grep { $_->coding } $self->stream ) {
-
+	#################################	
 	# make sure it looks like a pseudogene 
+	#################################
 
-	next if
-	    $orf->first_codon eq $START_CODON ||
-	    $orf->data('STOP') == 0 ||
-	    $orf->hypergob > 5;
+	my $path;
+	if ( $orf->data('STOP') == 0 || $orf->hypergob > 5 ) {
+	    $path='hide';
+	    
+	    $orf->data( '_EXCLUDE_FROM_GENBANK' => 1 );
 
-	# break OGs as required .... they do not have synteny anyway. 
-
-	if ( $orf->ogid ) {
+	} elsif ( $orf->ogid ) { # break OGs -- no synteny anyway. 
+	    $path='og-delete';
+	    
 	    $self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
 	    my @og = @{$args->{'-index'}->{ $orf->ogid }};
 	    my $og_master = shift(@og);
 	    $og_master->_dissolve_orthogroup( -verbose => 0 );
 	    delete $args->{'-index'}->{ $orf->ogid };
-	}
-
-	# 
-
-	$orf->output( -fh => \*STDERR, -prepend => [ $self->_method ], -recurse => 0) 
+	    
+	} else {$path='delete';}
+	
+	#################################
+	# finish up 
+	#################################
+	
+	$path{ $path }++;
+	$orf->output(-prepend => [$path, $orf->_top_tail], -fh => $fh, -recurse => 0)
 	    if $args->{'-verbose'};
-	$self->remove( -object => $orf );
-	$orf->DESTROY();
+
+	unless ( $path eq 'hide'  ) {
+	    $self->remove( -object => $orf );
+	    $orf->DESTROY();
+	}
     }
 
+    #################################
+    # print summary 
+    #################################
+    
+    print { $fh } '>'.$self->id, ( map { $_.":".($path{$_} || 0) } qw(delete og-delete hide) ) ;    
+    
     $self->index;
     return $self;
 }
@@ -2749,6 +2769,7 @@ sub genbank_tbl{
 	#next if $feat->id =~ /^65|77|78$/;
 	#next unless $feat->stream >1 && $feat->strand < 1;
 	#next if $feat->data('STOP');
+	next if $feat->data( '_EXCLUDE_FROM_GENBANK' );
 	$feat->genbank_tbl( %{$args} );
     }
 
