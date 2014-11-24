@@ -1305,7 +1305,7 @@ sub _make_genbank_gene_terminii {
 
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
 	next unless $orf->up; #this may arise due to merging genes out of sequence (below) .. 
-	next unless $orf->gene eq 'YOL053W';
+	# next unless $orf->gene eq 'YOL053W';
 
 	$self->throw unless $orf->translatable;
 
@@ -1327,9 +1327,10 @@ sub _make_genbank_gene_terminii {
 	
 	my $fex = $orf->firstexon;
 	unless ( $orf->first_codon eq $START_CODON ) {	    
-	    $orf->output(-prepend => [__LINE__, $orf->_top_tail ], -recurse => 0, -fh => $fh ) 
-		if $args->{'-verbose'};
-
+	    $orf->output(
+		-prepend => [$self->_method, __LINE__, $orf->_top_tail], 
+		-recurse => 0, -fh => $fh ) if $args->{'-verbose'};
+	    
 	    my $path=undef;
 
 	    #################################	    
@@ -1401,12 +1402,37 @@ sub _make_genbank_gene_terminii {
 		# Run reoptimize (really exonerate) with relaxed params 
 		# where we think missing intron may be the problem. 
 		# Mising intron fail mode is indicated by uninterrupted reading frame. 
-		# Interrupted reading frame usually a sign of pseudgenization. 
-		
+		# Interrupted reading frame usually a sign of pseudgenization. 	       
+
 		if ( $orf->first_codon ne $START_CODON ) {
 		    $orf->structure();
-		    #$orf->glyph( -print => 'SGD', -tag => 'pre' );
 
+		    # pretty pretty 
+		    
+		    if ($args->{'-verbose'}) {
+			#$orf->glyph( -print => 'SGD', -tag => 'pre' );		    
+			$orf->output(
+			    -prepend => [$self->_method, __LINE__, $orf->_top_tail], 
+			    -append => [$orf->data('STOP'), $force_reoptimise], 
+			    -recurse => 1, -fh => $fh
+			    );
+		    }
+
+		    # We run reoptimize if either of two conditions hold : 
+		    # 1. we have been told to do it ($force_reopt) 
+		    # becuase the rest of the gene is a mess. 
+		    # 2. we have iterated -pruned- through each 5' exon and 
+		    # and there is only a single exon left. 
+		    # What we do not have is a nice way to say stop pruning. 
+		    # i.e., the exons are more important than finding M. 
+		    # IF we do ultimately run reoptimise() this should be less 
+		    # of an issue because we should reover whetever the best structure is. 
+
+		    # The fun here is on things like S. bayanus YOL053W
+		    # The 5' part of the gene has degraded in Sbay (or extended in Scer?) 
+		    # So we initially find 5' segments that have homology (and score!)
+		    # but which are not part of the true cding structure. 
+		    
 		    if ( $orf->data('STOP') == 0 || $force_reoptimise ) {
 			my ($best) = sort {$orf->logscore($a) <=> $orf->logscore($b)} qw(gene sgd);
 			if ($best && $orf->logscore($best) < -10) {
@@ -1418,60 +1444,50 @@ sub _make_genbank_gene_terminii {
 				-filter => 5, # but not to many introns ... coarse 
 				-verbose => 0
 				) unless $poison;
-			    $poison++;
 			}
-
+			$poison++;
+			
 		    } else {
-			
-			# if there are NO reasonable exons, 
-			# we just go directly to reoptimise()
-			
-			$force_reoptimise=1;		
-			map { $force_reoptimise=0 if $_->length > $TRIPLET } 
-			grep {$_ ne $fex} $orf->stream;
-			goto FINDSTART if $force_reoptimise;
-			
-			# remove the first exon so we can try again 
-			# from a different starting point
 
-			$orf->remove( -object => $fex );
-			$fex->DESTROY;
-			undef $fex;
+			# Iterative test exons to find an M. 
+			# We prune one (or the the minimum number of) exons at each step.
+			# Then send back to FINDSTART to try find an M. 
+			# If it fails we prune another exon. 
+			# If we fail to remove an exon, we go directly to reoptimise()
+			# We can fail to remove an exon because : 
+			# 1) The gene is a mess with no hope of creating a sensible ORF. 
+			# 2) The exon we want to strip is linked by a well supported intron. 
 
-			# need to restore frame for whole gene  
-			# and ensure that the next 
-			
-			until ( $fex && $orf->length % $TRIPLET == 0 ) {
-			    $fex = $orf->firstexon;
-			    $fex->start( -adjust => +1, -R => 1) until
-				( ($orf->length % $TRIPLET == 0) || ($fex->length == 1) );
-			    unless ( $orf->length % $TRIPLET == 0 ) {
-				$orf->remove( -object => $fex );
-				$fex->DESTROY;
-				undef $fex;
-			    }
-			}
+			$force_reoptimise=0;
+			my @removed_exons = ( $orf->prune_fiveprime_exon() );
+			$force_reoptimise=1 unless @removed_exons;
 
-			# what do we do if we have screwed up? 
-			# can we restore a previous gene model?
-			
-		    }
-		    
+			# what do we do if we messed up? restore exons? 
+		    }		    
 		    $orf->structure();
-		    #$orf->glyph( -print => 'SGD', -tag => 'reopt' );
-		    $orf->output(-prepend => [__LINE__, $orf->_top_tail], -recurse => 0, -fh => $fh) 
-			if $args->{'-verbose'};
+
+		    # pretty pretty
+		    
+		    if ( $args->{'-verbose'} ) {
+			# $orf->glyph( -print => 'SGD', -tag => 'reopt' );
+			$orf->output(
+			    -prepend => [$self->_method, __LINE__, $orf->_top_tail], 
+			    -recurse => 0, -fh => $fh);
+		    }
+
 		    goto FINDSTART if $orf->first_codon ne $START_CODON && $poison<=1;
 		}
 	    } else { $self->throw( $orf->first_codon ); } 
+
 	    #$orf->update(); # TEMP / DEBUG 
 	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
 	}
 	
       FINDSTOP:
 	
-	$orf->output(-prepend => [__LINE__, $orf->_top_tail ], -recurse => 0, -fh => $fh ) 
-	    if $args->{'-verbose'};
+	$orf->output(
+	    -prepend => [$self->_method, __LINE__, $orf->_top_tail], 
+	    -recurse => 0, -fh => $fh ) if $args->{'-verbose'};
 
 	################################# 
 	# Last codon 
@@ -1524,11 +1540,11 @@ sub _make_genbank_gene_terminii {
 	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
 	    
 	    $orf->output( 
-		-prepend => ['STOP', $orf->_top_tail ], 
-		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
-		-fh => $fh,
-		-recurse => 0
-		) if $args->{'-verbose'}; # && $lex->stop(-R => 1) != $stop_gbk;
+		-prepend => [$self->_method, __LINE__, $orf->_top_tail], 
+		#-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
+		-fh => $fh,-recurse => 0) if $args->{'-verbose'}; 
+	    # && $lex->stop(-R => 1) != $stop_gbk;
+	    
 	}
 
 	$orf->evaluate( -force => 1 );
@@ -1569,7 +1585,7 @@ sub _genbank_quality_filter {
 
 	# 
 
-	$orf->output( -fh => \*STDERR, -prepend => ['TOSS'], -recurse => 0) 
+	$orf->output( -fh => \*STDERR, -prepend => [ $self->_method ], -recurse => 0) 
 	    if $args->{'-verbose'};
 	$self->remove( -object => $orf );
 	$orf->DESTROY();
