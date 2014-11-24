@@ -49,7 +49,7 @@ sub AUTOLOAD {
     return($self->{$name});       # get 
 }                   
 
-sub _method { (caller(1))[3] } 
+sub _method { (split(/::/, (caller(1))[3]))[-1] } 
 
 #########################################
 #########################################
