@@ -5830,7 +5830,7 @@ sub fex { return $_[0]->firstexon; }
 
 =head2 first_codon
 =cut 
-sub first_codon { return ($_[0]->_top_tail)[0]) }
+sub first_codon { return ($_[0]->_top_tail)[0] }
 
 =head2 last_codon
 =cut 
