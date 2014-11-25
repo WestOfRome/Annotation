@@ -5830,12 +5830,21 @@ sub fex { return $_[0]->firstexon; }
 
 =head2 first_codon
 =cut 
-sub first_codon { return ($_[0]->_top_tail)[0]; }
+sub first_codon { return ($_[0]->_top_tail)[0]) }
 
 =head2 last_codon
 =cut 
 
 sub last_codon { return ($_[0]->_top_tail)[1]; }
+
+=head2 first_base
+=cut 
+sub first_base { return (split//, $_[0]->first_codon)[0]; }
+
+=head2 last_base
+=cut 
+
+sub last_base { return  (split//, $_[0]->last_codon)[2]; }
 
 =head2 dump
 
