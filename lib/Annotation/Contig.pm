@@ -830,10 +830,10 @@ sub cluster {
     # label so we can temporarily place them on 
     # the contig array and later remove 
 
-
     my @current = $self->orfs(@_);
+    #print {STDERR} map { $_->assign } @current;
 
-    my @extra;    
+    my @extra;   
     my $base = $self->down;
     foreach my $o ( @{ $args->{'-object'} } ) {
 	$self->throw unless $base->isa(ref($o));
@@ -999,7 +999,12 @@ sub _validate_assembly_gaps {
 
     $args->{'-gap_len'} = 20 unless $args->{'-gap_len'};
 
+    ######################################
+    # 0. vars 
+    ######################################
+
     my $fh =  \*STDERR;
+    my $key = '_FAKE_GAP_TEMP';
 
     ######################################
     # 1. remove erroneus gaps (related to 3 below)
@@ -1007,24 +1012,68 @@ sub _validate_assembly_gaps {
 
     my @remove;
     foreach my $gap ( grep { $_->assign eq 'GAP' }  $self->stream ) { 
+	my $seq = $gap->sequence;
+
+	my $path;
 	if ($gap->sequence !~ /N/) {
+	    $path='excess';
 	    push @remove, $gap;
-	    $gap->output(
-		-prepend => [ $self->_method, __LINE__, 'EXTRA' ], 
-		-fh => $fh, 
-		-append => ["\n".$gap->sequence] 
-		) if $args->{'-verbose'};
 	}
+
+	my ($start, $stop)=( $self->start, $self->stop );
+	    $path='borders1';
+	    $gap->down->start( -adjust => +1 )
+		until $gap->first_codon =~ /^N+$/;
+	    $gap->down->stop( -adjust => -1 )
+		until $gap->last_codon =~ /^N+$/;
+	    $self->throw if $gap->sequence =~ /[^N]/;
+	}
+	
+	######################################
+	# do we need to EXPAND any? 
+	######################################
+	
+
+	
+	$gap->down->start( -adjust => +1 )
+	    until $gap->first_codon =~ /^N+$/;
+	$gap->down->stop( -adjust => -1 )
+	    until $gap->last_codon =~ /^N+$/;
+	
+	next unless $path;
+	
+	######################################
+	# pretty pretty 
+	######################################
+	
+	$gap->output(
+	    -prepend => [ $self->_method, __LINE__, 'CURRENT' ], 
+	    -fh => $fh, 
+	    -append => [$path, "\n".$gap->sequence, "\n$seq"] 
+	    ) if $args->{'-verbose'};
     }
     map { $self->remove( -object => $_ ) } @remove;
+    $self->index;
 
     ######################################
-    # 2. optimise gap boundaries 
+    # 2. ensure gaps are non-redundant 
     ######################################
 
+    my $gap_overlaps = $self->cluster(
+	# clustering 
+	-cluster => 'overlap',
+	-param => .001,
+	# orfs params 
+	-start => 1,          # order by start coord
+	-noncoding => 1,      # enable non-coding sequences
+	-rank => -$INFINITY,  # 
+	#-restrict => ['GAP'] 
+	);
+    
+    exit;
 
     ######################################
-    # 2. look for mislabelled gaps 
+    # 3. look for mislabelled gaps 
     ######################################
     
     foreach my $gap ( grep { $_->assign ne 'GAP' }  $self->stream ) { 
@@ -1035,7 +1084,7 @@ sub _validate_assembly_gaps {
     }
 
     ######################################
-    # 3. look for gaps ....
+    # 4. look for gaps that were missed completely 
     ######################################
 
     my @fake_gaps = ();
@@ -1065,6 +1114,7 @@ sub _validate_assembly_gaps {
 		$fake_gap->evidence('NNNN');
 		$fake_gap->evaluate(-structure => 0, -validate => 0);
 		$self->add( -object => $fake_gap );		
+		$fake_gap->data( $key => 1 );
 		$fake_gap->output( 
 		    -prepend => [ $self->_method, __LINE__, 'FOUND' ], 
 		    -fh => $fh, ) if $args->{'-verbose'};
@@ -1080,30 +1130,30 @@ sub _validate_assembly_gaps {
 	$changepoint = $i+1;
 	$seq = $seq[$i];
     }
-    
+    $self->index;
+
     ######################################
     # compare real and fake 
     ######################################
-    
-    my @real_gaps = sort { $a->start <=> $b->start } grep { $_->assign eq 'GAP'}  $self->stream;
-    my @manual = sort { $a->start <=> $b->start } grep {  $_->evidence eq 'MANUAL' }  $self->stream;
 
-    my ($nonredundant) = $self # rmove redundant gaps 
-	->_sort_overlapping_annotations( \@real_gaps, \@real_gaps );
-    my ($nr_gaps) = $self # remove overlaps with centromeres etc 
-	->_sort_overlapping_annotations( \@manual, $nonredundant );
-    
-    print {$fh} $#{ $nr_gaps };
-    print {$fh} $#fake_gaps;
+    my @delete;
+    my %data_struct;
+    foreach my $gap ( @fake_gaps ) {
+	foreach my $dir ( qw(left right) ) {
+	    my $neigh = $gap->$dir();
+	    until ( ! $neigh || ! $gap->overlap( -object => $neigh, -compare => 'coords') ) {
+		push @{ $data_struct{ $gap->unique_id } }, $neigh; 
+		$neigh = $neigh->$dir();
+	    }
+	}
+    }
 
-    my ($discard, $add_as_new) = $self
-	->_sort_overlapping_annotations( $nr_gaps, \@fake_gaps );
-    my @delete = @{ $discard };
-    my @new_gaps = @{ $add_as_new };
-    
-    print {$fh} @delete;
+    foreach my $gap ( @fake_gaps ) {
+	print {$fh} $gap->name, $#{$data_struct{ $gap->uniue_id }}, 
+	(map { $_->name} @{ $data_struct{ $gap->uniue_id } }); 
+    }
 
-    print {$fh} $#delete, $#new_gaps;
+    exit;
 
     ######################################
     # remove un-needed orfs 
