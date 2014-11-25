@@ -1035,7 +1035,6 @@ sub _validate_assembly_gaps {
 
 	} else {
 	    $path='border';
-	    my ($start, $stop)=( $self->start, $self->stop );
 	    
 	    # greedy expand -- end with one base excess 
 	    
@@ -1052,7 +1051,7 @@ sub _validate_assembly_gaps {
 		until $gap->last_base eq 'N';
 	    $self->throw if $gap->sequence =~ /[^N]/;
 	}
-
+	
 	# pretty pretty 
 	
 	$gap->output(
@@ -1155,13 +1154,15 @@ sub _validate_assembly_gaps {
     # Ugly print .... 
     ######################################
     
-    my $moonboots;
-    map { $_->output(
-	      -prepend => [ $self->_method, __LINE__, 'FINAL'.(++$moonboots) ], 
-	      -fh => $fh, 
-	      -append => ["\n".$_->sequence] ) } 
-    grep {$_->assign eq 'GAP' || $_->sequence =~ /N/ } $self->stream;
-    
+    if ( $args->{'-verbose'} )  {
+	my $moonboots;
+	map { $_->output(
+		  -prepend => [ $self->_method, __LINE__, 'FINAL'.(++$moonboots) ], 
+		  -fh => $fh, 
+		  -append => ["\n".$_->sequence] ) } 
+	grep {$_->assign eq 'GAP' || $_->sequence =~ /N/ } $self->stream;
+    }
+
     ######################################
     # Housekeeping .... 
     ######################################
