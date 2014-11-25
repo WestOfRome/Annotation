@@ -1004,7 +1004,7 @@ sub _validate_assembly_gaps {
     ######################################
 
     my $fh =  \*STDERR;
-    my $key = '_FAKE_GAP_TEMP';
+    #my $key = '_FAKE_GAP_TEMP';
 
     ######################################
     # 1. look for mislabelled gaps 
@@ -1095,7 +1095,6 @@ sub _validate_assembly_gaps {
 		$fake_gap->evidence('NNNN');
 		$fake_gap->evaluate(-structure => 0, -validate => 0);
 		$self->add( -object => $fake_gap );		
-		$fake_gap->data( $key => 1 );
 		$fake_gap->output( 
 		    -prepend => [ $self->_method, __LINE__, 'FOUND' ], 
 		    -fh => $fh, ) if $args->{'-verbose'};
@@ -1129,6 +1128,20 @@ sub _validate_assembly_gaps {
 	);
 
     foreach my $cl ( grep { $#{ $_ } > 0 } values %{ $gap_overlaps } ) {
+
+	# If we find a GAP that is overlapping a Centromere or other manual
+	# featre, we retain the manual one and ditch the rest. 
+
+	my @feats = grep { $_->assign ne 'GAP' } @{ $cl };
+	$self->throw if $#feats > 0;
+	if ( @feats ) {
+	    map { $self->remove( -object => $_ ) } grep { $_ ne $feats[0] } @{ $cl };
+	    map { $_->DELETE() } grep { $_ ne $feats[0] } @{ $cl };
+	    next;
+	}
+
+	# in all other cases, we take the maximum GAP span. 
+
 	my ($start) = map { $_->start } sort { $a->start <=> $b->start } @{ $cl };
 	my ($stop) = map { $_->stop } sort { $b->stop <=> $a->stop } @{ $cl };
 	my $gap = shift( @{ $cl } );
@@ -1253,7 +1266,7 @@ sub _validate_overlapping_features {
 	-accelerate => 20,
 	-param => 0.2
 	);
-
+    
     foreach my $cl ( values %{$clref} ) {
 	if ( $#{ $cl} >0 ) {
 	    if ( $args->{'-verbose'} ) {
@@ -1265,6 +1278,8 @@ sub _validate_overlapping_features {
     ################################
     # 3. Handle features that overlap gaps
     ################################
+    # this is NOT compelte 
+    # handles GAPs but does not help with MANUAL defined features. UGH. 
     
   GAP: foreach my $gap ( grep { $_->assign eq 'GAP' } $self->stream ) {
       my @nei =  $gap->context( -distance => 10, -all => 1, -trna => 0, -feature => 0, -self => -1 );
