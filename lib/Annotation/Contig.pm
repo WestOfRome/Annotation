@@ -1007,75 +1007,10 @@ sub _validate_assembly_gaps {
     my $key = '_FAKE_GAP_TEMP';
 
     ######################################
-    # 1. remove erroneus gaps (related to 3 below)
+    # 1. look for mislabelled gaps 
     ######################################
+    # Is the order right here? 
 
-    my @remove;
-    foreach my $gap ( grep { $_->assign eq 'GAP' }  $self->stream ) { 
-	my $seq = $gap->sequence;
-
-	my $path;
-	if ($gap->sequence !~ /N/) {
-	    $path='excess';
-	    push @remove, $gap;
-	}
-
-	my ($start, $stop)=( $self->start, $self->stop );
-	    $path='borders1';
-	    $gap->down->start( -adjust => +1 )
-		until $gap->first_codon =~ /^N+$/;
-	    $gap->down->stop( -adjust => -1 )
-		until $gap->last_codon =~ /^N+$/;
-	    $self->throw if $gap->sequence =~ /[^N]/;
-	}
-	
-	######################################
-	# do we need to EXPAND any? 
-	######################################
-	
-
-	
-	$gap->down->start( -adjust => +1 )
-	    until $gap->first_codon =~ /^N+$/;
-	$gap->down->stop( -adjust => -1 )
-	    until $gap->last_codon =~ /^N+$/;
-	
-	next unless $path;
-	
-	######################################
-	# pretty pretty 
-	######################################
-	
-	$gap->output(
-	    -prepend => [ $self->_method, __LINE__, 'CURRENT' ], 
-	    -fh => $fh, 
-	    -append => [$path, "\n".$gap->sequence, "\n$seq"] 
-	    ) if $args->{'-verbose'};
-    }
-    map { $self->remove( -object => $_ ) } @remove;
-    $self->index;
-
-    ######################################
-    # 2. ensure gaps are non-redundant 
-    ######################################
-
-    my $gap_overlaps = $self->cluster(
-	# clustering 
-	-cluster => 'overlap',
-	-param => .001,
-	# orfs params 
-	-start => 1,          # order by start coord
-	-noncoding => 1,      # enable non-coding sequences
-	-rank => -$INFINITY,  # 
-	#-restrict => ['GAP'] 
-	);
-    
-    exit;
-
-    ######################################
-    # 3. look for mislabelled gaps 
-    ######################################
-    
     foreach my $gap ( grep { $_->assign ne 'GAP' }  $self->stream ) { 
 	if ( $gap->sequence =~ /^N{100}$/) {
 	    $gap->output(-prepend => [ $self->_method, __LINE__, 'MISLABEL' ], -fh => $fh );
@@ -1084,7 +1019,53 @@ sub _validate_assembly_gaps {
     }
 
     ######################################
-    # 4. look for gaps that were missed completely 
+    # 2. remove erroneus gaps + fix borders 
+    ######################################
+
+    my @remove;
+    foreach my $gap ( grep { $_->assign eq 'GAP' }  $self->stream ) { 
+	# my $seq = $gap->sequence;
+
+	$gap->strand( 0 ); # important for control over start/stop 
+
+	my $path;
+	if ($gap->sequence !~ /N/) {
+	    $path='excess';
+	    push @remove, $gap;
+
+	} else {
+	    $path='border';
+	    my ($start, $stop)=( $self->start, $self->stop );
+	    
+	    # greedy expand -- end with one base excess 
+	    
+	    $gap->down->start( -adjust => -1 )
+		until $gap->first_base ne 'N' || $gap->start == 1;
+	    $gap->down->stop( -adjust => +1 )
+		until $gap->last_base ne 'N' || $gap->stop == $self->length;
+	    
+	    # greedy retract -- should end in the right place 
+	    
+	    $gap->down->start( -adjust => +1 )
+		until $gap->first_base eq 'N';
+	    $gap->down->stop( -adjust => -1 )
+		until $gap->last_base eq 'N';
+	    $self->throw if $gap->sequence =~ /[^N]/;
+	}
+
+	# pretty pretty 
+	
+	$gap->output(
+	    -prepend => [ $self->_method, __LINE__, 'CURRENT' ], 
+	    -fh => $fh, 
+	    -append => [$path, "\n".$gap->sequence]#, "\n$seq"] 
+	    ) if $args->{'-verbose'};
+    }
+    map { $self->remove( -object => $_ ) } @remove;
+    $self->index;
+
+    ######################################
+    # 3. look for gaps that were missed completely 
     ######################################
 
     my @fake_gaps = ();
@@ -1131,43 +1112,32 @@ sub _validate_assembly_gaps {
 	$seq = $seq[$i];
     }
     $self->index;
-
+    
     ######################################
-    # compare real and fake 
+    # 4. Make non-redundant set 
     ######################################
 
-    my @delete;
-    my %data_struct;
-    foreach my $gap ( @fake_gaps ) {
-	foreach my $dir ( qw(left right) ) {
-	    my $neigh = $gap->$dir();
-	    until ( ! $neigh || ! $gap->overlap( -object => $neigh, -compare => 'coords') ) {
-		push @{ $data_struct{ $gap->unique_id } }, $neigh; 
-		$neigh = $neigh->$dir();
-	    }
-	}
+    my $gap_overlaps = $self->cluster(
+	# clustering 
+	-cluster => 'overlap',
+	-param => .001,
+	# orfs params 
+	-start => 1,          # order by start coord
+	-noncoding => 1,      # enable non-coding sequences
+	-rank => -$INFINITY,  # 
+	#-restrict => ['GAP'] 
+	);
+
+    foreach my $cl ( grep { $#{ $_ } > 0 } values %{ $gap_overlaps } ) {
+	my ($start) = map { $_->start } sort { $a->start <=> $b->start } @{ $cl };
+	my ($stop) = map { $_->stop } sort { $b->stop <=> $a->stop } @{ $cl };
+	my $gap = shift( @{ $cl } );
+	$gap->start( $start );
+	$gap->stop( $stop );
+	map { $self->remove( -object => $_ ) }  @{ $cl };
+	map { $_->DELETE() }  @{ $cl };
     }
 
-    foreach my $gap ( @fake_gaps ) {
-	print {$fh} $gap->name, $#{$data_struct{ $gap->uniue_id }}, 
-	(map { $_->name} @{ $data_struct{ $gap->uniue_id } }); 
-    }
-
-    exit;
-
-    ######################################
-    # remove un-needed orfs 
-    ######################################
-    
-    map { $self->output( -fh => $fh ) unless $_->up eq $self } @delete;
-
-    map { $self->remove( -object => $ _) } @delete;
-    map { $_->DESTROY } @delete; 
-    $self->index;
-    
-    map { $_->output(-prepend => [ $self->_method, __LINE__, 'MISSED' ], -fh => $fh) } @new_gaps 
-	if $args->{'-verbose'};
-    
     ######################################
     # Ugly print .... 
     ######################################
@@ -1184,11 +1154,8 @@ sub _validate_assembly_gaps {
     ######################################
    
     map { $_->strand( 0 ) } grep {$_->assign eq 'GAP'} $self->stream;
-    exit;
     return $self;
 }
-
-# we keep whatever is on list 1 by default 
 
 sub _sort_overlapping_annotations {
     my $self = shift;
