@@ -1019,6 +1019,11 @@ sub _validate_assembly_gaps {
     map { $self->remove( -object => $_ ) } @remove;
 
     ######################################
+    # 2. optimise gap boundaries 
+    ######################################
+
+
+    ######################################
     # 2. look for mislabelled gaps 
     ######################################
     
@@ -1030,7 +1035,7 @@ sub _validate_assembly_gaps {
     }
 
     ######################################
-    # 3. look for unannotated gaps ....
+    # 3. look for gaps ....
     ######################################
 
     my @fake_gaps = ();
@@ -1080,30 +1085,32 @@ sub _validate_assembly_gaps {
     # compare real and fake 
     ######################################
     
-    my @real_gaps = sort { $a->start <=> $b->start } 
-    grep { $_->assign =~ /^GAP|FEATURE$/ } $self->stream;
+    my @real_gaps = sort { $a->start <=> $b->start } grep { $_->assign eq 'GAP'}  $self->stream;
+    my @manual = sort { $a->start <=> $b->start } grep {  $_->evidence eq 'MANUAL' }  $self->stream;
+
+    my ($nonredundant) = $self # rmove redundant gaps 
+	->_sort_overlapping_annotations( \@real_gaps, \@real_gaps );
+    my ($nr_gaps) = $self # remove overlaps with centromeres etc 
+	->_sort_overlapping_annotations( \@manual, $nonredundant );
     
-    print {$fh} $#real_gaps;
+    print {$fh} $#{ $nr_gaps };
     print {$fh} $#fake_gaps;
 
-    my (@delete, @new_gaps);
-  GAP: foreach my $nathan ( sort { $a->start <=> $b->start } @fake_gaps ) {
-      foreach my $barley (@real_gaps) {
-	  if ( $nathan->overlap( -object => $barley, -compare => 'coords' ) ) {
-	      push @delete, $nathan;
-	      next GAP;
-	  }
-      }
-      push @new_gaps, $nathan;
-  }
+    my ($discard, $add_as_new) = $self
+	->_sort_overlapping_annotations( $nr_gaps, \@fake_gaps );
+    my @delete = @{ $discard };
+    my @new_gaps = @{ $add_as_new };
+    
+    print {$fh} @delete;
 
-    print {$fh} $#delete;
-    print {$fh} $#new_gaps;
+    print {$fh} $#delete, $#new_gaps;
 
     ######################################
     # remove un-needed orfs 
     ######################################
     
+    map { $self->output( -fh => $fh ) unless $_->up eq $self } @delete;
+
     map { $self->remove( -object => $ _) } @delete;
     map { $_->DESTROY } @delete; 
     $self->index;
@@ -1129,6 +1136,31 @@ sub _validate_assembly_gaps {
     map { $_->strand( 0 ) } grep {$_->assign eq 'GAP'} $self->stream;
     exit;
     return $self;
+}
+
+# we keep whatever is on list 1 by default 
+
+sub _sort_overlapping_annotations {
+    my $self = shift;
+
+    map { $self->throw unless ref($_[ $_ ]) eq 'ARRAY' } (0,1);
+
+    my @real_gaps = @{ $_[0] };
+    my @fake_gaps = @{ $_[1] };
+
+    my (@delete, @new_gaps);
+  GAP: foreach my $nathan ( sort { $a->start <=> $b->start } @fake_gaps ) {
+      foreach my $barley (@real_gaps) {
+	  next if $nathan eq $barley;
+	  if ( $nathan->overlap( -object => $barley, -compare => 'coords' ) ) {
+	      push @delete, $nathan;
+	      next GAP;
+	  }
+      }
+      push @new_gaps, $nathan;
+  }
+    
+    return \@delete, \@new_agps;
 }
 
 sub _validate_overlapping_features {
