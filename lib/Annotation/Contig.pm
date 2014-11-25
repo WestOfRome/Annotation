@@ -1009,8 +1009,11 @@ sub _validate_assembly_gaps {
     foreach my $gap ( grep { $_->assign eq 'GAP' }  $self->stream ) { 
 	if ($gap->sequence !~ /N/) {
 	    push @remove, $gap;
-	    $gap->output( -fh => $fh, -append => ["\n".$gap->sequence] ) 
-		if $args->{'-verbose'};
+	    $gap->output(
+		-prepend => [ $self->_method, __LINE__, 'EXTRA' ], 
+		-fh => $fh, 
+		-append => ["\n".$gap->sequence] 
+		) if $args->{'-verbose'};
 	}
     }
     map { $self->remove( -object => $_ ) } @remove;
@@ -1021,7 +1024,7 @@ sub _validate_assembly_gaps {
     
     foreach my $gap ( grep { $_->assign ne 'GAP' }  $self->stream ) { 
 	if ( $gap->sequence =~ /^N{100}$/) {
-	    $gap->output( -fh => $fh );
+	    $gap->output(-prepend => [ $self->_method, __LINE__, 'MISLABEL' ], -fh => $fh );
 	    $gap->throw;
 	}
     }
@@ -1057,8 +1060,9 @@ sub _validate_assembly_gaps {
 		$fake_gap->evidence('NNNN');
 		$fake_gap->evaluate(-structure => 0, -validate => 0);
 		$self->add( -object => $fake_gap );		
-		$fake_gap->output( -fh => $fh, -prepend => ['GAP_END'] )
-		    if $args->{'-verbose'};
+		$fake_gap->output( 
+		    -prepend => [ $self->_method, __LINE__, 'FOUND' ], 
+		    -fh => $fh, ) if $args->{'-verbose'};
 		push @fake_gaps, $fake_gap;
 	    }
 
@@ -1076,10 +1080,11 @@ sub _validate_assembly_gaps {
     # compare real and fake 
     ######################################
     
-    my @real_gaps = sort { $a->start <=> $b->start } grep { $_->assign eq 'GAP' } $self->stream;
+    my @real_gaps = sort { $a->start <=> $b->start } 
+    grep { $_->assign =~ /^GAP|FEATURE$/ } $self->stream;
     
-    #print {$fh} $#real_gaps;
-    #print {$fh} $#fake_gaps;
+    print {$fh} $#real_gaps;
+    print {$fh} $#fake_gaps;
 
     my (@delete, @new_gaps);
   GAP: foreach my $nathan ( sort { $a->start <=> $b->start } @fake_gaps ) {
@@ -1092,8 +1097,8 @@ sub _validate_assembly_gaps {
       push @new_gaps, $nathan;
   }
 
-    #print {$fh} $#delete;
-    #print {$fh} $#new_gaps;
+    print {$fh} $#delete;
+    print {$fh} $#new_gaps;
 
     ######################################
     # remove un-needed orfs 
@@ -1103,15 +1108,26 @@ sub _validate_assembly_gaps {
     map { $_->DESTROY } @delete; 
     $self->index;
     
-    map { $_->output( -fh => $fh, -prepend => ['NEW_GAPS'] ) } @new_gaps 
+    map { $_->output(-prepend => [ $self->_method, __LINE__, 'MISSED' ], -fh => $fh) } @new_gaps 
 	if $args->{'-verbose'};
+    
+    ######################################
+    # Ugly print .... 
+    ######################################
+    
+    my $moonboots;
+    map { $_->output(
+	      -prepend => [ $self->_method, __LINE__, 'FINAL'.(++$moonboots) ], 
+	      -fh => $fh, 
+	      -append => ["\n".$_->sequence] ) } 
+    grep {$_->assign eq 'GAP' || $_->sequence =~ /N/ } $self->stream;
     
     ######################################
     # Housekeeping .... 
     ######################################
-
+   
     map { $_->strand( 0 ) } grep {$_->assign eq 'GAP'} $self->stream;
-
+    exit;
     return $self;
 }
 
