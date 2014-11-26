@@ -1390,15 +1390,25 @@ sub _make_genbank_gene_terminii {
 
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
 	next unless $orf->up; #this may arise due to merging genes out of sequence (below) .. 
-	# next unless $orf->gene eq 'YOL053W';
 
-	$self->throw unless $orf->translatable;
+	#################################	    
+	# Useful test cases 
+	#################################
+
+	# 5' degraded in Sbay -- we find good ORF 
+	# next unless $orf->gene eq 'YOL053W'; 	
+	# Fully degraded in Sbay -- we shrink to absurdity 
+	# Not really properly resolved. 
+	# Points to need for a proper stopping condition when shrinking. 
+	# next unless $orf->gene eq 'YEL035C'; 
 
 	################################# 
 	# First codon 
 	my ($poison, $force_reoptimise)=(0,0);
       FINDSTART:
 	#################################
+
+	$self->throw unless $orf->translatable;
 
 	# get surrounding features to conduct necessary tests
 	
@@ -1647,44 +1657,57 @@ sub _make_genbank_gene_terminii {
 sub _genbank_quality_filter {
     my $self = shift;
     my $args = {@_};
+
+    $args->{'-orf_min'} = 15 unless exists $args->{'-orf_min'};
     
     my $fh = \*STDERR;
     
     my %path;
-    foreach my $orf ( 	
-	grep {$_->first_codon ne $START_CODON}
-	grep { $_->coding } $self->stream ) {	
-
-	#################################	
-	# make sure it looks like a pseudogene 
-	#################################
-
+    foreach my $orf ( grep { $_->coding } $self->stream ) {	
+	
 	my $path;
-	if ( $orf->data('STOP') == 0 || $orf->hypergob > 5 ) {
-	    $path='hide';
+	if ( $orf->first_codon ne $START_CODON ) {
 	    
-	    $orf->data( '_EXCLUDE_FROM_GENBANK' => 1 );
+	    #################################	
+	    # make sure it looks like a pseudogene 
+	    #################################
+	    
+	    if ( $orf->data('STOP') == 0 || $orf->hypergob > 5 ) {
+		$path='hide';
+		
+		$orf->data( '_EXCLUDE_FROM_GENBANK' => 1 );
+		
+	    } elsif ( $orf->ogid ) { # break OGs -- no synteny anyway. 
+		$path='og-delete';
+		
+		$self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
+		my @og = @{$args->{'-index'}->{ $orf->ogid }};
+		my $og_master = shift(@og);
+		$og_master->_dissolve_orthogroup( -verbose => 0 );
+		delete $args->{'-index'}->{ $orf->ogid };
+		
+	    } else {$path='delete';}
+	    
+	} else {
 
-	} elsif ( $orf->ogid ) { # break OGs -- no synteny anyway. 
-	    $path='og-delete';
+	    #################################	
+	    # Hide corner cases ... GBK does not accept <=3 nt.     
+	    #################################
 	    
-	    $self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
-	    my @og = @{$args->{'-index'}->{ $orf->ogid }};
-	    my $og_master = shift(@og);
-	    $og_master->_dissolve_orthogroup( -verbose => 0 );
-	    delete $args->{'-index'}->{ $orf->ogid };
-	    
-	} else {$path='delete';}
+	    $path='hide-small';
+	    $orf->data( '_EXCLUDE_FROM_GENBANK' => 1 ) if 
+		$orf->length <= $args->{'-orf_min'};	    
+	}
 	
 	#################################
 	# finish up 
 	#################################
 	
 	$path{ $path }++;
-	$orf->output(-prepend => [$path, $orf->_top_tail], -fh => $fh, -recurse => 0)
+	$orf->output(-prepend => [$self->_method, $path, $orf->_top_tail], -fh => $fh, -recurse => 0)
 	    if $args->{'-verbose'};
-
-	unless ( $path eq 'hide'  ) {
+	
+	if ( $path =~ /delete/ ) {
 	    $self->remove( -object => $orf );
 	    $orf->DESTROY();
 	}
@@ -1694,7 +1717,8 @@ sub _genbank_quality_filter {
     # print summary 
     #################################
     
-    print { $fh } '>'.$self->id, ( map { $_.":".($path{$_} || 0) } qw(delete og-delete hide) ) ;    
+    print { $fh } '>'.$self->id, 
+    ( map { $_.":".($path{$_} || 0) } qw(delete og-delete hide hide-small) ) ;    
     
     $self->index;
     return $self;
