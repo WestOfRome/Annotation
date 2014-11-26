@@ -1091,6 +1091,8 @@ sub _validate_assembly_gaps {
 		    STRAND => 0,
 		    UP => $self
 		    );
+		
+		$fake_gap->data('NNNN' => $INFINITY);
 		$fake_gap->evidence('NNNN');
 		$fake_gap->evaluate(-structure => 0, -validate => 0);
 		$self->add( -object => $fake_gap );		
@@ -1141,6 +1143,7 @@ sub _validate_assembly_gaps {
 
 	# in all other cases, we take the maximum GAP span. 
 
+	map { $self->throw unless $_->exons==1 } @{ $cl };
 	my ($start) = map { $_->start } sort { $a->start <=> $b->start } @{ $cl };
 	my ($stop) = map { $_->stop } sort { $b->stop <=> $a->stop } @{ $cl };
 	my $gap = shift( @{ $cl } );
@@ -1149,6 +1152,7 @@ sub _validate_assembly_gaps {
 	map { $self->remove( -object => $_ ) }  @{ $cl };
 	map { $_->DELETE() }  @{ $cl };
     }
+    $self->index;
 
     ######################################
     # Ugly print .... 
@@ -1167,7 +1171,7 @@ sub _validate_assembly_gaps {
     # Housekeeping .... 
     ######################################
    
-    map { $_->strand( 0 ) } grep {$_->assign eq 'GAP'} $self->stream;
+    map { $_->strand( 0 ) } grep {$_->assign eq 'GAP'} $self->stream;    
     return $self;
 }
 
