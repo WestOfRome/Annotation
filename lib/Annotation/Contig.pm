@@ -1311,7 +1311,7 @@ sub _validate_overlapping_features {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
 	      map { $_->output(
 			-prepend => [$self->_method, __LINE__, '**', $_->_top_tail], 
-			-fh => $fh, -recurse => 0
+			-fh => $fh, -recurse => 1
 			) } ($gap,$nei); # gap
 	      #$nei->glyph( -print => 'SGD', -tag => 'pre'.++$rando );
 	  }
@@ -1368,12 +1368,34 @@ sub _validate_overlapping_features {
 	      my @long = sort { $b->length <=> $a->length } $nei->stream;
 	      my $gap_is_internal = ($long[0]->start < $gap->start || $long[0]->stop > $gap->stop ? 1 : 0);
 	      my $frameshift_exons = (($nei->exons > 1)  && ($nei->introns == 0) ? 1 : 0);	      
-	      
+	      my $frame = $long[0]->frame();
+
 	      if ( $gap_is_internal && $frameshift_exons ) {
 		  $path='structure';
+		  
+		  # strip exons 
+
 		  map { $nei->remove( -object => $_ ) } @long[1..$#long];
 		  $nei->index;
+
+		  # ensure frame OK 
+
+		  my $exon = $nei->down;
+		  $exon->start(-R => 1, -adjust => -$frame);
+		  $exon->stop(-R => 1, -adjust => +1) until $nei->length%3==0;
+		  $exon->start(-R => 1, -adjust => +$TRIPLET) if 
+		      $nei->first_codon =~ $STOP_CODON;
+		  $nei->output(-fh => $fh ) and $self->throw unless $nei->translatable;
+
+		  # adjust to satisfy gap constraints 
+
+		  if ( $exon->start < $gap->start ) {
+		      $exon->stop(-adjust => -$TRIPLET) until $exon->stop < $gap->start;
+		  } else {
+		      $exon->start(-adjust => +$TRIPLET) until $exon->start > $gap->stop;
+		  }
 		  $nei->structure;
+
 	      } else {
 		  $path='hide';
 		  my $hide = ( $nei->interruptions > 1 ? $nei : $gap );
@@ -1386,13 +1408,15 @@ sub _validate_overlapping_features {
 	  $nei->output(
 	      -prepend => [$self->_method, __LINE__, $path, $nei->_top_tail], 
 	      -append => [$nei->data( '_EXCLUDE_FROM_GENBANK') || 0],
-	      -recurse => 0, -fh => $fh 
+	      -recurse => 1, -fh => $fh 
 	      ) if $args->{'-verbose'};
 	  goto RETRY if $path eq 'structure';
       }
   }
     
     #print { $fh } '>', ( map { $_.":".($path{$_} || 0) } keys %path ); 
+
+    map { $_->output(-fh => $fh) and  $_->throw unless $_->translatable } grep { $_->coding } $self->stream;  
     
     $self->index;
     return $self;
@@ -1460,8 +1484,11 @@ sub _make_genbank_gene_terminii {
 	my ($poison, $force_reoptimise)=(0,0);
       FINDSTART:
 	#################################
-
-	$self->throw unless $orf->translatable;
+	
+	unless ($orf->translatable) {
+	    $orf->output(-prepend => [$self->_method, __LINE__], -recurse => 1, -fh => $fh, -creator => 1);
+	    $self->throw;
+	}
 
 	# get surrounding features to conduct necessary tests
 	
