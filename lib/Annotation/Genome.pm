@@ -8246,6 +8246,7 @@ sub _make_genbank_compatible {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
 	#goto JUMP if $args->{'-debug'};	
 	#print {$fh} $scaf->id;
+	next if $scaf->id > 16;
 
 	# A. gross asssembly issues ....
 
@@ -8255,6 +8256,8 @@ sub _make_genbank_compatible {
 
 	$scaf->_validate_overlapping_features(-index => $index, -verbose => 0);
 	$scaf->merge(-index => $index, -verbose => 0);	
+	# Some merges result in structures that span gaps and cause probelms late
+	$scaf->_validate_overlapping_features(-index => $index, -verbose => 0);
 
 	# D. individual gene details 
 	
@@ -8262,7 +8265,7 @@ sub _make_genbank_compatible {
 	
 	# C. toss rubbish genes ... 
 	
-	$scaf->_genbank_quality_filter(-index => $index, -verbose => 1); # $args->{'-debug'} );
+	$scaf->_genbank_quality_filter(-index => $index, -verbose => 0); # $args->{'-debug'} );
     }
 
     return $self;
