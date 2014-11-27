@@ -5250,72 +5250,80 @@ sub reset {
 =cut
 
 sub structure {
-	my $self = shift;
-	my $args = {@_};
-	
-	$args->{'-exons'} = 1 unless exists $args->{'-exons'};	
-	
-	if ($self->rank < -1) {
-		$self->data('STRUCT', 0); 		
-		$self->data('STOP', 0);
-		$self->data('INTRONS', $self->exons -1);
-		return 0;		
+    my $self = shift;
+    my $args = {@_};
+    
+    $args->{'-exons'} = 1 unless exists $args->{'-exons'};	
+    
+    if ($self->rank < -1) {
+	$self->data('STRUCT', 0); 		
+	$self->data('STOP', 0);
+	$self->data('INTRONS', $self->exons -1);
+	return 0;		
+    }
+    
+    # get START and STOP 
+    
+    my ($start, $stop) = $self->_top_tail;
+    $start = $CODONS{$start};
+    $stop = $CODONS{$stop};
+    
+    # this scale is not very good but probably workable. 	
+    # tests should call ->structure but the actual value can be 
+    # accessed as usual via ->data
+    
+    if ($start eq 'M' && $stop eq '*') {
+	$self->data('STRUCT', 2); 
+    } elsif ($stop eq '*') {
+	$self->data('STRUCT', 1); 	
+    } elsif ($start eq 'M') {
+	$self->data('STRUCT', -1); 
+    } else {
+	$self->data('STRUCT', 0); 
+    }
+    
+    # 
+    
+    $self->data('LENGTH' => $self->length);
+    
+    # go through exons and ensure intron boundaries are consistent
+    # recalculate the number of frameshifts and the number of
+    # real introns and update 
+    
+    unless ($args->{'-exons'} == 0) {
+	my ($in, $fr, $gap) = (0,0,0);
+	foreach my $ex ($self->stream) {
+	    next unless my $left = $ex->left;
+	    my $ir = $left->intron(-direction => 'right');
+	    my $il = $ex->intron(-direction => 'left');		
+	    
+	    if ($il == $INFINITY || $ir == $INFINITY) {
+		$gap++;
+	    } elsif ($il == 0 && $ir == 0) {
+		$fr++;
+	    } elsif (($il > 0 && $il < $INFINITY) && 
+		     ($ir > 0 && $ir < $INFINITY)) {	
+		$in++;			
+	    } else {$self->throw("Hybrid introns not allowed: $il, $ir");}
 	}
 	
-	# get START and STOP 
+	$self->throw("Exons do not validate: $in, $fr".$self->exons)
+	    unless $self->exons-1 == $in+$fr+$gap;
 	
-	my ($start, $stop) = $self->_top_tail;
-	$start = $CODONS{$start};
-	$stop = $CODONS{$stop};
+	$self->data('STOP', $fr);
+	$self->data('INTRONS', $in);
+	$self->data('_GAP', $gap);		
+    }
 	
-	# this scale is not very good but probably workable. 	
-	# tests should call ->structure but the actual value can be 
-	# accessed as usual via ->data
+    return abs($self->data('STRUCT'));
+}
 
-	if ($start eq 'M' && $stop eq '*') {
-		$self->data('STRUCT', 2); 
-	} elsif ($stop eq '*') {
-		$self->data('STRUCT', 1); 	
-	} elsif ($start eq 'M') {
-		$self->data('STRUCT', -1); 
-	} else {
-		$self->data('STRUCT', 0); 
-	}
+=head2 interruptions
+=cut 
 
-	# 
-	
-	$self->data('LENGTH' => $self->length);
-
-	# go through exons and ensure intron boundaries are consistent
-	# recalculate the number of frameshifts and the number of
-	# real introns and update 
-	
-	unless ($args->{'-exons'} == 0) {
-		my ($in, $fr, $gap) = (0,0,0);
-		foreach my $ex ($self->stream) {
-			next unless my $left = $ex->left;
-			my $ir = $left->intron(-direction => 'right');
-			my $il = $ex->intron(-direction => 'left');					
-			
-			if ($il == $INFINITY || $ir == $INFINITY) {
-				$gap++;
-			} elsif ($il == 0 && $ir == 0) {
-				$fr++;
-			} elsif (($il > 0 && $il < $INFINITY) && 
-  					 ($ir > 0 && $ir < $INFINITY)) {	
-				$in++;			
-			} else {$self->throw("Hybrid introns not allowed: $il, $ir");}
-		}
-
-		$self->throw("Exons do not validate: $in, $fr".$self->exons)
-			unless $self->exons-1 == $in+$fr+$gap;
-
-		$self->data('STOP', $fr);
-		$self->data('INTRONS', $in);
-		$self->data('_GAP', $gap);		
-	}
-	
-	return abs($self->data('STRUCT'));
+sub interruptions {
+    my $self = shift;
+    return $self->data('STOP')+$self->data('_GAP');
 }
 
 =head2 bounded
@@ -5633,6 +5641,8 @@ sub subtelomeric {
 =head2 introns
 
     Return introns as a stream.
+    Considers only introns that meet biological definition
+    -- edits to ORF to prserve reading frame are ignored. 
 
 =cut 
 
@@ -5646,7 +5656,9 @@ sub introns {
     foreach my $ex ( grep {$_ ne $self->fex} $self->stream ) {
 	my $ls = $ex->intron( -direction => 'left');
 	my $rs = $ex->left->intron( -direction => 'right');
-	next unless $ls >=1  && $rs >= 1;
+	next unless 
+	    ($ls > 1 && $ls < $INFINITY) && 
+	    ($rs > 1 && $rs < $INFINITY);
 	next unless my $int = $ex->intron( -object => $ex->left );
 	push @int, $int if $int->length => 30;
     }
