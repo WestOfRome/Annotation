@@ -992,6 +992,8 @@ sub _common_codon_cluster {
     return \%clst;
 }
 
+=head2 _make_genbank_gene_terminii()
+=cut 
 
 sub _validate_assembly_gaps {
     my $self = shift;
@@ -1198,6 +1200,7 @@ sub _sort_overlapping_annotations {
     return \@delete, \@new_agps;
 }
 
+
 sub _validate_overlapping_features {
     my $self = shift;
     my $args = {@_};
@@ -1283,63 +1286,113 @@ sub _validate_overlapping_features {
     ################################
     # 3. Handle features that overlap gaps
     ################################
-    # this is NOT compelte 
-    # handles GAPs but does not help with MANUAL defined features. UGH. 
+    # This is pretty sketchy. Lots of cases that are not handled well. 
+    # -- Does not help with MANUAL defined features. 
+    # -- Removal of exons without proper sanity checking 
     
+    # set up comparisons: GAPS vs all else 
+    
+    my %path;
   GAP: foreach my $gap ( grep { $_->assign eq 'GAP' } $self->stream ) {
       my @nei =  $gap->context( -distance => 10, -all => 1, -trna => 0, -feature => 0, -self => -1 );
+      
       foreach my $nei ( @nei ) {
+	  next GAP if $gap->data( '_EXCLUDE_FROM_GENBANK');
+	  next if $nei->data( '_EXCLUDE_FROM_GENBANK');
+	  
+	  ################################
+	  # identify overlaps we need to deal with  
+	  ################################
+	  
+	RETRY: 
 	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
-	  #$self->throw unless $nei->coding( -pseudo => 1 );
 	  
 	  if ( $args->{'-verbose'} )  {
-	      print {$fh} ">>$olap", join(',',@{$self->scaffold});
-	      $gap->output(-fh => $fh, -prepend => ['GAP_GAP'], -append => [ $gap->description ]);
-	      $nei->output(-fh => $fh, -prepend => ['GAP_ORF'] );
+	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
+	      map { $_->output(
+			-prepend => [$self->_method, __LINE__, '**', $_->_top_tail], 
+			-fh => $fh, -recurse => 0
+			) } ($gap,$nei); # gap
+	      #$nei->glyph( -print => 'SGD', -tag => 'pre'.++$rando );
 	  }
 	  
-	  # there are three options here 
-	  # 1. Delete the ORF 
-	  # 2. Delete the GAP 
-	  # 3. Modify coordinates (may not prevent an error) 
-	  # 4. Split the ORF in two 
+	  # MANUAL trumps all ...
+	  $gap->data( '_EXCLUDE_FROM_GENBANK' => 1 ) and next GAP if 
+	      $nei->evidence eq 'MANUAL';
+
+	  ################################
+	  # There are three options here : 
+	  ################################
+	  # 1. it is a partial overlap -->try tweak gene coordaintes 
+	  # -- We are not careful about how much we trim 
+	  # -- The only guarnatee is that you get something translateable
+	  # -- We assume that _make_genbank_gene_terminii() cleans up the mess. 
+	  # 2. Complete overlap of GAP in gene consisting of shitty frameshift exons. 
+	  # -- In this case we toss all exons except the best one, 
+	  # -- if we can turn it into a TYPE 1 problem. 
+	  # 3. Complete overlap that does not fit type 2. 
+	  # -- We do not try t fix. Just make a decision about whether we hide the 
+	  # -- GAP or the gene. Latter if shitty otherwise former. 
 	  
+	  my $path;
 	  if ( $olap < 1 ) {
 	      
 	      if ( $gap->start < $nei->start && $gap->stop < $nei->stop ) {
-		  # gap overlaps start of gene 
-		  foreach my $exon ($nei->stream) {
-		      last if $exon->stop > $gap->down->stop;
+		  $path='start';# gap overlaps start of gene 
+		  
+		  my $edit; 
+		  foreach my $exon (  sort { $a->start <=> $b->start} $nei->stream) {
+		      $edit = $exon and last if $exon->stop > $gap->stop;
 		      $nei->remove( -object => $exon );
 		      $exon->DESTROY;
 		  }
-		  $nei->exons(-query => 'first')->start(-adjust => +1) until 
-		      $nei->exons(-query => 'first')->start > $gap->down->start && $nei->length%3==0;
-		  $nei->output( -fh => $fh ) if $args->{'-verbose'};
+		  $edit->start(-adjust => +1) until 
+		      $edit->start > $gap->stop && $nei->length%3==0;
 		  
 	      } elsif ( $gap->start > $nei->start && $gap->stop > $nei->stop ) {
-		  # gap overlaps backend of gene 
-		  foreach my $exon (reverse $nei->stream) {
-		      last if $exon->start < $gap->down->start;
+		  $path='back';# gap overlaps backend of gene 
+
+		  my $edit;
+		  foreach my $exon (sort { $b->start <=> $a->start} $nei->stream) {
+		      $edit = $exon and last if $exon->start < $gap->start;
 		      $nei->remove( -object => $exon );
 		      $exon->DESTROY;
 		  }
-		  #$nei->output( -fh => $fh ) and 
-		  $nei->exons(-query => 'last')->stop(-adjust => -1) until 
-		      $nei->exons(-query => 'last')->stop < $gap->down->start && $nei->length%3==0;
-		  $nei->output( -fh => $fh ) if $args->{'-verbose'};
+		  $edit->stop(-adjust => -1) until 
+		      $edit->stop < $gap->start && $nei->length%3==0;
 		  
-	      } else {
-		  $self->throw;
-	      }
+	      } else {$self->throw;}
 	      
-	  } else {
-	      $self->remove( -object => $gap );
-	      $gap->DESTROY;
-	      next GAP;
+	  } else { # complete overlap 
+	      
+	      my @long = sort { $b->length <=> $a->length } $nei->stream;
+	      my $gap_is_internal = ($long[0]->start < $gap->start || $long[0]->stop > $gap->stop ? 1 : 0);
+	      my $frameshift_exons = (($nei->exons > 1)  && ($nei->introns == 0) ? 1 : 0);	      
+	      
+	      if ( $gap_is_internal && $frameshift_exons ) {
+		  $path='structure';
+		  map { $nei->remove( -object => $_ ) } @long[1..$#long];
+		  $nei->index;
+		  $nei->structure;
+	      } else {
+		  $path='hide';
+		  my $hide = ( $nei->interruptions > 1 ? $nei : $gap );
+		  $hide->data( '_EXCLUDE_FROM_GENBANK' => 1 );
+	      }
 	  }
+	  
+	  #$nei->glyph( -print => 'SGD', -tag => 'post'.++$rando );	  
+	  $path{ $path }++;
+	  $nei->output(
+	      -prepend => [$self->_method, __LINE__, $path, $nei->_top_tail], 
+	      -append => [$nei->data( '_EXCLUDE_FROM_GENBANK') || 0],
+	      -recurse => 0, -fh => $fh 
+	      ) if $args->{'-verbose'};
+	  goto RETRY if $path eq 'structure';
       }
   }
+    
+    #print { $fh } '>', ( map { $_.":".($path{$_} || 0) } keys %path ); 
     
     $self->index;
     return $self;
@@ -1688,15 +1741,14 @@ sub _genbank_quality_filter {
 		
 	    } else {$path='delete';}
 	    
-	} else {
+	} elsif ($orf->length <= $args->{'-orf_min'}) {
 
 	    #################################	
 	    # Hide corner cases ... GBK does not accept <=3 nt.     
 	    #################################
 	    
 	    $path='hide-small';
-	    $orf->data( '_EXCLUDE_FROM_GENBANK' => 1 ) if 
-		$orf->length <= $args->{'-orf_min'};	    
+	    $orf->data( '_EXCLUDE_FROM_GENBANK' => 1 );
 	}
 	
 	#################################
