@@ -993,6 +993,10 @@ sub _common_codon_cluster {
 }
 
 =head2 _validate_assembly_gaps()
+
+    NB: This can result in unannotated gaps where they overlap a 
+    manually annotated feature (this has precedence). 
+
 =cut 
 
 sub _validate_assembly_gaps {
@@ -1178,6 +1182,10 @@ sub _validate_assembly_gaps {
     return $self;
 }
 
+=head2 _validate_overlapping_features()
+
+=cut 
+
 sub _validate_overlapping_features {
     my $self = shift;
     my $args = {@_};
@@ -1192,11 +1200,13 @@ sub _validate_overlapping_features {
     $self->throw unless ref($index) =~ /HASH/;
 
     ################################
-    # 1. Find and remove redundant features 
+    # 1. Find and remove redundant CODING features 
     # Based on commoncodon test so should be identical (+ errors) for the most part 
     ################################
 
-    my $clref = $self->cluster(
+    # how are we enforcing CODING here? via orfs() call in cluster()? 
+
+    my $clref = $self->cluster( 
 	-cluster => 'commoncodon',
 	-stranded => 1,
 	-accelerate => 20
@@ -1274,8 +1284,8 @@ sub _validate_overlapping_features {
       my @nei =  $gap->context( -distance => 10, -all => 1, -trna => 0, -feature => 0, -self => -1 );
       
       foreach my $nei ( @nei ) {
-	  next GAP if $gap->data( '_EXCLUDE_FROM_GENBANK');
-	  next if $nei->data( '_EXCLUDE_FROM_GENBANK');
+	  next GAP if $gap->genbank_exclude;
+	  next if $nei->genbank_exclude;
 	  
 	  ################################
 	  # identify overlaps we need to deal with  
@@ -1294,7 +1304,7 @@ sub _validate_overlapping_features {
 	  }
 	  
 	  # MANUAL trumps all ...
-	  $gap->data( '_EXCLUDE_FROM_GENBANK' => 1 ) and next GAP if 
+	  $gap->genbank_exclude( $self->_method ) and next GAP if 
 	      $nei->evidence eq 'MANUAL';
 
 	  ################################
@@ -1308,7 +1318,7 @@ sub _validate_overlapping_features {
 	  # -- In this case we toss all exons except the best one, 
 	  # -- if we can turn it into a TYPE 1 problem. 
 	  # 3. Complete overlap that does not fit type 2. 
-	  # -- We do not try t fix. Just make a decision about whether we hide the 
+	  # -- We do not try to fix. Just make a decision about whether we hide the 
 	  # -- GAP or the gene. Latter if shitty otherwise former. 
 	  
 	  my $path;
@@ -1376,7 +1386,7 @@ sub _validate_overlapping_features {
 	      } else {
 		  $path='hide';
 		  my $hide = ( $nei->interruptions > 1 ? $nei : $gap );
-		  $hide->data( '_EXCLUDE_FROM_GENBANK' => 1 );
+		  $hide->genbank_exclude( $self->_method );
 	      }
 	  }
 	  
