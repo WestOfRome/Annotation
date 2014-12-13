@@ -992,7 +992,7 @@ sub _common_codon_cluster {
     return \%clst;
 }
 
-=head2 _make_genbank_gene_terminii()
+=head2 _validate_assembly_gaps()
 =cut 
 
 sub _validate_assembly_gaps {
@@ -1067,6 +1067,7 @@ sub _validate_assembly_gaps {
 
     ######################################
     # 3. look for gaps that were missed completely 
+    # -- by reannotating all gaps above size x..
     ######################################
 
     my @fake_gaps = ();
@@ -2954,10 +2955,7 @@ sub genbank_tbl{
     #################################
 
     foreach my $feat ( $self->stream ) {
-	#next if $feat->id =~ /^65|77|78$/;
-	#next unless $feat->stream >1 && $feat->strand < 1;
-	#next if $feat->data('STOP');
-	next if $feat->data( '_EXCLUDE_FROM_GENBANK' );
+	next if $feat->genbank_exclude;
 	$feat->genbank_tbl( %{$args} );
     }
 
