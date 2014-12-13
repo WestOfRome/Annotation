@@ -7313,6 +7313,19 @@ sub gff {
     return $self;
 }
 
+=head2 genbank_exclude
+=cut
+
+sub genbank_exclude {
+    my $self = shift;
+    my $val = shift if @_;
+    my $key = '_EXCLUDE_FROM_GENBANK';
+    if ( $val ) {
+	$self->data( $key => $val );
+    }
+    return $self->data( $key );
+}
+
 =head2 genbank_tbl()
 =cut 
 
