@@ -1178,30 +1178,6 @@ sub _validate_assembly_gaps {
     return $self;
 }
 
-sub _sort_overlapping_annotations {
-    my $self = shift;
-
-    map { $self->throw unless ref($_[ $_ ]) eq 'ARRAY' } (0,1);
-
-    my @real_gaps = @{ $_[0] };
-    my @fake_gaps = @{ $_[1] };
-
-    my (@delete, @new_gaps);
-  GAP: foreach my $nathan ( sort { $a->start <=> $b->start } @fake_gaps ) {
-      foreach my $barley (@real_gaps) {
-	  next if $nathan eq $barley;
-	  if ( $nathan->overlap( -object => $barley, -compare => 'coords' ) ) {
-	      push @delete, $nathan;
-	      next GAP;
-	  }
-      }
-      push @new_gaps, $nathan;
-  }
-    
-    return \@delete, \@new_agps;
-}
-
-
 sub _validate_overlapping_features {
     my $self = shift;
     my $args = {@_};
