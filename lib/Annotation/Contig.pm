@@ -1003,14 +1003,17 @@ sub _validate_assembly_gaps {
     my $self = shift;
     my $args = {@_};
 
-    $args->{'-gap_len'} = 20 unless $args->{'-gap_len'};
+    $args->{'-gap_len'} = 20 unless $args->{'-gap_len'}; # what is NCBI number? 
 
     ######################################
     # 0. vars 
     ######################################
 
     my $fh =  \*STDERR;
-    #my $key = '_FAKE_GAP_TEMP';
+
+    # important for control over start/stop 
+
+    map { $_->strand( 0 ) } grep { $_->assign =~ /GAP|FEATURE/ } $self->stream;
 
     ######################################
     # 1. look for mislabelled gaps 
@@ -1030,9 +1033,6 @@ sub _validate_assembly_gaps {
 
     my @remove;
     foreach my $gap ( grep { $_->assign eq 'GAP' }  $self->stream ) { 
-	# my $seq = $gap->sequence;
-
-	$gap->strand( 0 ); # important for control over start/stop 
 
 	my $path;
 	if ($gap->sequence !~ /N/) {
@@ -1131,34 +1131,41 @@ sub _validate_assembly_gaps {
 	# orfs params 
 	-start => 1,          # order by start coord
 	-noncoding => 1,      # enable non-coding sequences
-	-rank => -$INFINITY,  # 
-	#-restrict => ['GAP'] 
+	#-rank => -$INFINITY, # enforce non-coding ...
+	-restrict => ['GAP']  # FEATURE 
 	);
+    
+  GAP: foreach my $cl ( grep { $#{ $_ } > 0 } values %{ $gap_overlaps } ) {
 
-    foreach my $cl ( grep { $#{ $_ } > 0 } values %{ $gap_overlaps } ) {
-
-	# If we find a GAP that is overlapping a Centromere or other manual
-	# featre, we retain the manual one and ditch the rest. 
-
-	my @feats = grep { $_->assign ne 'GAP' } @{ $cl };
-	$self->throw if $#feats > 0;
-	if ( @feats ) {
-	    map { $self->remove( -object => $_ ) } grep { $_ ne $feats[0] } @{ $cl };
-	    map { $_->DELETE() } grep { $_ ne $feats[0] } @{ $cl };
-	    next;
-	}
-
-	# in all other cases, we take the maximum GAP span. 
-
-	map { $self->throw unless $_->exons==1 } @{ $cl };
-	my ($start) = map { $_->start } sort { $a->start <=> $b->start } @{ $cl };
-	my ($stop) = map { $_->stop } sort { $b->stop <=> $a->stop } @{ $cl };
-	my $gap = shift( @{ $cl } );
-	$gap->start( $start );
-	$gap->stop( $stop );
-	map { $self->remove( -object => $_ ) }  @{ $cl };
-	map { $_->DELETE() }  @{ $cl };
-    }
+      # If we find a GAP that is overlapping a Centromere or other manual
+      # featre, we retain the manual one and ditch the rest.
+      
+      ######################################################################
+      # NB: Disabled because we have changed the '-restrict' param to cluster(). 
+      my @feats = grep { $_->assign ne 'GAP' } @{ $cl };
+      map {$_->output(-prepend => ['FEAT', $self->_method, __LINE__ ], -fh => $fh )} @feats;
+      $self->throw if $#feats > 0;
+      if ( @feats ) {
+	  foreach my $del ( grep { $_ ne $feats[0] } @{ $cl } ) {
+	      $del->output(-prepend => [$self->_method, __LINE__, 'GAP_DEL' ], -fh => $fh );
+	      $self->remove( -object => $del );
+	      $del->DELETE();
+	  }
+	  next GAP;
+      }
+      ######################################################################
+      
+      # in all other cases, we take the maximum GAP span. 
+      
+      map { $self->throw unless $_->exons==1 } @{ $cl };
+      my ($start) = map { $_->start } sort { $a->start <=> $b->start } @{ $cl };
+      my ($stop) = map { $_->stop } sort { $b->stop <=> $a->stop } @{ $cl };
+      my $gap = shift( @{ $cl } );
+      $gap->start( $start );
+      $gap->stop( $stop );
+      map { $self->remove( -object => $_ ) }  @{ $cl };
+      map { $_->DELETE() }  @{ $cl };
+  }
     $self->index;
 
     ######################################
@@ -1204,12 +1211,13 @@ sub _validate_overlapping_features {
     # Based on commoncodon test so should be identical (+ errors) for the most part 
     ################################
 
-    # how are we enforcing CODING here? via orfs() call in cluster()? 
+    
 
     my $clref = $self->cluster( 
 	-cluster => 'commoncodon',
 	-stranded => 1,
-	-accelerate => 20
+	-accelerate => 20,
+	-noncoding => 0
 	);
     
     foreach my $cl ( values %{$clref} ) {
