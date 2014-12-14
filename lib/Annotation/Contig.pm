@@ -1211,24 +1211,22 @@ sub _validate_overlapping_features {
     # Based on commoncodon test so should be identical (+ errors) for the most part 
     ################################
 
-    
-
     my $clref = $self->cluster( 
 	-cluster => 'commoncodon',
 	-stranded => 1,
-	-accelerate => 20,
-	-noncoding => 0
+	-noncoding => 0, # enforce CODING via orfs() call in cluster() 
+	-accelerate => 20
 	);
     
     foreach my $cl ( values %{$clref} ) {
 	my ($pop, @others) = @{ $cl };
 	if ( @others ) {
 	    if ( $args->{'-verbose'} ) {
-		map { $_->output( -fh => $fh, -prepend => ['COMMON_CODON'] ) } @{$cl}; 
+		map { $_->output( -fh => $fh, -prepend => ['CODON',$self->_method, __LINE__] ) } @{$cl}; 
 	    }
 
 	    # choose best seq...
-
+	    
 	    my ($best,$scr) = $pop->choose( -object => \@others, -verbose => $args->{'-verbose'} );
 	    unless ( $best->orthogroup ) {
 		my $newbest;
@@ -1237,14 +1235,15 @@ sub _validate_overlapping_features {
 		}
 		$best = $newbest if $newbest; 
 	    }
-
-	    $best->output( -fh => $fh, -prepend => [">>"] ) if $args->{'-verbose'};
+	    
+	    $best->output( -fh => $fh, -prepend => ['BEST', $self->_method, __LINE__] ) 
+		if $args->{'-verbose'};
 
 	    # dissolve OGs as required 
 	    
 	    foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
 		$self->throw unless my $og_king = shift @{$index->{ $og->ogid }};
-		$og_king->_dissolve_orthogroup( -verbose => 0 );
+		$og_king->_dissolve_orthogroup( -verbose => $args->{'-verbose'} );
 	    }
 	    
 	    # delete redundant genes 
@@ -1259,28 +1258,39 @@ sub _validate_overlapping_features {
     ################################
     # 2. Handle any other overlapping features 
     # Just report for now-- no common codon and overlaps not 
-    # expresely forbidden 
+    # expressly forbidden 
     ################################
 
     my $clref = $self->cluster(
 	-cluster => 'overlap',
-	-stranded => 1,
+	-stranded => 0,
 	-frame => 0,
 	-accelerate => 20,
 	-param => 0.2
 	);
     
-    foreach my $cl ( values %{$clref} ) {
-	if ( $#{ $cl} >0 ) {
-	    if ( $args->{'-verbose'} ) {
-		map { $_->output( -fh => $fh, -prepend => ['OVERLAP'] ) } @{$cl}; 
-	    }
+    my $clx;
+    foreach my $cl ( grep { $#{$_} >0 } values %{$clref} ) {
+	if ( $args->{'-verbose'} ) {
+	    map { $_->output( -fh => $fh, 
+			      -prepend => ['OLAP_'.(++$clx), $self->_method, __LINE__] ) } @{$cl}; 
 	}
+	
+	$scaf->merge(
+	    -cluster => $cl,
+	    -index => $args->{'-index'}, 
+	    -verbose => 1
+	    );
     }
-    
-    ################################
-    # 3. Handle features that overlap gaps
-    ################################
+
+    $self->index;
+    return $self;
+}
+
+sub _genbank_gap_overlaps { 
+    my $self = shift;
+    my $args = { @_ };
+
     # This is pretty sketchy. Lots of cases that are not handled well. 
     # -- Does not help with MANUAL defined features. 
     # -- Removal of exons without proper sanity checking 
@@ -1305,7 +1315,7 @@ sub _validate_overlapping_features {
 	  if ( $args->{'-verbose'} )  {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
 	      map { $_->output(
-			-prepend => [$self->_method, __LINE__, '**', $_->_top_tail], 
+			-prepend => [$self->_method, __LINE__, $_->_top_tail], 
 			-fh => $fh, -recurse => 1
 			) } ($gap,$nei); # gap
 	      #$nei->glyph( -print => 'SGD', -tag => 'pre'.++$rando );
@@ -1402,13 +1412,14 @@ sub _validate_overlapping_features {
 	  $path{ $path }++;
 	  $nei->output(
 	      -prepend => [$self->_method, __LINE__, $path, $nei->_top_tail], 
-	      -append => [$nei->data( '_EXCLUDE_FROM_GENBANK') || 0],
+	      -append => [$nei->genbank_exclude || 0],
 	      -recurse => 1, -fh => $fh 
 	      ) if $args->{'-verbose'};
 	  goto RETRY if $path eq 'structure';
       }
   }
     
+    exit;
     #print { $fh } '>', ( map { $_.":".($path{$_} || 0) } keys %path ); 
 
     map { $_->output(-fh => $fh) and  $_->throw unless $_->translatable } grep { $_->coding } $self->stream;  
@@ -1417,7 +1428,7 @@ sub _validate_overlapping_features {
     return $self;
 }
 
-=head2 _make_genbank_gene_terminii()
+=head2 _genbank_gene_terminii()
 
     There is an important decision to be made here about how to implement 
     Genbank compliance. Should we calc coords when this method is called
@@ -1430,7 +1441,7 @@ sub _validate_overlapping_features {
 
 =cut 
 
-sub _make_genbank_gene_terminii {
+sub _genbank_gene_terminii {
     my $self = shift;
     my $args = {@_};
 
