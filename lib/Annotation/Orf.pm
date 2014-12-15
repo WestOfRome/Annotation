@@ -3160,8 +3160,8 @@ sub fission {
     map { $_->transfer( -from => $self, -to => $new ) } @{ $args->{'-exons'} };
     $new->index;
 
-    $self->output( -fh => $fh );
-    $new->output( -fh => $fh );
+    $self->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
+    $new->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
     exit;
 
     #############################
@@ -3345,12 +3345,12 @@ sub excise_gaps {
     my $self = shift;
     my $args = {@_}; 
 
-    $self->output( -fh => \*STDOUT ); 
+    #$self->output( -fh => \*STDOUT ); 
 
     foreach my $ex ( $self->stream ) {
 	if ( $ex->sequence =~ /(N+)/ ) {
 	    my $gap_len = length( $1 );
-	    my $gap_offset = index($ex->sequence, 'N');
+	    my $gap_offset = index($ex->sequence( -R => 1 ), 'N'); # need -R so we get revcomp... 
 
 	    if ( $gap_offset ) {
 		my $new_start = ($self->strand < 0 ? ($ex->stop - $gap_offset +1) : $ex->start() );
@@ -3372,8 +3372,9 @@ sub excise_gaps {
 	    #$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
 	}
     }
-
     $self->index;
+
+    #print { STDERR } $self->aa;
     $self->throw unless ! $self->coding || $self->translatable;
     return $self;
 }
