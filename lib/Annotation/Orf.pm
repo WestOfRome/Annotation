@@ -3119,6 +3119,57 @@ sub integrate {
     return $self;
 }
 
+=head2 fission( -exons => [], -base => i )
+
+    Split an ORF object into two objects. The opposite of merge()/fusion().
+
+    Can accept either an internal postion internal as the site to break at
+    OR a set of exons that will form one of the fission products. 
+
+=cut 
+
+sub fission {
+    my $self = shift;             
+    my $args = {@_};	
+    
+    $args->{'-base'} = undef unless exists $args->{'-base'};
+    $args->{'-exons'} = [] unless exists $args->{'-exons'};
+
+    $self->throw if $args->{'-base'} && $#{$args->{'-exons'}}>-1;
+    $self->throw unless $args->{'-base'} || $#{$args->{'-exons'}}>-1;
+    $self->throw("Not implemented") if $args->{'-base'};
+
+    #############################
+    # 
+    #############################
+
+    my $fh = \*STDERR;
+
+    #############################
+    # 
+    #############################
+
+    $self->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
+
+    my $new = ref( $self )->new(
+	START => $self->start,
+	STOP => $self->stop,
+	STRAND => $self->strand,
+	);
+
+    map { $_->transfer( -from => $self, -to => $new ) } @{ $args->{'-exons'} };
+    $new->index;
+
+    $self->output( -fh => $fh );
+    $new->output( -fh => $fh );
+    exit;
+
+    #############################
+    # 
+    #############################
+
+    return $new;
+}
 
 =head2 overlap(-object => $orf, -compare => 'coords|gross|seq|homolog', 
     -evalue => 1e-10, -contig => 1)
@@ -3293,15 +3344,17 @@ sub prune_fiveprime_exon {
 sub excise_gaps {
     my $self = shift;
     my $args = {@_}; 
-    
+
+    $self->output( -fh => \*STDOUT ); 
+
     foreach my $ex ( $self->stream ) {
 	if ( $ex->sequence =~ /(N+)/ ) {
 	    my $gap_len = length( $1 );
 	    my $gap_offset = index($ex->sequence, 'N');
 
 	    if ( $gap_offset ) {
-		my $new_start = ($self->strand < 0 ? ($ex->stop - $gap_offset-1) : $ex->start() );
-		my $new_stop = ($self->strand < 0 ? $ex->stop : ($ex->start+$gap_offset-1) );
+		my $new_start = ($self->strand < 0 ? ($ex->stop - $gap_offset +1) : $ex->start() );
+		my $new_stop = ($self->strand < 0 ?  $ex->stop : ($ex->start + $gap_offset -1) );
 		
 		my $new = ref( $ex )->new(
 		    START => $new_start,
@@ -3313,17 +3366,15 @@ sub excise_gaps {
 		$self->add( -object => $new );
 	    }
 
-	    my $post_adj = $gap_offset + $gap_len; # + ( 3 - ($gap_len%3) );
+	    my $post_adj = $gap_offset + $gap_len + ($gap_len%3==0 ? 0 : 3 - ($gap_len%3) );
 	    $ex->start( -R =>1, -adjust => +$post_adj );
-	    $self->index; # here makes most sense ...
-	    $ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
-	    $ex->start( -R =>1, -adjust => +$TRIPLET ) until 
-		! $self->coding(-pseudo => 1) || $self->translatable;
+	    $self->index;
+	    #$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
 	}
     }
 
     $self->index;
-    #$self->throw unless ! $self->coding || $self->translatable;
+    $self->throw unless ! $self->coding || $self->translatable;
     return $self;
 }
 
