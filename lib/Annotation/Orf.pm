@@ -3287,6 +3287,46 @@ sub prune_fiveprime_exon {
     return @exons;
 }
 
+=head2 excise_gaps
+=cut
+
+sub excise_gaps {
+    my $self = shift;
+    my $args = {@_}; 
+    
+    foreach my $ex ( $self->stream ) {
+	if ( $ex->sequence =~ /(N+)/ ) {
+	    my $gap_len = length( $1 );
+	    my $gap_offset = index($ex->sequence, 'N');
+
+	    if ( $gap_offset ) {
+		my $new_start = ($self->strand < 0 ? ($ex->stop - $gap_offset-1) : $ex->start() );
+		my $new_stop = ($self->strand < 0 ? $ex->stop : ($ex->start+$gap_offset-1) );
+		
+		my $new = ref( $ex )->new(
+		    START => $new_start,
+		    STOP => $new_stop,
+		    STRAND => $ex->strand,
+		    INTRON => [ $ex->intron(-direction => 'left'), $INFINITY ]
+		    );
+
+		$self->add( -object => $new );
+	    }
+
+	    my $post_adj = $gap_offset + $gap_len; # + ( 3 - ($gap_len%3) );
+	    $ex->start( -R =>1, -adjust => +$post_adj );
+	    $self->index; # here makes most sense ...
+	    $ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
+	    $ex->start( -R =>1, -adjust => +$TRIPLET ) until 
+		! $self->coding(-pseudo => 1) || $self->translatable;
+	}
+    }
+
+    $self->index;
+    #$self->throw unless ! $self->coding || $self->translatable;
+    return $self;
+}
+
 =head2 adjust(adjustment)
 
     Change coordinates by sliding gene model along sequence.
@@ -7313,6 +7353,11 @@ sub gff {
     return $self;
 }
 
+
+#################################
+# GENBANK RELATED METHODS 
+#################################
+
 =head2 genbank_exclude
 =cut
 
@@ -7520,6 +7565,11 @@ sub genbank_tbl {
     return 1;
 }
 
+##################################################################
+##################################################################
+# 
+##################################################################
+##################################################################
 
 =head2 _upgrade_orf_structure() 
 
