@@ -8255,24 +8255,18 @@ sub _make_genbank_compatible {
 
 	# B. relationships among features 
 
-	$scaf->_validate_overlapping_features(-index => $index, -verbose => 1);
-	foreach my $gap ( grep {$_->assign eq 'GAP' } $scaf->stream ) {
-	    $gap->output(-prepend => [$self->_method, __LINE__, $gap->genbank_exclude ], -fh => \*STDERR )
-		if $gap->genbank_exclude;
-	}
-	exit;
+	$scaf->_validate_overlapping_features(-index => $index, -verbose => 0);
+	
+	# C. apply rules for gaps 
 
+	$scaf->_genbank_gap_overlaps(-index => $index, -verbose => 0 ); #  $args->{'-debug'}
+	
 	# D. individual gene details 
 	
-	$scaf->_make_genbank_gene_terminii(-index => $index, -verbose => 0 ); #  $args->{'-debug'}
-
-	foreach my $gap ( grep {$_->assign eq 'GAP' } $scaf->stream ) {
-	    $gap->output(-prepend => [$self->_method, __LINE__, $gap->genbank_exclude ], -fh => \*STDERR )
-		if $gap->genbank_exclude;
-	}
+	$scaf->_genbank_gene_terminii(-index => $index, -verbose => 0 ); #  $args->{'-debug'}
 	
 	# C. toss rubbish genes ... 
-	
+
 	$scaf->_genbank_quality_filter(-index => $index, -verbose => 0); # $args->{'-debug'} );
     }
 
