@@ -1313,9 +1313,8 @@ sub _genbank_gap_overlaps {
 	  ################################
 	  # identify overlaps we need to deal with  
 	  ################################
-	  
-	RETRY: 
-	  next unless my $olap = $gap->overlap( -object => $nei); #, -compare => 'gross' );
+
+	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
 	  
 	  if ( $args->{'-verbose'} )  {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
@@ -1326,8 +1325,8 @@ sub _genbank_gap_overlaps {
 	      #$nei->glyph( -print => 'SGD', -tag => 'pre'.++$rando );
 	  }
 	  
-	  # MANUAL trumps all ...
-	  $gap->genbank_exclude( $self->_method ) and next GAP if 
+	  # Not worth fighting for Celine's centromeres 
+	  $nei->genbank_exclude( $self->_method ) and next if 
 	      $nei->evidence eq 'MANUAL';
 
 	  ################################
@@ -1343,9 +1342,9 @@ sub _genbank_gap_overlaps {
 	  # 3. Complete overlap that does not fit type 2. 
 	  # -- We do not try to fix. Just make a decision about whether we hide the 
 	  # -- GAP or the gene. Latter if shitty otherwise former. 
-	  
+
 	  my $path;
-	  if ( $gap->overlap( -object => $nei, -compare => 'gross' ) < 1 ) {
+	  if ( $olap < 1 ) {
 	      
 	      if ( $gap->start < $nei->start && $gap->stop < $nei->stop ) {
 		  $path='start';# gap overlaps start of gene 
@@ -1376,57 +1375,26 @@ sub _genbank_gap_overlaps {
 	  } elsif ($gap->start < $nei->start || $gap->stop > $nei->stop) {
 	      $self->throw("Gap encompasses feature");
 
-	  } else { # complete overlap 
+	  } else { 
 
-	      $nei->output( -prepend => [$self->_method, __LINE__, 'PRE' ], -fh => $fh  );
+	      # complete overlap 
+
 	      $nei->excise_gaps();
-	      $nei->output( -prepend => [$self->_method, __LINE__, 'POST' ], -fh => $fh  );
 
 	      my @left = grep { $_->stop <= $gap->start } $nei->stream;
 	      my @right = grep { $_->start >= $gap->stop } $nei->stream;
+	      #print { STDERR } $self->_method, __LINE__, @left+0, @right+0, $nei->exons;
 	      $self->throw unless @left+@right == scalar($nei->stream);
+	      $self->throw unless scalar(keys %{{ map { $_ => 1 } (@left,@right) }}) == scalar($nei->stream);
 	      
-	      my @long = sort { $b->length <=> $a->length } $nei->stream;
-
-	      my $frameshift_exons = (($nei->exons > 1)  && ($nei->introns == 0) ? 1 : 0);	      
-	      my $frame = $long[0]->frame();
+	      # the longer (presumably better supported) fragment keeps OG etc. 
+	      # the other exons become the $new ORF object. 
 	      
-	      if ( $gap_is_internal ) {
-		  $path='excise';
-
-
-
-	      } elsif ( $gap_is_internal && $frameshift_exons ) {
-		  $path='structure';
-		  
-		  # strip exons 
-
-		  map { $nei->remove( -object => $_ ) } @long[1..$#long];
-		  $nei->index;
-
-		  # ensure frame OK 
-
-		  my $exon = $nei->down;
-		  $exon->start(-R => 1, -adjust => -$frame);
-		  $exon->stop(-R => 1, -adjust => +1) until $nei->length%3==0;
-		  $exon->start(-R => 1, -adjust => +$TRIPLET) if 
-		      $nei->first_codon =~ $STOP_CODON;
-		  $nei->output(-fh => $fh ) and $self->throw unless $nei->translatable;
-
-		  # adjust to satisfy gap constraints 
-
-		  if ( $exon->start < $gap->start ) {
-		      $exon->stop(-adjust => -$TRIPLET) until $exon->stop < $gap->start;
-		  } else {
-		      $exon->start(-adjust => +$TRIPLET) until $exon->start > $gap->stop;
-		  }
-		  $nei->structure;
-
-	      } else {
-		  $path='hide';
-		  my $hide = ( $nei->interruptions > 1 ? $nei : $gap );
-		  $hide->genbank_exclude( $self->_method );
-	      }
+	      my ($left,$right);
+	      map { $left += $_->length } @left;
+	      map { $right += $_->length } @right;
+	      my ($new) = $nei->fission( -exons => [ ($left < $right ? @left : @right) ] );
+	      $self->index;
 	  }
 	  
 	  #$nei->glyph( -print => 'SGD', -tag => 'post'.++$rando );	  
@@ -1436,7 +1404,6 @@ sub _genbank_gap_overlaps {
 	      -append => [$nei->genbank_exclude || 0, $nei->sequence],
 	      -recurse => 1, -fh => $fh 
 	      ) if $args->{'-verbose'};
-	  goto RETRY if $path eq 'structure';
       }
   }
 
