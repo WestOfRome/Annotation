@@ -3149,21 +3149,42 @@ sub fission {
     # 
     #############################
 
-    $self->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
+    # make new shell object 
 
     my $new = ref( $self )->new(
 	START => $self->start,
 	STOP => $self->stop,
-	STRAND => $self->strand,
+	STRAND => $self->strand
 	);
+    $self->up->add( -object => $new );
+		  
+    # transfer exons and attach to contig 
 
+    my $dummy = $new->down;
     map { $_->transfer( -from => $self, -to => $new ) } @{ $args->{'-exons'} };
+    $new->remove( -object => $dummy);
     $new->index;
 
-    $self->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
-    $new->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
-    exit;
+    # fix coordinates 
 
+    my ($left,$right) = ($self->strand * ($new->start-$self->start) > 0 ? ($self,$new) : ($new,$self) );
+    $left->exons( -query => 'last' )->stop( -R => 1, -adjust => -1 ) until $left->length%3==0;
+    $right->exons( -query => 'first' )->start( -R => 1, -adjust => +1 ) until $right->length%3==0;
+     
+    map { $self->throw unless $_->translatable } ($left,$right);
+    
+    # ensure it has a meaningful data hash. 
+    # by default, all the more complex annotations (OG, ohnologs etc stay on self). 
+    
+    $new->update();
+    
+    # Pretty, pretty 
+ 
+    if ( $args->{'-verbose'} ) {
+	$self->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
+	$new->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
+    }   
+    
     #############################
     # 
     #############################
@@ -3345,14 +3366,31 @@ sub excise_gaps {
     my $self = shift;
     my $args = {@_}; 
 
-    #$self->output( -fh => \*STDOUT ); 
+    my $fh = \*STDERR;
+    #$self->output( -fh => $fh ); 
 
     foreach my $ex ( $self->stream ) {
 	if ( $ex->sequence =~ /(N+)/ ) {
 	    my $gap_len = length( $1 );
 	    my $gap_offset = index($ex->sequence( -R => 1 ), 'N'); # need -R so we get revcomp... 
+	    my $gap_last_base = $gap_offset+$gap_len;
 
-	    if ( $gap_offset ) {
+	    #print {$fh} $self->_method, __LINE__,'Excise', $ex->length, $gap_offset, $gap_len, $gap_last_base;
+	    
+	    if ( $gap_offset == 0 && $gap_last_base == $ex->length ) {
+		$self->throw unless $ex->length%3==0;
+		$self->remove( -object => $ex );
+
+	    } elsif ( $gap_offset == 0 && $gap_last_base < $ex->length  ) {
+		$ex->start( -R =>1 , -adjust => +$TRIPLET )
+		    until $ex->length <= ($gap_len - $gap_offset);
+		
+	    } elsif ( $gap_offset > 0 && $gap_last_base == $ex->length ) {
+		$ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
+		    until $ex->length <= $gap_offset;
+
+	    } else {
+
 		my $new_start = ($self->strand < 0 ? ($ex->stop - $gap_offset +1) : $ex->start() );
 		my $new_stop = ($self->strand < 0 ?  $ex->stop : ($ex->start + $gap_offset -1) );
 		
@@ -3364,17 +3402,17 @@ sub excise_gaps {
 		    );
 
 		$self->add( -object => $new );
-	    }
 
-	    my $post_adj = $gap_offset + $gap_len + ($gap_len%3==0 ? 0 : 3 - ($gap_len%3) );
-	    $ex->start( -R =>1, -adjust => +$post_adj );
-	    $self->index;
-	    #$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
+		my $post_adj = $gap_offset + $gap_len + ($gap_len%3==0 ? 0 : 3 - ($gap_len%3) );
+		$ex->start( -R =>1, -adjust => +$post_adj );
+		$self->index;
+		#$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
+	    }
 	}
     }
     $self->index;
 
-    #print { STDERR } $self->aa;
+    #print { $fh } $self->aa;
     $self->throw unless ! $self->coding || $self->translatable;
     return $self;
 }
