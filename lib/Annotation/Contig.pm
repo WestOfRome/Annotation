@@ -1276,10 +1276,10 @@ sub _validate_overlapping_features {
 			      -prepend => ['OLAP_'.(++$clx), $self->_method, __LINE__] ) } @{$cl}; 
 	}
 	
-	$scaf->merge(
+	$self->merge(
 	    -cluster => $cl,
 	    -index => $args->{'-index'}, 
-	    -verbose => 1
+	    -verbose => $args->{'-verbose'}
 	    );
     }
 
@@ -1290,6 +1290,11 @@ sub _validate_overlapping_features {
 sub _genbank_gap_overlaps { 
     my $self = shift;
     my $args = { @_ };
+
+    $self->throw unless my $index = $args->{'-index'};
+    $self->throw unless ref($index) =~ /HASH/;
+
+    my $fh = *STDERR;
 
     # This is pretty sketchy. Lots of cases that are not handled well. 
     # -- Does not help with MANUAL defined features. 
@@ -1310,7 +1315,7 @@ sub _genbank_gap_overlaps {
 	  ################################
 	  
 	RETRY: 
-	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
+	  next unless my $olap = $gap->overlap( -object => $nei); #, -compare => 'gross' );
 	  
 	  if ( $args->{'-verbose'} )  {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
@@ -1340,7 +1345,7 @@ sub _genbank_gap_overlaps {
 	  # -- GAP or the gene. Latter if shitty otherwise former. 
 	  
 	  my $path;
-	  if ( $olap < 1 ) {
+	  if ( $gap->overlap( -object => $nei, -compare => 'gross' ) < 1 ) {
 	      
 	      if ( $gap->start < $nei->start && $gap->stop < $nei->stop ) {
 		  $path='start';# gap overlaps start of gene 
@@ -1368,14 +1373,30 @@ sub _genbank_gap_overlaps {
 		  
 	      } else {$self->throw;}
 	      
+	  } elsif ($gap->start < $nei->start || $gap->stop > $nei->stop) {
+	      $self->throw("Gap encompasses feature");
+
 	  } else { # complete overlap 
+
+	      $nei->output( -prepend => [$self->_method, __LINE__, 'PRE' ], -fh => $fh  );
+	      $nei->excise_gaps();
+	      $nei->output( -prepend => [$self->_method, __LINE__, 'POST' ], -fh => $fh  );
+
+	      my @left = grep { $_->stop <= $gap->start } $nei->stream;
+	      my @right = grep { $_->start >= $gap->stop } $nei->stream;
+	      $self->throw unless @left+@right == scalar($nei->stream);
 	      
 	      my @long = sort { $b->length <=> $a->length } $nei->stream;
-	      my $gap_is_internal = ($long[0]->start < $gap->start || $long[0]->stop > $gap->stop ? 1 : 0);
+
 	      my $frameshift_exons = (($nei->exons > 1)  && ($nei->introns == 0) ? 1 : 0);	      
 	      my $frame = $long[0]->frame();
+	      
+	      if ( $gap_is_internal ) {
+		  $path='excise';
 
-	      if ( $gap_is_internal && $frameshift_exons ) {
+
+
+	      } elsif ( $gap_is_internal && $frameshift_exons ) {
 		  $path='structure';
 		  
 		  # strip exons 
@@ -1412,14 +1433,13 @@ sub _genbank_gap_overlaps {
 	  $path{ $path }++;
 	  $nei->output(
 	      -prepend => [$self->_method, __LINE__, $path, $nei->_top_tail], 
-	      -append => [$nei->genbank_exclude || 0],
+	      -append => [$nei->genbank_exclude || 0, $nei->sequence],
 	      -recurse => 1, -fh => $fh 
 	      ) if $args->{'-verbose'};
 	  goto RETRY if $path eq 'structure';
       }
   }
-    
-    exit;
+
     #print { $fh } '>', ( map { $_.":".($path{$_} || 0) } keys %path ); 
 
     map { $_->output(-fh => $fh) and  $_->throw unless $_->translatable } grep { $_->coding } $self->stream;  
@@ -1760,8 +1780,8 @@ sub _genbank_quality_filter {
 	    
 	    if ( $orf->data('STOP') == 0 || $orf->hypergob > 5 ) {
 		$path='hide';
-		
-		$orf->data( '_EXCLUDE_FROM_GENBANK' => 1 );
+
+		$orf->genbank_exclude( $self->_method );
 		
 	    } elsif ( $orf->ogid ) { # break OGs -- no synteny anyway. 
 		$path='og-delete';
@@ -1781,7 +1801,7 @@ sub _genbank_quality_filter {
 	    #################################
 	    
 	    $path='hide-small';
-	    $orf->data( '_EXCLUDE_FROM_GENBANK' => 1 );
+	    $orf->genbank_exclude( $self->_method );
 	}
 	
 	#################################
