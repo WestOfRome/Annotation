@@ -1315,7 +1315,7 @@ sub _genbank_gap_overlaps {
 	  ################################
 
 	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
-	  
+
 	  if ( $args->{'-verbose'} )  {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
 	      map { $_->output(
@@ -1373,8 +1373,10 @@ sub _genbank_gap_overlaps {
 	      } else {$self->throw;}
 	      
 	  } elsif ($gap->start < $nei->start || $gap->stop > $nei->stop) {
+	      map { $_->output(-fh => $fh, -prepend => [$self->_method, __LINE__] ) } ($nei,$gap);
+	      map { print {$fh} $_->sequence(); }  ($nei,$gap);
 	      $self->throw("Gap encompasses feature");
-
+	      
 	  } else { 
 
 	      # complete overlap 
