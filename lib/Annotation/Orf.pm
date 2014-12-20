@@ -8,7 +8,7 @@ use YGOB;
 use Node;
 
 use File::Copy;
-use GD::SVG;
+#use GD::SVG;
 
 @ISA = qw(Annotation);
 
@@ -3244,16 +3244,18 @@ sub overlap {
 	    }
 	}
     } elsif ( $args->{'-compare'} =~ /gross/ ) {
+	
+        ($bar) = sort {$a <=> $b} map { $_->stop-$_->start+1 } ($self,$other); 
+	my ($x, $y) = sort {$a->start <=> $b->start} ($self, $other);
 
-	my ($x, $y) = sort {$a->start <=> $b->start} ($self, $other);				
 	if ($x->stop > $y->stop) {
 	    $overlap = $y->length;
 	} elsif ($x->stop >= $y->start) {
 	    $overlap = ($x->stop - $y->start)+1;
 	} elsif ($x->stop < $y->start) {
 	    $overlap = 0;
-	}
-	
+	} else { $self->throw; }
+
     } elsif ($args->{'-compare'} =~ /seq/) {
 
 	# change bl2seq to exonerate? 
