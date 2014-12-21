@@ -1400,6 +1400,7 @@ sub _genbank_gap_overlaps {
 	  }
 
 	  $path{ $path }++;
+	  $nei->history( $self->_method.':'.$path );
 
 	  $nei->output(
 	      -prepend => [$self->_method, __LINE__, $path, $nei->_top_tail], 
