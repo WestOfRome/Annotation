@@ -1221,7 +1221,7 @@ sub _validate_overlapping_features {
     foreach my $cl ( values %{$clref} ) {
 	my ($pop, @others) = @{ $cl };
 	if ( @others ) {
-	    if ( $args->{'-verbose'} ) {
+	    if ( $args->{'-verbose'} >= 2 ) {
 		map { $_->output( -fh => $fh, -prepend => ['CODON',$self->_method, __LINE__] ) } @{$cl}; 
 	    }
 
@@ -1237,8 +1237,8 @@ sub _validate_overlapping_features {
 	    }
 	    
 	    $best->output( -fh => $fh, -prepend => ['BEST', $self->_method, __LINE__] ) 
-		if $args->{'-verbose'};
-
+		if $args->{'-verbose'} >= 2;
+	    
 	    # dissolve OGs as required 
 	    
 	    foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
@@ -1257,8 +1257,7 @@ sub _validate_overlapping_features {
 
     ################################
     # 2. Handle any other overlapping features 
-    # Just report for now-- no common codon and overlaps not 
-    # expressly forbidden 
+    # Note: Overlaps not expressly forbidden 
     ################################
 
     my $clref = $self->cluster(
@@ -1271,7 +1270,7 @@ sub _validate_overlapping_features {
     
     my $clx;
     foreach my $cl ( grep { $#{$_} >0 } values %{$clref} ) {
-	if ( $args->{'-verbose'} ) {
+	if ( $args->{'-verbose'} >= 2 ) {
 	    map { $_->output( -fh => $fh, 
 			      -prepend => ['OLAP_'.(++$clx), $self->_method, __LINE__] ) } @{$cl}; 
 	}
@@ -1378,7 +1377,8 @@ sub _genbank_gap_overlaps {
 	      $self->throw("Gap encompasses feature");
 	      
 	  } else { 
-
+	      $path='internal';
+	      
 	      # complete overlap 
 
 	      $nei->excise_gaps();
@@ -1398,9 +1398,9 @@ sub _genbank_gap_overlaps {
 	      my ($new) = $nei->fission( -exons => [ ($left < $right ? @left : @right) ] );
 	      $self->index;
 	  }
-	  
-	  #$nei->glyph( -print => 'SGD', -tag => 'post'.++$rando );	  
+
 	  $path{ $path }++;
+
 	  $nei->output(
 	      -prepend => [$self->_method, __LINE__, $path, $nei->_top_tail], 
 	      -append => [$nei->genbank_exclude || 0, $nei->sequence],
