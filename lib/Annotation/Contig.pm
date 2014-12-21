@@ -1526,6 +1526,7 @@ sub _genbank_gene_terminii {
 
 	    if ($orf->first_codon eq $START_CODON ) {		
 		$path='move';
+		$orf->history( $self->_method.':'.$path );
 		goto FINDSTOP;
 	    } else { $fex->start( -R => 1, -new => $mark ); } # failed so revert 
 	    
@@ -1652,6 +1653,7 @@ sub _genbank_gene_terminii {
 
 	    #$orf->update(); # TEMP / DEBUG 
 	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
+	    $orf->history( $self->_method.':'.$path );
 	}
 	
       FINDSTOP:
@@ -1709,13 +1711,13 @@ sub _genbank_gene_terminii {
 	    } else { $self->throw(); }	    
 
 	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
+	    $orf->history( $self->_method.':'.$path );
 	    
 	    $orf->output( 
 		-prepend => [$self->_method, __LINE__, $orf->_top_tail], 
 		#-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
 		-fh => $fh,-recurse => 0) if $args->{'-verbose'}; 
 	    # && $lex->stop(-R => 1) != $stop_gbk;
-	    
 	}
 
 	$orf->evaluate( -force => 1 );
