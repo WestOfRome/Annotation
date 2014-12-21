@@ -3361,64 +3361,94 @@ sub prune_fiveprime_exon {
     return @exons;
 }
 
-=head2 excise_gaps
+=head2 excise_gaps( -override => f )
+    
+    Exmaine and then edit coding sequence to remove any Ns. 
+    
+  NB: Does not respect exon boundary scores (i.e., value of ->intron( -direction => 'left|right') )
+    
 =cut
 
 sub excise_gaps {
     my $self = shift;
     my $args = {@_}; 
 
+    ###################################################
+    # Set up...
+    ###################################################
+
+    $args->{'-override'} = $INFINITY unless exists  $args->{'-override'};
+
     my $fh = \*STDERR;
+
     #$self->output( -fh => $fh ); 
 
-    foreach my $ex ( $self->stream ) {
-	if ( $ex->sequence =~ /(N+)/ ) {
-	    my $gap_len = length( $1 );
-	    my $gap_offset = index($ex->sequence( -R => 1 ), 'N'); # need -R so we get revcomp... 
-	    my $gap_last_base = $gap_offset+$gap_len;
+    ###################################################
+    # Iterate through exons and edit in situ 
+    ###################################################
 
-	    #print {$fh} $self->_method, __LINE__,'Excise', $ex->length, $gap_offset, $gap_len, $gap_last_base;
+    foreach my $ex ( grep { $_->sequence =~ /(N+)/ } $self->stream ) {
+	my $gap_len = length( $1 );
+	my $gap_offset = index($ex->sequence( -R => 1 ), 'N'); # need -R so we get revcomp... 
+	my $gap_last_base = $gap_offset+$gap_len;
+	
+	# print {$fh} $self->_method, __LINE__,'Excise', 
+	# $ex->length, $gap_offset, $gap_len, $gap_last_base;
+	
+	if ( $gap_offset == 0 && $gap_last_base == $ex->length ) {
+	    $self->throw unless $ex->length%3==0;
+	    $self->remove( -object => $ex );
 	    
-	    if ( $gap_offset == 0 && $gap_last_base == $ex->length ) {
-		$self->throw unless $ex->length%3==0;
-		$self->remove( -object => $ex );
+	} elsif ( $gap_offset == 0 && $gap_last_base < $ex->length  ) {
+	    $self->throw unless $ex->intron( -direction => 'left') > $args->{'-override'};
+	    
+	    my $target = $ex->length - $gap_len;
+	    $ex->start( -R =>1 , -adjust => +$TRIPLET ) 
+		until $ex->length <= $target;
+	    $ex->start( -R =>1 , -adjust => +$TRIPLET ) 
+		until $self->translatable; # not good 
+	    $ex->intron( -direction => 'left', -new => $INFINITY );
+	    
+	} elsif ( $gap_offset > 0 && $gap_last_base == $ex->length ) {
+	    $self->throw unless $ex->intron( -direction => 'right') > $args->{'-override'};
 
-	    } elsif ( $gap_offset == 0 && $gap_last_base < $ex->length  ) {
-		my $target = $ex->length - $gap_len;
-		$ex->start( -R =>1 , -adjust => +$TRIPLET ) 
-		    until $ex->length <= $target;
-		$ex->start( -R =>1 , -adjust => +$TRIPLET ) 
-		    until $self->translatable; # not good 
-
-	    } elsif ( $gap_offset > 0 && $gap_last_base == $ex->length ) {
-		$ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
-		    until $ex->length <= $gap_offset;
-		$ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
-		    until $self->translatable; #not good 
-
-	    } else {
-
-		my $new_start = ($self->strand < 0 ? ($ex->stop - $gap_offset +1) : $ex->start() );
-		my $new_stop = ($self->strand < 0 ?  $ex->stop : ($ex->start + $gap_offset -1) );
-		
-		my $new = ref( $ex )->new(
-		    START => $new_start,
-		    STOP => $new_stop,
-		    STRAND => $ex->strand,
-		    INTRON => [ $ex->intron(-direction => 'left'), $INFINITY ]
-		    );
-
-		$self->add( -object => $new );
-
-		my $post_adj = $gap_offset + $gap_len + ($gap_len%3==0 ? 0 : 3 - ($gap_len%3) );
-		#print {$fh} $post_adj;
-		$ex->start( -R =>1, -adjust => +$post_adj );
-		$self->index;
-		#$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
-	    }
+	    $ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
+		until $ex->length <= $gap_offset;
+	    $ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
+		until $self->translatable; #not good 
+	    $ex->intron( -direction => 'right', -new => $INFINITY );
+	    
+	} else {
+	    
+	    # Create the new exon + boundary scores as needed 
+	    # New exon is always the upstream ("left") one
+	    
+	    my $new_start = ($self->strand < 0 ? ($ex->stop - $gap_offset +1) : $ex->start() );
+	    my $new_stop = ($self->strand < 0 ?  $ex->stop : ($ex->start + $gap_offset -1) );
+	    
+	    my $new = ref( $ex )->new(
+		START => $new_start,
+		STOP => $new_stop,
+		STRAND => $ex->strand,
+		INTRON => [ $ex->intron(-direction => 'left'), $INFINITY ]
+		);
+	    $self->add( -object => $new );
+	    
+	    # Modify the exising exon + boundary scores as needed 
+	    # ....
+	    
+	    my $post_adj = $gap_offset + $gap_len + ($gap_len%3==0 ? 0 : 3 - ($gap_len%3) );
+	    $ex->start( -R =>1, -adjust => +$post_adj );
+	    $self->index; # needs to happen _before_ calling start(-adjust => +1)
+	    #$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
+	    $ex->intron( -direction => 'right', -new => $INFINITY );
 	}
     }
     $self->index;
+    
+    ###################################################
+    # Basic QC 
+    ###################################################
 
     unless ( (! $self->coding) || $self->translatable) {
 	print { $fh } $self->aa;
@@ -7502,7 +7532,7 @@ sub genbank_tbl {
     $self->output( 
 	-fh => \*STDOUT, 
 	-prepend => [$self->name( -genbank => 1 )], 
-	-append => [$self->first_codon, $self->last_codon],
+	-append => [$self->first_codon, $self->last_codon, $self->_creator],
 	-recurse => 1
 	); 
     $self->evaluate( -force => 1);
