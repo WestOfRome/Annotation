@@ -3384,12 +3384,17 @@ sub excise_gaps {
 		$self->remove( -object => $ex );
 
 	    } elsif ( $gap_offset == 0 && $gap_last_base < $ex->length  ) {
-		$ex->start( -R =>1 , -adjust => +$TRIPLET )
-		    until $ex->length <= ($gap_len - $gap_offset);
-		
+		my $target = $ex->length - $gap_len;
+		$ex->start( -R =>1 , -adjust => +$TRIPLET ) 
+		    until $ex->length <= $target;
+		$ex->start( -R =>1 , -adjust => +$TRIPLET ) 
+		    until $self->translatable; # not good 
+
 	    } elsif ( $gap_offset > 0 && $gap_last_base == $ex->length ) {
 		$ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
 		    until $ex->length <= $gap_offset;
+		$ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
+		    until $self->translatable; #not good 
 
 	    } else {
 
@@ -3406,6 +3411,7 @@ sub excise_gaps {
 		$self->add( -object => $new );
 
 		my $post_adj = $gap_offset + $gap_len + ($gap_len%3==0 ? 0 : 3 - ($gap_len%3) );
+		#print {$fh} $post_adj;
 		$ex->start( -R =>1, -adjust => +$post_adj );
 		$self->index;
 		#$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
@@ -3414,8 +3420,12 @@ sub excise_gaps {
     }
     $self->index;
 
-    #print { $fh } $self->aa;
-    $self->throw unless ! $self->coding || $self->translatable;
+    unless ( (! $self->coding) || $self->translatable) {
+	print { $fh } $self->aa;
+	$self->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
+	$self->throw;
+    }
+
     return $self;
 }
 
