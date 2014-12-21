@@ -5386,7 +5386,11 @@ sub evaluate {
     return($self->assign);     
 }
 
-=head2 reset
+=head2 reset()
+
+    Clear EVIDENCE params before running evaluate(). 
+    Ensure no evidnce inconsistencies. 
+
 =cut 
 
 sub reset {
@@ -8116,6 +8120,20 @@ sub stop {
 }
 
 #########################################
+# Meta methods 
+#########################################
+
+sub history {
+    my $self = shift;
+    my $new = shift;
+    
+    push @{ $self->{'_HISTORY'} }, $new if $new;
+
+    return (wantarray ? @{$self->{'_HISTORY'}} : join( ' >> ', @{$self->{'_HISTORY'}} )
+}
+
+#########################################
+# 
 #########################################
 
 =head2 _init_data_structure(-exempt => []) 
