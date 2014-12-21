@@ -1761,7 +1761,7 @@ sub _genbank_quality_filter {
 		$self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) eq 'HASH';
 		my @og = @{$args->{'-index'}->{ $orf->ogid }};
 		my $og_master = shift(@og);
-		$og_master->_dissolve_orthogroup( -verbose => 0 );
+		$og_master->_dissolve_orthogroup( -verbose => 1 );
 		delete $args->{'-index'}->{ $orf->ogid };
 		
 	    } else {$path='delete';}
