@@ -3388,18 +3388,22 @@ sub excise_gaps {
     ###################################################
 
     foreach my $ex ( grep { $_->sequence =~ /(N+)/ } $self->stream ) {
+	$ex->sequence =~ /(N+)/;
 	my $gap_len = length( $1 );
 	my $gap_offset = index($ex->sequence( -R => 1 ), 'N'); # need -R so we get revcomp... 
 	my $gap_last_base = $gap_offset+$gap_len;
 	
-	# print {$fh} $self->_method, __LINE__,'Excise', 
-	# $ex->length, $gap_offset, $gap_len, $gap_last_base;
-	
+	#print {$fh} $self->_method, __LINE__,'Excise', 
+	#$ex->length, $gap_offset, $gap_len, $gap_last_base;
+
+	my $path;
 	if ( $gap_offset == 0 && $gap_last_base == $ex->length ) {
+	    $path='overlap';
 	    $self->throw unless $ex->length%3==0;
 	    $self->remove( -object => $ex );
 	    
 	} elsif ( $gap_offset == 0 && $gap_last_base < $ex->length  ) {
+	    $path='5prime';
 	    $self->throw unless $ex->intron( -direction => 'left') > $args->{'-override'};
 	    
 	    my $target = $ex->length - $gap_len;
@@ -3410,6 +3414,7 @@ sub excise_gaps {
 	    $ex->intron( -direction => 'left', -new => $INFINITY );
 	    
 	} elsif ( $gap_offset > 0 && $gap_last_base == $ex->length ) {
+	    $path='3prime';
 	    $self->throw unless $ex->intron( -direction => 'right') > $args->{'-override'};
 
 	    $ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
@@ -3419,6 +3424,7 @@ sub excise_gaps {
 	    $ex->intron( -direction => 'right', -new => $INFINITY );
 	    
 	} else {
+	    $path='internal';
 	    
 	    # Create the new exon + boundary scores as needed 
 	    # New exon is always the upstream ("left") one
@@ -3443,6 +3449,7 @@ sub excise_gaps {
 	    #$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
 	    $ex->intron( -direction => 'right', -new => $INFINITY );
 	}
+	$self->history( $self->_method.':'.$path );
     }
     $self->index;
     
@@ -3452,7 +3459,7 @@ sub excise_gaps {
 
     unless ( (! $self->coding) || $self->translatable) {
 	print { $fh } $self->aa;
-	$self->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
+	$self->output( -fh => $fh, -prepend => [$self->_method, __LINE__], -append => [$self->history] );
 	$self->throw;
     }
 
