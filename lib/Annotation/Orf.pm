@@ -8129,7 +8129,7 @@ sub history {
     
     push @{ $self->{'_HISTORY'} }, $new if $new;
 
-    return (wantarray ? @{$self->{'_HISTORY'}} : join( ' >> ', @{$self->{'_HISTORY'}} )
+    return (wantarray ? @{$self->{'_HISTORY'}} : join( ' >> ', @{$self->{'_HISTORY'}} ));
 }
 
 #########################################
