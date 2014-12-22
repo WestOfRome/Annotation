@@ -3404,7 +3404,9 @@ sub excise_gaps {
 	    
 	} elsif ( $gap_offset == 0 && $gap_last_base < $ex->length  ) {
 	    $path='5prime';
-	    $self->throw unless $ex->intron( -direction => 'left') > $args->{'-override'};
+	    my $scr = $ex->intron( -direction => 'left');
+	    $self->output(-prepend => [$self->_method, __LINE__], -fh => $fh) and $self->throw
+		if ($scr > $args->{'-override'} && $scr != $INFINITY);
 	    
 	    my $target = $ex->length - $gap_len;
 	    $ex->start( -R =>1 , -adjust => +$TRIPLET ) 
@@ -3415,8 +3417,10 @@ sub excise_gaps {
 	    
 	} elsif ( $gap_offset > 0 && $gap_last_base == $ex->length ) {
 	    $path='3prime';
-	    $self->throw unless $ex->intron( -direction => 'right') > $args->{'-override'};
-
+	    my $scr = $ex->intron( -direction => 'right');
+	    $self->output(-prepend => [$self->_method, __LINE__], -fh => $fh) and $self->throw
+		if ($scr > $args->{'-override'} && $scr != $INFINITY);
+	    
 	    $ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
 		until $ex->length <= $gap_offset;
 	    $ex->stop( -R =>1 , -adjust => -$TRIPLET ) 
@@ -7543,7 +7547,7 @@ sub genbank_tbl {
     $self->output( 
 	-fh => \*STDOUT, 
 	-prepend => [$self->name( -genbank => 1 )], 
-	-append => [$self->first_codon, $self->last_codon, $self->_creator],
+	-append => [$self->first_codon, $self->last_codon, $self->_creator, $self->unique_id],
 	-recurse => 1
 	); 
     $self->evaluate( -force => 1);
