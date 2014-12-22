@@ -1377,7 +1377,7 @@ sub _genbank_gap_overlaps {
 	      
 	      # complete overlap 
 
-	      $nei->excise_gaps();
+	      $nei->excise_gaps( -override => 1 ); # ugly hardcode but OK 
 	      
 	      #map { $_->output(-prepend => [$self->_method, __LINE__], 
 	      #-fh => $fh, -append => [$_->history.'']) } ($gap,$nei);
