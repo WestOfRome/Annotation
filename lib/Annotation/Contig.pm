@@ -1220,11 +1220,11 @@ sub _validate_overlapping_features {
     
     foreach my $cl ( values %{$clref} ) {
 	my ($pop, @others) = @{ $cl };
-	if ( @others ) {
-	    if ( $args->{'-verbose'} >= 2 ) {
+	if ( @others) {
+	    if ( $args->{'-verbose'} >= 2  ) {
 		map { $_->output( -fh => $fh, -prepend => ['CODON',$self->_method, __LINE__] ) } @{$cl}; 
 	    }
-
+	    
 	    # choose best seq...
 	    
 	    my ($best,$scr) = $pop->choose( -object => \@others, -verbose => $args->{'-verbose'} );
@@ -1294,10 +1294,6 @@ sub _genbank_gap_overlaps {
     $self->throw unless ref($index) =~ /HASH/;
 
     my $fh = *STDERR;
-
-    # This is pretty sketchy. Lots of cases that are not handled well. 
-    # -- Does not help with MANUAL defined features. 
-    # -- Removal of exons without proper sanity checking 
     
     # set up comparisons: GAPS vs all else 
     
@@ -1314,7 +1310,7 @@ sub _genbank_gap_overlaps {
 	  ################################
 
 	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
-
+	  
 	  if ( $args->{'-verbose'} )  {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
 	      map { $_->output(
@@ -1382,7 +1378,10 @@ sub _genbank_gap_overlaps {
 	      # complete overlap 
 
 	      $nei->excise_gaps();
-
+	      
+	      #map { $_->output(-prepend => [$self->_method, __LINE__], 
+	      #-fh => $fh, -append => [$_->history.'']) } ($gap,$nei);
+	      
 	      my @left = grep { $_->stop <= $gap->start } $nei->stream;
 	      my @right = grep { $_->start >= $gap->stop } $nei->stream;
 	      #print { STDERR } $self->_method, __LINE__, @left+0, @right+0, $nei->exons;
@@ -1556,21 +1555,25 @@ sub _genbank_gene_terminii {
 	    } elsif ( $orf->first_codon =~ $STOP_CODON )  {
 		$fex->start( -adjust => $TRIPLET, -R => 1);		
 		
-		# add a filter for garbage genes? (e.g., 339 / 704) No, this should occur above   
-		# add test for pseudo genes? Eg., 57 
-		# YBL027W? YDR188W 
-		
-		$path = ( 
-		    ($upstream && 
-		     $upstream->coding(-pseudo => 1) && 
-		     $orf->homology(-object => $upstream) && 
-		     ($orf->fragment + $upstream->fragment) < 1) ? 'merge' : 'stop'
-		    );
-		
-		if ( $path eq 'merge' ) {
-		    $orf->merge( -object => $upstream, @_ ); # OGID index hash 
+		##############################################################
+		# Merging is not appropriate action in _genbank_gene_trminii() 
+		if ( 1==0 ) { 
+		    # YBL027W? YDR188W 
+		    $path = ( 
+			($upstream && 
+			 $upstream->coding(-pseudo => 1) && 
+			 $orf->homology(-object => $upstream) && 
+			 ($orf->fragment + $upstream->fragment) < 1) ? 'merge' : 'stop'
+			);
+		    
+		    if ( $path eq 'merge' ) {
+			$orf->merge( -object => $upstream, @_ ); # OGID index hash 
+		    }
 		}
-		
+		##############################################################
+
+		$path='stop';
+
 		# Run reoptimize (really exonerate) with relaxed params 
 		# where we think missing intron may be the problem. 
 		# Mising intron fail mode is indicated by uninterrupted reading frame. 
@@ -1637,7 +1640,7 @@ sub _genbank_gene_terminii {
 			# what do we do if we messed up? restore exons? 
 		    }		    
 		    $orf->structure();
-
+		    
 		    # pretty pretty
 		    
 		    if ( $args->{'-verbose'} ) {
