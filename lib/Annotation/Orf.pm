@@ -3070,10 +3070,16 @@ sub merge {
     return $self;
 }
 
-=head2 integrate() 
+=head2 integrate( -object => orf ) 
+    
+    Combine logical homology relations of two (neighbouring)
+    genes into a single model (i.e., ohnologs, orthogroups). 
+    Used if one is being deleted (due to redundancy) or if 
+    models are to be merged.
 
-    Combine logical relations of two (neighbouring) genes
-    into a single model. 
+    It is polar. We strip from the argument, add to $self
+    and return $self. The argument is not destroyed. That 
+    is a caller responsibility.
 
 =cut 
 
@@ -3085,7 +3091,7 @@ sub integrate {
     $self->throw unless $self->isa( ref($obj) );
     $self->throw unless $self->up == $obj->up;
     
-    my $verb=0;
+    my $verb=1;
     
     # Resolve ohnolog conflicts 
     

@@ -1243,7 +1243,7 @@ sub _validate_overlapping_features {
 	    
 	    foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
 		$self->throw unless my $og_king = shift @{$index->{ $og->ogid }};
-		$og_king->_dissolve_orthogroup( -verbose => $args->{'-verbose'} );
+		$og_king->_dissolve_orthogroup( -verbose => 1 );
 	    }
 	    
 	    # delete redundant genes 

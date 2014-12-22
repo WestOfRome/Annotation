@@ -8244,7 +8244,7 @@ sub _make_genbank_compatible {
     
     foreach my $scaf ( $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
-
+	
 	#goto JUMP if $args->{'-debug'};	
 	#print {$fh} $scaf->id;
 	next if $scaf->id > 16;
@@ -8270,7 +8270,7 @@ sub _make_genbank_compatible {
 	
 	$scaf->_genbank_quality_filter(-index => $index, -verbose => 0); # $args->{'-debug'} );
     }
-
+    
     return $self;
 }
 
