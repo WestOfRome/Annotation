@@ -8247,7 +8247,7 @@ sub _make_genbank_compatible {
 	
 	#goto JUMP if $args->{'-debug'};	
 	#print {$fh} $scaf->id;
-	next if $scaf->id > 16;
+	#next if $scaf->id > 16;
 
 	# A. gross asssembly issues ....
 
