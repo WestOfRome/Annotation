@@ -6950,6 +6950,7 @@ sub output {
     $args->{'-oliver'} = undef unless exists $args->{'-oliver'};
     $args->{'-simple'} = undef unless exists $args->{'-simple'};
     $args->{'-quality'} = undef unless exists $args->{'-quality'};
+    $args->{'-debug'} = undef unless exists $args->{'-debug'};
     # string formatting 
     $args->{'-substr'} = 50 unless exists $args->{'-substr'};
     $args->{'-string'} = undef unless exists $args->{'-string'};
@@ -6967,6 +6968,13 @@ sub output {
     if ( $args->{'-quality'} || $args->{'-qc'} ) {
 	$args->{'-quality'}=1;
 	$args->{'-recurse'}=undef;
+    }
+    
+    if ( $args->{'-debug'} ) {
+	push @{ $args->{'-prepend'} }, (
+	    (split(/::/, (caller(1))[3] ))[-1], 
+	    (caller)[2]
+	);
     }
 
     #########################################
