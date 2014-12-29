@@ -1220,35 +1220,40 @@ sub _validate_overlapping_features {
     
     foreach my $cl ( values %{$clref} ) {
 	my ($pop, @others) = @{ $cl };
+	
 	if ( @others) {
-	    if ( $args->{'-verbose'} >= 2  ) {
-		map { $_->output( -fh => $fh, -prepend => ['CODON',$self->_method, __LINE__] ) } @{$cl}; 
-	    }
-	    
+
 	    # choose best seq...
 	    
 	    my ($best,$scr) = $pop->choose( -object => \@others, -verbose => $args->{'-verbose'} );
-	    unless ( $best->orthogroup ) {
-		my $newbest;
-		foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
-		    $newbest =$og if $og->sequence == $best->sequence;
+
+	    # ouptut 
+
+	    if ( $args->{'-verbose'} >= 2 ) {
+		map { $_->output(-prepend => ['CODON'], -fh => $fh, -debug=>1, -og =>1) } @{$cl}; 
+		$best->output(-prepend => ['BEST'], -fh => $fh, -debug=>1, -og =>1 );
+	    }
+	    
+	    
+	    # manage orthogroups 
+
+	    my ($other_og, @ogid) = grep { $_->ogid } grep { $_ ne $best} @{ $cl };
+	    $self->throw if @ogid;
+
+	    if ( $other_og ) {
+		if  ( $best->ogid ) {
+		    $self->throw unless my $og_king = shift @{$index->{ $other_og->ogid }};
+		    $og_king->_dissolve_orthogroup( -verbose => 1 );
+		} elsif ( ! $best->ogid ) {
+		    $best->integrate( -object => $other_og, @_ );
 		}
-		$best = $newbest if $newbest; 
 	    }
-	    
-	    $best->output( -fh => $fh, -prepend => ['BEST', $self->_method, __LINE__] ) 
-		if $args->{'-verbose'} >= 2;
-	    
-	    # dissolve OGs as required 
-	    
-	    foreach my $og ( grep { $_->ogid } grep { $_ ne $best}  @{ $cl } ) {
-		$self->throw unless my $og_king = shift @{$index->{ $og->ogid }};
-		$og_king->_dissolve_orthogroup( -verbose => 1 );
-	    }
-	    
-	    # delete redundant genes 
+
+	    # delete redundant genes
 	    
 	    foreach my $del (  grep { $_ ne $best } @{$cl} ) {
+		$del->output( -fh => $fh, -debug=>1, -og =>1, -prepend => ['DEL'])
+		    if $args->{'-verbose'} >= 2;
 		$self->remove( -object => $del );
 		$del->DESTROY;
 	    }
