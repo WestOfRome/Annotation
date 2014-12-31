@@ -1761,7 +1761,7 @@ sub _genbank_quality_filter {
 	    if ( $orf->data('STOP') == 0 || $orf->hypergob > 5 ) {
 		$path='hide';
 
-		$orf->genbank_exclude( $self->_method );
+		$orf->genbank_misc_feature( $self->_method );
 		
 	    } elsif ( $orf->ogid ) { # break OGs -- no synteny anyway. 
 		$path='og-delete';
