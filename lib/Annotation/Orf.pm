@@ -6850,7 +6850,7 @@ sub fasta {
 =head2 name
     
     Return ORF name. 
-
+    
 =cut 
 
 sub name {
@@ -6860,6 +6860,9 @@ sub name {
     my $contig = $self->up->id;
     my $organism = $self->up->up->organism;
     my $name = $organism."_".$contig.".".$self->id;
+
+    $self->throw("-genbank argument is depracated. Use locus_tag.") 
+	if $args->{'-genbank'};
 
     if ( $args->{'-genbank'} ) {
 	my $replace;
@@ -7326,90 +7329,6 @@ sub ontology {
     return @{ $OntologyBeast->{$self->ygob}->{$args->{'-attribute'}} };
 }
 
-=head2 genbank_evidence
-
-    Return appropriate Genbank feature for ASN1 format.
-
-=cut
-
-sub genbank_evidence {
-    my $self = shift;
-    my $args = {@_};
-
-    $args->{'-rich'} = 0 unless exists $args->{'-rich'};
-    
-    my @kick = ((3 x undef), "inference");    
-    my $database = ( $self->gene =~ /$HOMOLOGY{'SGD'}/ ? 'SGD' : 'YeastGeneOrderBrowser');
-    $database = 'GenBank' if $self->gene =~ /^\d+$/;
-
-    my $string;
-    if ( $self->evidence eq 'YGOB' ) {
-
-	$string = "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob;  
-	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
-	    "similar to AA sequence:$database:".$self->gene # :blastall:2.2.17
-	    if ($self->gene && $self->evalue('gene') <= 1e-5 && $args->{'-rich'});
-	
-    } elsif ( $self->evidence =~ /KAKS|NCBI|AA|HSP|HCNF/ ) {
-
-	$string = "similar to AA sequence:$database:".$self->gene; # :blastall:2.2.17	  
-	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
-	    "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob
-	    if ($self->ygob && $self->evalue('ygob') <= 1e-5 && $args->{'-rich'});
-
-    } elsif (  $self->evidence eq 'LTR' ) {
-	$string = "similar to DNA sequence:SGD:".$self->hit('ltr'); # blastall:2.2.17:
-    } elsif (  $self->evidence eq 'TY' ) {
-	$string = "similar to AA sequence:SGD:".$self->hit('ty'); # blastall:2.2.17:
-
-    } elsif (  $self->evidence eq 'RNA' ) {
-	$string = "nucleotide motif:tRNAscan-SE:1.23:".$self->gene;	    
-    } elsif (  $self->evidence eq 'HMM' ) {
-	$string = "nucleotide motif:HMMER:1.8.4:".$self->gene;
-
-    } elsif (  $self->evidence eq 'NNNN' ) {
-	$string = "alignment"; # slight abuse of the ontology ... 
-
-    } elsif ( $self->evidence =~ /SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
-	return undef;
-	$string = 'non-experimental evidence, no additional details recorded';
-    } elsif (  $self->evidence eq 'STOP' ) {
-	return undef;
-	$string = 'non-experimental evidence, no additional details recorded';
-    } elsif (  $self->evidence eq 'MANUAL' ) {
-	return undef;
-	$string = 'non-experimental evidence, no additional details recorded';
-    }
-    
-    if ( $args->{'-existence'} == 1 ) {
-	unless ( $self->evidence =~ /NNNN|MANUAL|STOP|SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
-	    $string = 'EXISTENCE:'.$string;
-	}
-    }
-
-    return $string;
-}
-
-=head2 genbank_feature_key
-
-    Return appropriate Genbank feature for ASN1 format.
-
-=cut
-
-sub genbank_feature_key {
-    my $self = shift;       
-    my $sofa = $self->_evidence(
-	-evidence => $self->evidence,
-	-query => 'genbank_asn1'
-        );
-    my $subsofa = $self->_evidence(
-	-evidence => $self->evidence,
-	-query => 'genbank_asn1_partof'
-        );
-
-    return($sofa,$subsofa);
-}
-
 =head2 sofa
 
     Return sofa ontology term.
@@ -7539,73 +7458,79 @@ sub genbank_tbl {
     my $self = shift;
     my $args = {@_};
 
-    #################################
+    ##################################################################
     # validate args and organize variables 
-    #################################
+    ##################################################################
 
     $args->{'-recurse'}=1 unless exists $args->{'-recurse'};
+    $args->{'-verbose'}=1 unless exists $args->{'-verbose'};
+
     $self->throw unless exists $args->{'-fh'};
     my $fh = $args->{'-fh'};
     
     my @bump = (3 x undef);
 
-    #################################
-    # exclude certain features 
-    #################################
-
-    my ($asn,$asn_sub) = $self->genbank_feature_key;
-    return undef unless $asn;
-    
-    # 
+    ##################################################################
+    # pretty pretty 
+    ##################################################################
     
     $self->output( 
 	-fh => \*STDOUT, 
-	-prepend => [$self->name( -genbank => 1 )], 
+	-prepend => [$self->locus_tag], 
 	-append => [$self->first_codon, $self->last_codon, $self->_creator, $self->unique_id],
 	-recurse => 1
-	); 
-    $self->evaluate( -force => 1);
+	) if $args->{'-verbose'}; 
 
-    #################################
-    # coordinates 
-    #################################
+    ##################################################################
+    # Map to genbank space and exclude certain features 
+    ##################################################################
+
+    $self->evaluate( -force => 1);
+    my ($asn,$asn_sub) = $self->genbank_feature_key;
+    return undef unless $asn;
+
+    ##################################################################
+    # Gene features -- every range of interest gets range and locus_id
+    ##################################################################
+    
+    # http://www.ncbi.nlm.nih.gov/genbank/eukaryotic_genome_submission/#prepare_table
+
+    my $gbk_start = $self->exons( -query => ($self->strand == -1 ? 'last' : 'first' ) )
+	->genbank_coords(-R => 0, -mode => 'start');
+    my $gbk_stop = $self->exons( -query => ($self->strand == -1 ? 'first' : 'last' ) )
+	->genbank_coords(-R => 0, -mode => 'stop');
+
+    print {$fh} $gbk_start, $gbk_stop, 'gene';
+    print {$fh} @bump, 'gene', $self->name( -genbank => 1 );
+    print {$fh} @bump, 'locus_tag', $self->locus_tag;
+    #print {$fh} @bump, 'locus_tag', (map { s/\+//; $_ } $self->unique_id);
+
+    ##################################################################
+    # Exon / segment coordinates 
+    ##################################################################
 
     my @exons = $self->stream;
-    $self->structure();
 
-    # if there are artificial reading frame disruptions 
-    # we just take a range and call it a pseudo
+    # Over-ride artificial reading frame disruptions (Genbank does not recognize). 
+    # We just take a range and call it a pseudo.
     
+    $self->structure();
     my $newpseudo;
-    if ( $#exons > 0 ) {
-	unless ( $self->data('INTRONS') == $#exons ) {
-	    
-	    # need to look at first/last exons directly in case they have been adjusted
-	    
-	    my $gbk_start = $self->exons( -query => ($self->strand == -1 ? 'last' : 'first' ) )
-		->genbank_coords(-R => 0, -mode => 'start');
-	    my $gbk_stop = $self->exons( -query => ($self->strand == -1 ? 'first' : 'last' ) )
-		->genbank_coords(-R => 0, -mode => 'stop');
-	    
-	    # make simplified gene structure (range) 
-
-	    my $fake = ref($self)->new
-		(
-		 START => $gbk_start || $self->start,
-		 STOP => $gbk_stop || $self->stop,
-		 STRAND => $self->strand,
-		 UP => $self->up
-		);
-	    @exons=();
-	    @exons=($fake->down);
-	    $newpseudo=1;
-	}
+    if ( $#exons > 0 &&  $self->data('INTRONS') != $#exons ) {
+	my $fake = ref($self)->new
+	    (
+	     START => $gbk_start || $self->start,
+	     STOP => $gbk_stop || $self->stop,
+	     STRAND => $self->strand,
+	     UP => $self->up
+	    );
+	@exons=();
+	@exons=($fake->down);
+	$newpseudo=1;
     }
     
-    #################################
-    # 
-    #################################
-
+    # Print exons and mark up incomplete reading frames
+    
     foreach my $ex ( @exons ) {
 	my $start = $ex->genbank_coords( -mode => 'start', -R => 1 ) || 
 	    $ex->start( -R => 1); #$self->strand == -1 ? $ex->stop : $ex->start;
@@ -7623,25 +7548,23 @@ sub genbank_tbl {
 	print {$fh} $start, $stop,  ( $ex eq $exons[0] ? $asn : undef), undef, undef;
     }
     
-    #################################
+    ##################################################################
     # standard components 
-    #################################
+    ##################################################################
 
-    unless ( $args->{'-minimal'} ) {
-	print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
+    print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
 	
-	unless (  $asn eq 'assembly_gap' ) {
-	    #print {$fh} @bump, 'gene', $self->name( -genbank => 1 );
-	    print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 0, -rich => 1 ) if 
-		$self->genbank_evidence; # irritating -- we are using the GenBank recommended value 
-	    #print {$fh} @bump, 'locus_tag', (map { s/\+//; $_ } $self->unique_id);
-	}
-	#print {$fh} @bump, 'standard_name', $self->name; # diff from gene ?
+    if ( $asn eq 'assembly_gap' ) {
+	# WIP 
+    } else {
+	print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 0, -rich => 1 ) if 
+	    $self->genbank_evidence; # irritating -- we are using the GenBank recommended value 
     }
+    #print {$fh} @bump, 'standard_name', $self->name; # diff from gene ?
 
-    #################################
+    ##################################################################
     # standard components 
-    #################################
+    ##################################################################
 
     if ( $args->{'-minimal'} ) {
 	# 
@@ -7694,7 +7617,15 @@ sub genbank_tbl {
 
     } elsif ( $asn eq 'tRNA' ) {
 	
-	print {$fh} @bump, 'product', $self->gene;
+	my $prod;
+	if ( $self->gene =~ /pseudo/i ) {
+	    my ($ps,$cdn) = split/:/, $self->gene;
+	    my $one = $CODONS{$cdn}
+	    my $three = $one; # TO BE COMPLETED
+	    $prod = $three.":".$cdn;
+	} else { $prod = $self->gene; }
+
+	print {$fh} @bump, 'product', $prod;
 	print {$fh} @bump, 'pseudogene', 'unitary' if $self->gene =~ /pseudo/i;
 	
     } elsif ( $asn eq 'misc_feature' ) {
@@ -7722,8 +7653,126 @@ sub genbank_tbl {
 	}
     }
 
-
     return 1;
+}
+
+=head2 genbank_evidence
+
+    Return appropriate Genbank feature for ASN1 format.
+
+=cut
+
+sub genbank_evidence {
+    my $self = shift;
+    my $args = {@_};
+
+    $args->{'-rich'} = 0 unless exists $args->{'-rich'};
+    
+    my @kick = ((3 x undef), "inference");    
+    my $database = ( $self->gene =~ /$HOMOLOGY{'SGD'}/ ? 'SGD' : 'YeastGeneOrderBrowser');
+    $database = 'GenBank' if $self->gene =~ /^\d+$/;
+
+    my $string;
+    if ( $self->evidence eq 'YGOB' ) {
+
+	$string = "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob;  
+	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
+	    "similar to AA sequence:$database:".$self->gene # :blastall:2.2.17
+	    if ($self->gene && $self->evalue('gene') <= 1e-5 && $args->{'-rich'});
+	
+    } elsif ( $self->evidence =~ /KAKS|NCBI|AA|HSP|HCNF/ ) {
+
+	$string = "similar to AA sequence:$database:".$self->gene; # :blastall:2.2.17	  
+	$string .= "\n".join("\t", @kick, ($args->{'-existence'} == 1 ? "EXISTENCE:" : undef)).
+	    "protein motif:HMMER:3.0b3:YeastGeneOrderBrowser:".$self->ygob
+	    if ($self->ygob && $self->evalue('ygob') <= 1e-5 && $args->{'-rich'});
+
+    } elsif (  $self->evidence eq 'LTR' ) {
+	$string = "similar to DNA sequence:SGD:".$self->hit('ltr'); # blastall:2.2.17:
+    } elsif (  $self->evidence eq 'TY' ) {
+	$string = "similar to AA sequence:SGD:".$self->hit('ty'); # blastall:2.2.17:
+
+    } elsif (  $self->evidence eq 'RNA' ) {
+	$string = "nucleotide motif:tRNAscan-SE:1.23:".$self->gene;	    
+    } elsif (  $self->evidence eq 'HMM' ) {
+	$string = "nucleotide motif:HMMER:1.8.4:".$self->gene;
+
+    } elsif (  $self->evidence eq 'NNNN' ) {
+	$string = "alignment"; # slight abuse of the ontology ... 
+
+    } elsif ( $self->evidence =~ /SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
+	return undef;
+	$string = 'non-experimental evidence, no additional details recorded';
+    } elsif (  $self->evidence eq 'STOP' ) {
+	return undef;
+	$string = 'non-experimental evidence, no additional details recorded';
+    } elsif (  $self->evidence eq 'MANUAL' ) {
+	return undef;
+	$string = 'non-experimental evidence, no additional details recorded';
+    }
+    
+    if ( $args->{'-existence'} == 1 ) {
+	unless ( $self->evidence =~ /NNNN|MANUAL|STOP|SYNT|LDA|LENGTH|INTRONS|STRUCT/ ) {
+	    $string = 'EXISTENCE:'.$string;
+	}
+    }
+
+    return $string;
+}
+
+=head2 genbank_feature_key
+
+    Return appropriate Genbank feature for ASN1 format.
+
+=cut
+
+sub genbank_feature_key {
+    my $self = shift;       
+    my $sofa = $self->_evidence(
+	-evidence => $self->evidence,
+	-query => 'genbank_asn1'
+        );
+    my $subsofa = $self->_evidence(
+	-evidence => $self->evidence,
+	-query => 'genbank_asn1_partof'
+        );
+
+    $self->warn( join(" ", "Exclude:", $self->name, $self->assign ) ) unless $sofa;
+
+    return($sofa,$subsofa);
+}
+
+=head2 locus_tag 
+
+http://www.ncbi.nlm.nih.gov/genomes/locustag/Proposal.pdf
+
+=cut 
+
+sub locus_tag {
+    my $self = shift;
+
+    return undef if $self->assign eq 'REPEAT';
+    
+    unless ( $self->{'LOCUS_TAG'} ) {
+	my $prefix = $self->organism;
+	
+	my $code;
+	if ( $self->evidence =~ /RNA/ ) {
+	    $code = ($self->gene =~ /\w+\:[ATGCN]{3}/ ? 't' : 'r');
+	} elsif ( $self->evidence =~ /MANUAL/ ) {
+	    $code = 'x';
+	} elsif ( $self->evidence =~ /HMM/ ) {
+	    $replace = 'f';
+	} else { $code = 'p';}
+	
+	my $suffix = $self->up->id.$code.$self->id;
+	
+	my $tag = $prefix.'_'.$suffix;
+	$self->throw( $tag ) if length($tag)>12; 
+	$self->{'LOCUS_TAG'} = $tag;
+    }
+    
+    return $self->{'LOCUS_TAG'};
 }
 
 ##################################################################
