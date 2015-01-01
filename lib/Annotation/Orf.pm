@@ -46,7 +46,11 @@ my %AUTOMETH = (
     DESCRIPTION => {req => 0, def => undef}, # this is set ONLY by impute()
     
     _CREATOR => {req => 0, def => undef},
-    _DEBUG => {req => 0, def => undef}
+    _DEBUG => {req => 0, def => undef},
+    _HISTORY => {req => 0, def => undef},
+
+    _GENBANK_EXCLUDE => {req => 0, def => undef},
+    _GENBANK_MISC_FEAT => {req => 0, def => undef}
     ); 
 
 sub AUTOLOAD {
@@ -6861,26 +6865,6 @@ sub name {
     my $organism = $self->up->up->organism;
     my $name = $organism."_".$contig.".".$self->id;
 
-    $self->throw("-genbank argument is depracated. Use locus_tag.") 
-	if $args->{'-genbank'};
-
-    if ( $args->{'-genbank'} ) {
-	my $replace;
-	if ( $self->evidence =~ /YGOB|KAKS|NCBI|AA|HSP|HCNF|SYNT|LDA|LENGTH|INTRONS|STRUCT|STOP/ ) {
-	    $replace = 'p';
-	} elsif ( $self->evidence =~ /LTR|TY/ ) {
-	    $replace = 'r';
-	} elsif ( $self->evidence =~ /RNA/ ) {
-	    $replace = 't';
-	} elsif ( $self->evidence =~ /HMM/ ) {
-	    $replace = 'f';
-	} elsif ( $self->evidence =~ /MANUAL/ ) {
-	    $replace = 'x';
-	} else { return $name; }
-
-	$name =~ s/\./$replace/ || die;
-    }
-
     return( $name );
 }
 
@@ -7438,19 +7422,6 @@ sub gff {
 # GENBANK RELATED METHODS 
 #################################
 
-=head2 genbank_exclude
-=cut
-
-sub genbank_exclude {
-    my $self = shift;
-    my $val = shift if @_;
-    my $key = '_EXCLUDE_FROM_GENBANK';
-    if ( $val ) {
-	$self->data( $key => $val );
-    }
-    return $self->data( $key );
-}
-
 =head2 genbank_tbl()
 =cut 
 
@@ -7488,35 +7459,45 @@ sub genbank_tbl {
     $self->evaluate( -force => 1);
     my ($asn,$asn_sub) = $self->genbank_feature_key;
     return undef unless $asn;
-
-    ##################################################################
-    # Gene features -- every range of interest gets range and locus_id
-    ##################################################################
     
+    # For CDS features, need to figure out whether it is well strucutred 
+    # and how we will handle 
+
+    my @exons = $self->stream;
+    $self->structure();
+    my $true_cds=0;
+    if ( $asn eq 'CDS') {
+	$true_cds = ($#exons == 0 || $self->data('INTRONS') == $#exons ? 1 : 0);
+    }
+    
+    ##################################################################
+    # Gene features 
+    ##################################################################
+
+    # We provide the basic minimum info as recommended here: 
     # http://www.ncbi.nlm.nih.gov/genbank/eukaryotic_genome_submission/#prepare_table
 
     my $gbk_start = $self->exons( -query => ($self->strand == -1 ? 'last' : 'first' ) )
 	->genbank_coords(-R => 0, -mode => 'start');
     my $gbk_stop = $self->exons( -query => ($self->strand == -1 ? 'first' : 'last' ) )
 	->genbank_coords(-R => 0, -mode => 'stop');
-
-    print {$fh} $gbk_start, $gbk_stop, 'gene';
-    print {$fh} @bump, 'gene', $self->name( -genbank => 1 );
-    print {$fh} @bump, 'locus_tag', $self->locus_tag;
-    #print {$fh} @bump, 'locus_tag', (map { s/\+//; $_ } $self->unique_id);
+    
+    unless ( $asn =~ /misc_feature|assembly_gap|mobile_element|undef|LTR/ ) {
+	print {$fh} # no UTR info so list as partial 
+	($asn eq 'tRNA' ? '' : '<').$gbk_start, 
+	($asn eq 'tRNA' ? '' : '>').$gbk_stop, 'gene'; 
+	#print {$fh} @bump, 'gene', 'TUB2'; # we do not have access to this information 
+	print {$fh} @bump, 'locus_tag', $self->locus_tag;
+    }
 
     ##################################################################
     # Exon / segment coordinates 
     ##################################################################
 
-    my @exons = $self->stream;
-
     # Over-ride artificial reading frame disruptions (Genbank does not recognize). 
     # We just take a range and call it a pseudo.
-    
-    $self->structure();
-    my $newpseudo;
-    if ( $#exons > 0 &&  $self->data('INTRONS') != $#exons ) {
+
+    if ( ($asn eq 'CDS' && ! $true_cds) || $asn eq 'misc_feature' ) {
 	my $fake = ref($self)->new
 	    (
 	     START => $gbk_start || $self->start,
@@ -7526,25 +7507,30 @@ sub genbank_tbl {
 	    );
 	@exons=();
 	@exons=($fake->down);
-	$newpseudo=1;
     }
     
     # Print exons and mark up incomplete reading frames
     
+    my @mRNA;
     foreach my $ex ( @exons ) {
 	my $start = $ex->genbank_coords( -mode => 'start', -R => 1 ) || 
 	    $ex->start( -R => 1); #$self->strand == -1 ? $ex->stop : $ex->start;
 	my $stop = $ex->genbank_coords( -mode => 'stop', -R => 1 ) || 
 	    $ex->stop( -R => 1); #$self->strand == -1 ? $ex->start : $ex->stop;
-	
-	if ( $asn eq 'CDS' && ! ($newpseudo || $self->pseudogene) ) {
+
+	my ($mrna_start,$mrna_stop)=($start,$stop);
+	if ( $asn eq 'CDS' && $true_cds ) {
 	    if ( $ex eq $exons[0] ) {
-		$start = '<'.$start unless $self->first_codon eq $START_CODON
+		$start = '<'.$start unless $self->first_codon eq $START_CODON;
+		$mrna_start = '<'.$mrna_start;
 	    }
 	    if ( $ex eq $exons[-1] ) {
-		$stop = '>'.$stop unless $self->last_codon =~ $STOP_CODON
+		$stop = '>'.$stop unless $self->last_codon =~ $STOP_CODON;
+		$mrna_stop = '>'.$mrna_stop;
 	    }
+	    push @mRNA, [$mrna_start, $mrna_stop, ( $ex eq $exons[0] ? 'mRNA' : undef), undef, undef];
 	}
+
 	print {$fh} $start, $stop,  ( $ex eq $exons[0] ? $asn : undef), undef, undef;
     }
     
@@ -7553,61 +7539,59 @@ sub genbank_tbl {
     ##################################################################
 
     print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
-	
-    if ( $asn eq 'assembly_gap' ) {
-	# WIP 
-    } else {
-	print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 0, -rich => 1 ) if 
-	    $self->genbank_evidence; # irritating -- we are using the GenBank recommended value 
-    }
-    #print {$fh} @bump, 'standard_name', $self->name; # diff from gene ?
+    print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 0, -rich => 1 ) if 
+	 $asn ne 'assembly_gap' && $self->genbank_evidence;
 
     ##################################################################
-    # standard components 
+    # feature specific components 
     ##################################################################
 
-    if ( $args->{'-minimal'} ) {
-	# 
-    } elsif ( $asn eq 'CDS' ) {
-
-	# stable database Id
-
-	#print {$fh} @bump, 'protein_id', (map {uc($_)} map { /^(\w{3})/ } $self->organism).'1';
+    if ( $asn eq 'CDS' ) {
 	
 	# types of CDS .... 
-
+	
 	print {$fh} @bump, 'codon_start', $self->fex->frame+1;
 	if ( $self->pseudogene ) { # method does not exist yet ...
 	    print {$fh} @bump, 'pseudogene', 'unitary';	 # unknown
-
+	    
 	} elsif ( $self->data('STOP') || $newpseudo ) {
 	    # use pseudo if not an actual pseudogene but gene is disrupted by sequencing error etc 
 	    print {$fh} @bump, 'pseudo', undef;
 	    print {$fh} @bump, 'note', ( scalar($self->stream) - $self->data('INTRONS') -1 )
 		.' reading frame interruptions of undetermined origin';
 	    
-	} else {
+	} elsif ($true_cds)  {
+
+	    my @product = ('product', 'hypothetical protein');
+	    my @pid = ('protein_id', $self->protein_id);
+	    my @tid = ('transcript_id', $self->transcript_id);	    
+	    foreach my $row ( \@product, \@pid, \@tid ) {
+		print {$fh} @{$row};
+		push @mRNA, $row;
+	    }
 
 	    # homology 
-	    
-	    print {$fh} @bump, 'product', $self->name; # debugging 
-	    print {$fh} @bump, 'product', 'homology to '.$self->gene if 
+
+	    print {$fh} @bump, 'note', 'homology to '.$self->gene if 
 		$self->gene && $self->evalue('gene') <= 1e-5;
-	    print {$fh} @bump, 'product', 'homology to '.$self->ygob if
+	    print {$fh} @bump, 'note', 'homology to '.$self->ygob if
 		$self->ygob && $self->evalue('ygob') <= 1e-5;
-	    print {$fh} @bump, 'product', 'hypothetical protein';
 	    
-	    # function 
-	    
-	    my @func = join(';', grep {!/molecular_function/} $self->ontology( -attribute => 'F'));
-	    print {$fh} @bump, 'function', @func, 
-	    '[general function prediction based on homology to S. cerevisiae]'  if $func[0];	
-	 
+	    # function. Update to standard : 
+	    # http://www.ncbi.nlm.nih.gov/genbank/eukaryotic_genome_submission_annotation#GOterms
+
+	    if ( 1==0 ) {
+		my @func = join(';', grep {!/molecular_function/} $self->ontology( -attribute => 'F'));
+		print {$fh} @bump, 'function', @func, 
+		'[general function prediction based on homology to S. cerevisiae]'  if $func[0];	
+	    }
+
 	    # translation 
 
 	    print {$fh} @bump, 'translation', $self->sequence( -molecule => 'aa' );
 	    print {$fh} @bump, 'transl_table', 1;
-	}
+
+	} else { $self->throw; }
 
     } elsif ( $asn eq 'assembly_gap' ) {
 
@@ -7620,7 +7604,7 @@ sub genbank_tbl {
 	my $prod;
 	if ( $self->gene =~ /pseudo/i ) {
 	    my ($ps,$cdn) = split/:/, $self->gene;
-	    my $one = $CODONS{$cdn}
+	    my $one = $CODONS{$cdn};
 	    my $three = $one; # TO BE COMPLETED
 	    $prod = $three.":".$cdn;
 	} else { $prod = $self->gene; }
@@ -7629,10 +7613,19 @@ sub genbank_tbl {
 	print {$fh} @bump, 'pseudogene', 'unitary' if $self->gene =~ /pseudo/i;
 	
     } elsif ( $asn eq 'misc_feature' ) {
-
+	
 	print {$fh} @bump, 'function', $self->description if $self->description;
-	print {$fh} @bump, 'note', 'Centromere location identified from synteny and sequence';
 
+	if ( $self->assign =~ /FEATURE/ ) {
+	    print {$fh} @bump, 'note', 'Centromere location identified from synteny and sequence';
+
+	} elsif ($self->genbank_misc_feature ) {
+	    print {$fh} @bump, 'note', 'homology to '.$self->gene if 
+		$self->gene && $self->evalue('gene') <= 1e-5;
+	    print {$fh} @bump, 'note', 'homology to '.$self->ygob if
+		$self->ygob && $self->evalue('ygob') <= 1e-5;
+	} else { $self->throw; } 
+	
     } elsif ( $asn eq 'mobile_element' ) {
 
 	print {$fh} @bump, 'mobile_element_type', 'retrotransposon';
@@ -7643,15 +7636,24 @@ sub genbank_tbl {
 
     } else { $self->throw( $asn ); }
 
-    #################################
+    ##################################################################
     # include exon and 'intron' features 
-    #################################
+    ##################################################################
 
-    if ( @exons > 1 && $args->{'-recurse'} ) {
+    if ( @exons > 1 && 
+	 $args->{'-recurse'} && 
+	 (($asn eq 'CDS' && $true_cds) || $cds eq 'tRNA') ) {
+	
 	foreach my $i ( 0..$#exons ) {
 	    $exons[ $i ]->genbank_tbl( %{$args},-count => ($i+1) );
 	}
     }
+
+    ##################################################################
+    # mRNA 
+    ##################################################################
+    
+    map { print {$fh} @{$_}; } @mRNA;
 
     return 1;
 }
@@ -7728,6 +7730,11 @@ sub genbank_evidence {
 
 sub genbank_feature_key {
     my $self = shift;       
+
+    if ( $self->genbank_misc_feature ) {
+	return('misc_feature', undef);
+    }
+
     my $sofa = $self->_evidence(
 	-evidence => $self->evidence,
 	-query => 'genbank_asn1'
@@ -7742,9 +7749,37 @@ sub genbank_feature_key {
     return($sofa,$subsofa);
 }
 
+=head2 genbank_exclude
+=cut
+
+sub genbank_exclude {
+    my $self = shift;
+    my $val = shift if @_;
+    my $key = '_GENBANK_EXCLUDE';
+    if ( $val ) {
+	$self->data( $key => $val );
+    }
+    return $self->data( $key );
+}
+
+=head2 genbank_misc_feature
+=cut 
+
+sub genbank_misc_feature {
+    my $self = shift;
+    my $val = shift if @_;
+    my $key = '_GENBANK_MISC_FEAT';
+    if ( $val ) {
+	$self->data( $key => $val );
+    }
+    return $self->data( $key );
+}
+
 =head2 locus_tag 
 
-http://www.ncbi.nlm.nih.gov/genomes/locustag/Proposal.pdf
+    Return Genbank compatible locus_tag.
+
+  http://www.ncbi.nlm.nih.gov/genomes/locustag/Proposal.pdf
 
 =cut 
 
@@ -7773,6 +7808,32 @@ sub locus_tag {
     }
     
     return $self->{'LOCUS_TAG'};
+}
+
+=head2 protein_id
+
+    Return Genbank compatible protein_id.
+
+=cut 
+
+sub protein_id {
+    my $self = shift;
+    $self->throw unless $self->coding( -pseudo => 1 );    
+    return 'gnl|ScannellUnaffiliated|'.$self->locus_id;
+}
+
+=head2 transcript_id
+
+    Return Genbank compatible protein_id.
+
+=cut 
+
+sub transcript_id {
+    my $self = shift;
+    $self->throw unless $self->coding( -pseudo => 1 );    
+    my @parts = split/\|/, $self->protein_id;
+    $parts[-1] = 'mrna.'.$parts[-1];
+    return join('|', @parts);
 }
 
 ##################################################################
