@@ -4841,9 +4841,12 @@ sub _synteny {
 	# We recruse all the real work to -object variant.
 	# return both numerator and denominator. 
 
-	foreach my $obj ( grep {$_ ne $self} $self->traverse(
-			    -direction => $args->{'-direction'},
-			    -distance => $args->{'-distance'})) {
+	foreach my $obj ( 
+	    grep {$_ ne $self} grep { $_->coding }
+	    $self->traverse(
+		-direction => $args->{'-direction'},
+		-distance => $args->{'-distance'})) {
+
 	    $denom++;
 	    $num++ if $self->synteny(
 		-object => $obj,
@@ -5925,6 +5928,8 @@ sub _species_key {
 sub _decompose_gene_name {
     __PACKAGE__->throw unless my $gene = shift;
     
+    return() if $gene =~ /_YGOB_|^SP/;
+
     my ($sp,$chr,$index,$other,$arm,$strain)=( 6 x undef);
     if ($gene =~ /([YA])([A-P])([LR])(\d{3})(.+)/) { # SGD 
 	($sp,$chr,$index,$other,$arm,$strain)=( $1, $2, $4, $5, $3, undef);
@@ -5932,7 +5937,6 @@ sub _decompose_gene_name {
 	($sp,$chr,$index,$other,$arm,$strain)=( $1, $3, int($4/11), $5, undef,$2);
     } elsif ($gene =~ /(\w{3,4})_(\d+)\.(\d+)([a-z])?/) { # Standard
 	($sp,$chr,$index,$other,$arm,$strain)=( $1, $2, $3, $4, undef, undef);
-    #} else { return undef; } 
     } elsif ($gene =~ /^HM([LR])|MAT$/) {
 	($sp,$chr,$index,$other,$arm,$strain)=( 'SGD', 'C', undef, undef, ($1 eq 'R' ? 'R' : 'L'), undef);
     } else { __PACKAGE__->throw($gene); } 
