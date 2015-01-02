@@ -994,9 +994,6 @@ sub _common_codon_cluster {
 
 =head2 _validate_assembly_gaps()
 
-    NB: This can result in unannotated gaps where they overlap a 
-    manually annotated feature (this has precedence). 
-
 =cut 
 
 sub _validate_assembly_gaps {
@@ -1132,30 +1129,12 @@ sub _validate_assembly_gaps {
 	-start => 1,          # order by start coord
 	-noncoding => 1,      # enable non-coding sequences
 	#-rank => -$INFINITY, # enforce non-coding ...
-	-restrict => ['GAP']  # FEATURE 
+	-restrict => ['GAP']  # enforce GAP // exclude FEATURE 
 	);
     
   GAP: foreach my $cl ( grep { $#{ $_ } > 0 } values %{ $gap_overlaps } ) {
-
-      # If we find a GAP that is overlapping a Centromere or other manual
-      # featre, we retain the manual one and ditch the rest.
       
-      ######################################################################
-      # NB: Disabled because we have changed the '-restrict' param to cluster(). 
-      my @feats = grep { $_->assign ne 'GAP' } @{ $cl };
-      map {$_->output(-prepend => ['FEAT', $self->_method, __LINE__ ], -fh => $fh )} @feats;
-      $self->throw if $#feats > 0;
-      if ( @feats ) {
-	  foreach my $del ( grep { $_ ne $feats[0] } @{ $cl } ) {
-	      $del->output(-prepend => [$self->_method, __LINE__, 'GAP_DEL' ], -fh => $fh );
-	      $self->remove( -object => $del );
-	      $del->DELETE();
-	  }
-	  next GAP;
-      }
-      ######################################################################
-      
-      # in all other cases, we take the maximum GAP span. 
+      # we take the maximum GAP span. 
       
       map { $self->throw unless $_->exons==1 } @{ $cl };
       my ($start) = map { $_->start } sort { $a->start <=> $b->start } @{ $cl };
@@ -1173,11 +1152,7 @@ sub _validate_assembly_gaps {
     ######################################
     
     if ( $args->{'-verbose'} )  {
-	my $moonboots;
-	map { $_->output(
-		  -prepend => [ $self->_method, __LINE__, 'FINAL'.(++$moonboots) ], 
-		  -fh => $fh, 
-		  -append => ["\n".$_->sequence] ) } 
+	map {$_->output(-debug => 1, -fh => $fh, -append => ["\n".$_->sequence])} 
 	grep {$_->assign eq 'GAP' || $_->sequence =~ /N/ } $self->stream;
     }
 
