@@ -669,7 +669,13 @@ sub warn {
 
 sub throw {
     my $self = shift;
+    my $args = {@_};
     my $string = shift;
+
+    if ( $args->{'-output'} && (caller(1))[3] !~ /output/i ) {
+	$self->output( -fh => \*STDERR );
+    }
+
     confess($string);
 }
 
