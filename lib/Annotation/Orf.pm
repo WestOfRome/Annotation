@@ -4827,6 +4827,8 @@ sub _synteny {
         foreach my $key ( grep {!/SPOM/} @{$args->{'-restrict'}}) {
             next unless my $sh = $self->data($key);
             next unless my $ah = $args->{'-object'}->data($key);
+	    next if ($key eq 'GENE') && 
+		((_decompose_gene_name($sh))[0] ne (_decompose_gene_name($ah))[0]);
 	    unless ( $args->{'-difference'} == 0 ) { next if $sh eq $ah; } # used in contig::merge 
 	    next unless my $delta = _compute_gene_distance($ah,$sh);
             $num++ if $delta < $args->{'-difference'};
@@ -5881,7 +5883,7 @@ sub subtelomeric {
 
     Return introns as a stream.
     Considers only introns that meet biological definition
-    -- edits to ORF to prserve reading frame are ignored. 
+    -- edits to ORF to preserve reading frame are ignored. 
 
 =cut 
 
@@ -5921,7 +5923,7 @@ sub _species_key {
 }
 
 sub _decompose_gene_name {
-    die unless my $gene = shift;
+    __PACKAGE__->throw unless my $gene = shift;
     
     my ($sp,$chr,$index,$other,$arm,$strain)=( 6 x undef);
     if ($gene =~ /([YA])([A-P])([LR])(\d{3})(.+)/) { # SGD 
@@ -5933,7 +5935,7 @@ sub _decompose_gene_name {
     #} else { return undef; } 
     } elsif ($gene =~ /^HM([LR])|MAT$/) {
 	($sp,$chr,$index,$other,$arm,$strain)=( 'SGD', 'C', undef, undef, ($1 eq 'R' ? 'R' : 'L'), undef);
-    } else { print (caller(1)); die($gene); } 
+    } else { __PACKAGE__->throw($gene); } 
     
     $sp = uc($sp);
     $sp = $SPECIES{$sp} unless ( exists $HOMOLOGY{$sp} );
@@ -5945,11 +5947,11 @@ sub _compute_gene_distance {
     my ($x,$y) = @_;
     return undef if $y =~ /_YGOB_|^SP/ || $x =~ /_YGOB_|^SP/;
 
-    die("$x,$y") unless $x && $y;
+    __PACKAGE__->throw("$x,$y") unless $x && $y;
     my @x = _decompose_gene_name($x);
     my @y = _decompose_gene_name($y);
 
-    die("$x,$y,$x[0],$y[0]") unless $x[0] && $x[0] eq $y[0];
+    __PACKAGE__->throw("$x,$y,$x[0],$y[0]") unless $x[0] && $x[0] eq $y[0];
     return $INFINITY unless $x[1] eq $y[1];
     return 20 unless $x[2] && $y[2]; # HML / HMR / MAT -- this is a sorry tale... 
 
