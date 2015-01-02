@@ -596,6 +596,7 @@ sub genbank_coords {
 
     $self->throw unless $args->{'-mode'} eq 'start' || $args->{'-mode'} eq 'stop';
     $self->throw unless $args->{'-relative'} == 1 || $args->{'-relative'} == 0;
+    $self->throw if $args->{'-set'} && ! $args->{'-relative'};
 
     my $method = $args->{'-mode'};
     my @args = ( '-R' => $args->{'-relative'} );
@@ -608,6 +609,12 @@ sub genbank_coords {
     # IFF R==0 : start = 0, stop = 1
     # IFF R==1 : strand==1 --> as above, strand==-1 --> invert 
     
+    # we always want the realtive start in postiion 0 
+    # we always want the relative stop in position 1 
+    # when setting this means: 
+    # +ve : [low, high]
+    # -ve : [high, low]
+        
     my $pos;
     if ( $args->{'-relative'} == 1 && $self->up->strand == -1) {
 	$pos = ( $args->{'-mode'} eq 'start' ? 1 : 0);
