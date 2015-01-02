@@ -1207,8 +1207,7 @@ sub _validate_overlapping_features {
 	    if ( $args->{'-verbose'} >= 2 ) {
 		map { $_->output(-prepend => ['CODON'], -fh => $fh, -debug=>1, -og =>1) } @{$cl}; 
 		$best->output(-prepend => ['BEST'], -fh => $fh, -debug=>1, -og =>1 );
-	    }
-	    
+	    }	    
 	    
 	    # manage orthogroups 
 
@@ -1251,8 +1250,7 @@ sub _validate_overlapping_features {
     my $clx;
     foreach my $cl ( grep { $#{$_} >0 } values %{$clref} ) {
 	if ( $args->{'-verbose'} >= 2 ) {
-	    map { $_->output( -fh => $fh, 
-			      -prepend => ['OLAP_'.(++$clx), $self->_method, __LINE__] ) } @{$cl}; 
+	    map { $_->output( -fh => $fh, -debug => 1 ) } @{$cl}; 
 	}
 	
 	$self->merge(
@@ -1261,7 +1259,7 @@ sub _validate_overlapping_features {
 	    -verbose => $args->{'-verbose'}
 	    );
     }
-
+    
     $self->index;
     return $self;
 }
@@ -1294,7 +1292,8 @@ sub _genbank_gap_overlaps {
 	  if ( $args->{'-verbose'} )  {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
 	      map { $_->output(
-			-prepend => [$self->_method, __LINE__, $_->_top_tail], 
+			-debug => 1, 
+			-prepend => [$_->_top_tail], 
 			-fh => $fh, -recurse => 1
 			) } ($gap,$nei); # gap
 	      #$nei->glyph( -print => 'SGD', -tag => 'pre'.++$rando );
@@ -1353,14 +1352,13 @@ sub _genbank_gap_overlaps {
 	      $self->throw("Gap encompasses feature");
 	      
 	  } else { 
-	      $path='internal';
-	      
-	      # complete overlap 
+	      $path='internal'; # complete overlap of gap in coding 
+
+	      # eliminate all Ns from coding gene 
 
 	      $nei->excise_gaps( -override => 1 ); # ugly hardcode but OK 
 	      
-	      #map { $_->output(-prepend => [$self->_method, __LINE__], 
-	      #-fh => $fh, -append => [$_->history.'']) } ($gap,$nei);
+	      # colllect all the exons on either side of the gap 
 	      
 	      my @left = grep { $_->stop <= $gap->start } $nei->stream;
 	      my @right = grep { $_->start >= $gap->stop } $nei->stream;
@@ -1377,7 +1375,7 @@ sub _genbank_gap_overlaps {
 	      my ($new) = $nei->fission( -exons => [ ($left < $right ? @left : @right) ] );
 	      $self->index;
 	  }
-
+	  
 	  $path{ $path }++;
 	  $nei->history( $self->_method.':'.$path );
 
@@ -1390,8 +1388,8 @@ sub _genbank_gap_overlaps {
   }
 
     #print { $fh } '>', ( map { $_.":".($path{$_} || 0) } keys %path ); 
-
-    map { $_->output(-fh => $fh) and  $_->throw unless $_->translatable } grep { $_->coding } $self->stream;  
+    map { $_->output(-fh => $fh) and  $_->throw unless $_->translatable } 
+    grep { $_->coding } $self->stream;  
     
     $self->index;
     return $self;
