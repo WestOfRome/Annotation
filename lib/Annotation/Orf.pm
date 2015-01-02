@@ -47,10 +47,11 @@ my %AUTOMETH = (
     
     _CREATOR => {req => 0, def => undef},
     _DEBUG => {req => 0, def => undef},
-    _HISTORY => {req => 0, def => undef},
-
+    _HISTORY => {req => 0, def => []},
+    # Currently on the data hash
     _GENBANK_EXCLUDE => {req => 0, def => undef},
-    _GENBANK_MISC_FEAT => {req => 0, def => undef}
+    _GENBANK_MISC_FEAT => {req => 0, def => undef},
+    _GENBANK_SPLIT_GENE => {req => 0, def => undef}
     ); 
 
 sub AUTOLOAD {
@@ -86,7 +87,17 @@ sub DESTROY {
 
     $self->throw("Must call _dissolve_orthogroup first.") if $self->ogid;
 
-    # 3. Neighbours / Up / Down 
+    # 3. Genbank split genes 
+
+    while ( my $part = pop @{ $self->{'_GENBANK_SPLIT_GENE'} } ) {
+	for my $i ( 0..$#{$part->{'_GENBANK_SPLIT_GENE'}} ) {
+	    next unless $part->{'_GENBANK_SPLIT_GENE'}->[$i] eq $self;
+	    splice(@{$part->{'_GENBANK_SPLIT_GENE'}}, $i, 1);
+	    last;
+	}
+    }
+
+    # 4. Neighbours / Up / Down 
     
     return $self->SUPER::DESTROY;
 }
@@ -2959,8 +2970,6 @@ sub optimise {
     Merge two ORF objects into one. Return caller on success 
     and destroy other. Else return undef.
 
-    NB: -reference is not used. why?
-
     Rather than deal with how to integrate the existing models, 
     we generate a range of new models and choose the best one. 
     Since homology is invariably the basis for merging two
@@ -2978,9 +2987,12 @@ sub optimise {
 sub merge {
     my $self = shift;             
     my $args = {@_};
-    
-    #$args->{'-reference'} = 'SGD' unless exists $args->{'-reference'};   
 
+    ######################################### 
+    # Basic attributes 
+    ######################################### 
+    
+    #$args->{'-reference'} = 'SGD' unless exists $args->{'-reference'};
     my ($other,$ref) = ($args->{'-object'},$args->{'-reference'});
 
     # same type, same contig, same strand, neighbours (checked below)
@@ -2993,7 +3005,7 @@ sub merge {
     return undef unless my $hom = $self->homolog( -object => [$other] );
 
     ######################################### 
-    # basic QC 
+    # Basic QC 
     ######################################### 
 
     map { return $self unless $_->assign eq 'GAP' } $self->intervening(-object => $other);
@@ -3001,15 +3013,18 @@ sub merge {
     $self->warn("Two Ohnologs!", $other) and return undef if $ohtwo;
     my ($ortho, $two) = grep {defined} map { ($_->orthogroup)[0] || $_->ogid } ($self, $other); 
     $self->warn and return undef if $two;    # cannot handle two OGs in reference (or any) species
-    
-    # we want to compare a few possibilities 
+
+    ######################################### 
+    # Approaches 
+    ######################################### 
+
     # 1. just sticking two halves together and not thinking 
     # 2. take 2 parts and "optimise" 
-    # 3. repredict the whole region using exonerate 
+    # 3. repredict the whole region using exonerate  <<<<<<<<<<
     # 4. reannotate region using a lower intron threshold 
 
     ######################################### 
-    # Make a simple merged model 
+    # 1A. Make a simple merged model 
     ######################################### 
 
     # make a proxy merge: this can be really messed up. vorsicht! 
@@ -3023,7 +3038,7 @@ sub merge {
     map { $_->stop(-R => 1, -adjust => -3) if $_->length > 3  } $merge->stream; # remove STOP codons
     
     ######################################### 
-    # optimize around the merged model 
+    # 1B. Optimize around the merged model 
     ######################################### 
     
     $merge->update( -evaluate => 0 ); # call update on $merge 
@@ -3035,15 +3050,11 @@ sub merge {
 	); # can return  merge proposal 
     return undef unless $success && $success->translatable;
 
-    #########################################     
     # Compare to self
-    ######################################### 
-
     # my ($best,$delta) = $self->choose(-object => [$merge], -reference => $ref);
-    # not implemented. or desirable? 
 
     #########################################     
-    # Move exons from optimized temporary merged model to self 
+    # 1C. Move exons from optimized temporary merged model to self 
     #########################################     
     
     map { $self->remove(-object => $_, -warn => 0); $_->DESTROY; } $self->stream;
@@ -3052,24 +3063,33 @@ sub merge {
     $merge->DESTROY;
 
     #########################################     
-    # Combine ohnologs, orthologs etc 
-    #########################################     
-
-    $self->integrate( -object => $other, -index => $args->{'-index'} );
-    # $self->data('EXTRA' => join(';', (grep {defined} $self->data('EXTRA'),$other->data('EXTRA')))  );
-    $other->DESTROY;
-
-    #########################################     
-    # 
+    # 2. Fix datahash and update inferences 
     #########################################     
 
     $self->update();
-    $self->_creator( (caller(0))[3] );
-    #$self->output(-creator => 1);
+    $self->evaluate();
 
     #########################################     
-    # 
+    # 3. Combine ohnologs, orthologs etc 
     #########################################     
+
+    $self->integrate( -object => $other, -index => $args->{'-index'} );
+
+    #########################################     
+    # 4. Manage other attributes 
+    #########################################     
+
+    $self->_creator( (caller(0))[3] );
+    # _HISTORY?
+    # _DEBUG? 
+    # _GENBANK? 
+
+    #########################################     
+    # Clean up and move on 
+    #########################################     
+
+    $self->output(-creator => 1) if $args->{'-verbose'};
+    $other->DESTROY;
 
     return $self;
 }
@@ -3156,7 +3176,7 @@ sub fission {
     my $fh = \*STDERR;
 
     #############################
-    # 
+    # 1. Sequence structure 
     #############################
 
     # make new shell object 
@@ -3182,23 +3202,45 @@ sub fission {
     $right->exons( -query => 'first' )->start( -R => 1, -adjust => +1 ) until $right->length%3==0;
      
     map { $self->throw unless $_->translatable } ($left,$right);
+
+    #############################
+    # 2. Data hash, ohnologs and other annotations 
+    #############################
     
-    # ensure it has a meaningful data hash. 
+    map { $_->update() } ($self, $new); # or should we be copying over?
+
+    $new->family( -set => $self->family ) if $self->family;
+
+    $new->_description( $self->description ) if $self->description;
+
     # by default, all the more complex annotations (OG, ohnologs etc stay on self). 
+
+    #############################
+    # 3. Meta attributes 
+    #############################
+
+    $new->_creator( $self->_creator() );
+    map { $new->history( $_ ) } $self->history;
+    map { $_->history( $self->_method ) } ($self, $new);
+    # _DEBUG leave it on self 
+
+    #############################
+    # 4. _GENBANK_* attributes 
+    #############################
     
-    $new->update();
+    map { $new->genbank_split_gene($_) } $self->genbank_split_gene();
+    $new->genbank_split_gene($self);
+    $self->genbank_split_gene($new);
     
+    #############################
     # Pretty, pretty 
- 
+     #############################
+
     if ( $args->{'-verbose'} ) {
 	$self->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
 	$new->output( -fh => $fh, -prepend => [$self->_method, __LINE__] );
     }   
     
-    #############################
-    # 
-    #############################
-
     return $new;
 }
 
@@ -7435,7 +7477,8 @@ sub genbank_tbl {
 
     $args->{'-recurse'}=1 unless exists $args->{'-recurse'};
     $args->{'-verbose'}=1 unless exists $args->{'-verbose'};
-
+    $args->{'-reference'}=0 unless exists $args->{'-reference'};
+    
     $self->throw unless exists $args->{'-fh'};
     my $fh = $args->{'-fh'};
     
@@ -7453,55 +7496,59 @@ sub genbank_tbl {
 	) if $args->{'-verbose'}; 
 
     ##################################################################
-    # Map to genbank space and exclude certain features 
+    # 0. Map annotation into genbank space. Exclude features as needed.
     ##################################################################
 
     $self->evaluate( -force => 1);
     my ($asn,$asn_sub) = $self->genbank_feature_key;
     return undef unless $asn;
-    
-    # For CDS features, need to figure out whether it is well strucutred 
-    # and how we will handle 
+
+    # For CDS features, need to figure out whether it is well strucutred. 
 
     my @exons = $self->stream;
     $self->structure();
+    
     my $true_cds=0;
     if ( $asn eq 'CDS') {
 	$true_cds = ($#exons == 0 || $self->data('INTRONS') == $#exons ? 1 : 0);
     }
     
     ##################################################################
-    # Gene features 
+    # 1. Annotate gene range. Most elements of biological interest except repeats.   
     ##################################################################
-
+    
     # We provide the basic minimum info as recommended here: 
     # http://www.ncbi.nlm.nih.gov/genbank/eukaryotic_genome_submission/#prepare_table
 
-    my $gbk_start = $self->exons( -query => ($self->strand == -1 ? 'last' : 'first' ) )
-	->genbank_coords(-R => 0, -mode => 'start');
-    my $gbk_stop = $self->exons( -query => ($self->strand == -1 ? 'first' : 'last' ) )
-	->genbank_coords(-R => 0, -mode => 'stop');
-    
+    my $gbk_start = 
+	$self->exons( -query => 'first' )->genbank_coords( -R => 1, -mode => 'start') ||
+	($self->strand == -1 ? $self->stop : $self->start );
+    my $gbk_stop = 
+	$self->exons( -query => 'last' )->genbank_coords( -R => 1, -mode => 'stop') ||
+	($self->strand == -1 ? $self->start : $self->stop );
+    $self->throw( -output => 1 ) unless $gbk_start && $gbk_stop;
+
     unless ( $asn =~ /misc_feature|assembly_gap|mobile_element|undef|LTR/ ) {
-	print {$fh} # no UTR info so list as partial 
-	($asn eq 'tRNA' ? '' : '<').$gbk_start, 
-	($asn eq 'tRNA' ? '' : '>').$gbk_stop, 'gene'; 
+	print {$fh} 
+	( $true_cds ? '<' : '' ).$gbk_start,        # for CDS no UTR info --> list as partial 
+	( $true_cds ? '>' : '' ).$gbk_stop, 'gene'; # UTR not relevant for RNAs or others 
 	#print {$fh} @bump, 'gene', 'TUB2'; # we do not have access to this information 
 	print {$fh} @bump, 'locus_tag', $self->locus_tag;
     }
-
+    
     ##################################################################
-    # Exon / segment coordinates 
+    # 2. Main: Annotate feature coordinates. Exons / segment as appropriate. 
     ##################################################################
 
-    # Over-ride artificial reading frame disruptions (Genbank does not recognize). 
+    # Genbank does not handle disrupted / incomplete reading frames. 
     # We just take a range and call it a pseudo.
 
-    if ( ($asn eq 'CDS' && ! $true_cds) || $asn eq 'misc_feature' ) {
+    if ( ($asn eq 'CDS' && ! $true_cds) ||              # Interrupted reading frames 
+	 ($asn eq 'misc_feature' && $self->coding) ) {  # Gene fragments 
 	my $fake = ref($self)->new
 	    (
-	     START => $gbk_start || $self->start,
-	     STOP => $gbk_stop || $self->stop,
+	     START => ($self->strand == -1 ? $gbk_stop : $gbk_start),
+	     STOP => ($self->strand == -1 ? $gbk_start : $gbk_stop),
 	     STRAND => $self->strand,
 	     UP => $self->up
 	    );
@@ -7509,14 +7556,18 @@ sub genbank_tbl {
 	@exons=($fake->down);
     }
     
-    # Print exons and mark up incomplete reading frames
-    
+    # Iteratei through all exons and print. 
+    # All features handled here: Incl. assembly gaps etc. 
+    # Mark up incomplete reading frames as we go. 
+
     my @mRNA;
     foreach my $ex ( @exons ) {
 	my $start = $ex->genbank_coords( -mode => 'start', -R => 1 ) || 
 	    $ex->start( -R => 1); #$self->strand == -1 ? $ex->stop : $ex->start;
 	my $stop = $ex->genbank_coords( -mode => 'stop', -R => 1 ) || 
 	    $ex->stop( -R => 1); #$self->strand == -1 ? $ex->start : $ex->stop;
+
+	# special treatment for coding regions 
 
 	my ($mrna_start,$mrna_stop)=($start,$stop);
 	if ( $asn eq 'CDS' && $true_cds ) {
@@ -7531,68 +7582,60 @@ sub genbank_tbl {
 	    push @mRNA, [$mrna_start, $mrna_stop, ( $ex eq $exons[0] ? 'mRNA' : undef), undef, undef];
 	}
 
-	print {$fh} $start, $stop,  ( $ex eq $exons[0] ? $asn : undef), undef, undef;
+	# This is the core output for most features ##################
+	print {$fh} $start, $stop,  ( $ex eq $exons[0] ? $asn : undef), undef, undef
+	    unless $asn eq 'CDS' && ! $true_cds; # use gene annotation only 
+	##############################################################
     }
     
     ##################################################################
-    # standard components 
+    # 3. Generic components 
     ##################################################################
 
     print {$fh} @bump, 'citation', $args->{'-reference'} if $args->{'-reference'};
     print {$fh} @bump, 'inference', $self->genbank_evidence( -existence => 0, -rich => 1 ) if 
 	 $asn ne 'assembly_gap' && $self->genbank_evidence;
+    print {$fh} @bump, 'note', 'Fragment: '.
+	join(' / ', map { $_->locus_tag } $self->genbank_split_gene) if $self->genbank_split_gene;
 
     ##################################################################
-    # feature specific components 
+    # 4. Feature specific components 
     ##################################################################
 
     if ( $asn eq 'CDS' ) {
 	
 	# types of CDS .... 
 	
-	print {$fh} @bump, 'codon_start', $self->fex->frame+1;
-	if ( $self->pseudogene ) { # method does not exist yet ...
-	    print {$fh} @bump, 'pseudogene', 'unitary';	 # unknown
+	if ( ! $true_cds ) { # pseudogene or assembly/sequencing problem 
 	    
-	} elsif ( $self->data('STOP') || $newpseudo ) {
-	    # use pseudo if not an actual pseudogene but gene is disrupted by sequencing error etc 
-	    print {$fh} @bump, 'pseudo', undef;
+	    # pseudogenes method does not exist yet so all will go to pseudo
+	    
+	    print {$fh} @bump, ( $self->pseudogene ? ('pseudogene', 'unitary') : ('pseudo', undef) );
 	    print {$fh} @bump, 'note', ( scalar($self->stream) - $self->data('INTRONS') -1 )
 		.' reading frame interruptions of undetermined origin';
 	    
-	} elsif ($true_cds)  {
-
-	    my @product = ('product', 'hypothetical protein');
-	    my @pid = ('protein_id', $self->protein_id);
-	    my @tid = ('transcript_id', $self->transcript_id);	    
+	} else {    
+	    my @product = (@bump, 'product', 'hypothetical protein');
+	    my @pid = (@bump, 'protein_id', $self->protein_id);
+	    my @tid = (@bump, 'transcript_id', $self->transcript_id);	    
 	    foreach my $row ( \@product, \@pid, \@tid ) {
 		print {$fh} @{$row};
 		push @mRNA, $row;
 	    }
-
-	    # homology 
-
-	    print {$fh} @bump, 'note', 'homology to '.$self->gene if 
-		$self->gene && $self->evalue('gene') <= 1e-5;
-	    print {$fh} @bump, 'note', 'homology to '.$self->ygob if
-		$self->ygob && $self->evalue('ygob') <= 1e-5;
 	    
-	    # function. Update to standard : 
-	    # http://www.ncbi.nlm.nih.gov/genbank/eukaryotic_genome_submission_annotation#GOterms
-
-	    if ( 1==0 ) {
-		my @func = join(';', grep {!/molecular_function/} $self->ontology( -attribute => 'F'));
-		print {$fh} @bump, 'function', @func, 
-		'[general function prediction based on homology to S. cerevisiae]'  if $func[0];	
-	    }
-
 	    # translation 
 
-	    print {$fh} @bump, 'translation', $self->sequence( -molecule => 'aa' );
+	    print {$fh} @bump, 'codon_start', $self->fex->frame+1;
 	    print {$fh} @bump, 'transl_table', 1;
+	    print {$fh} @bump, 'translation', $self->sequence( -molecule => 'aa' );
 
-	} else { $self->throw; }
-
+	    # function. Update to standard : 
+	    # http://www.ncbi.nlm.nih.gov/genbank/eukaryotic_genome_submission_annotation#GOterms
+	    # my @func = join(';', grep {!/molecular_function/} $self->ontology( -attribute => 'F'));
+	    # print {$fh} @bump, 'function', @func, 
+	    # '[general function prediction based on homology to S. cerevisiae]'  if $func[0];
+	}
+	
     } elsif ( $asn eq 'assembly_gap' ) {
 
 	print {$fh} @bump, 'estimated_length','unknown';
@@ -7610,13 +7653,12 @@ sub genbank_tbl {
 	} else { $prod = $self->gene; }
 
 	print {$fh} @bump, 'product', $prod;
-	print {$fh} @bump, 'pseudogene', 'unitary' if $self->gene =~ /pseudo/i;
+	print {$fh} @bump, 'pseudo' if $self->gene =~ /pseudo/i;
 	
-    } elsif ( $asn eq 'misc_feature' ) {
-	
-	print {$fh} @bump, 'function', $self->description if $self->description;
+    } elsif ( $asn eq 'misc_feature' ) {	
 
 	if ( $self->assign =~ /FEATURE/ ) {
+	    print {$fh} @bump, 'note', $self->description if $self->description;
 	    print {$fh} @bump, 'note', 'Centromere location identified from synteny and sequence';
 
 	} elsif ($self->genbank_misc_feature ) {
@@ -7756,10 +7798,10 @@ sub genbank_exclude {
     my $self = shift;
     my $val = shift if @_;
     my $key = '_GENBANK_EXCLUDE';
-    if ( $val ) {
-	$self->data( $key => $val );
-    }
-    return $self->data( $key );
+
+    $self->{$key} = $val if defined $val;
+
+    return $self->{$key};
 }
 
 =head2 genbank_misc_feature
@@ -7769,10 +7811,23 @@ sub genbank_misc_feature {
     my $self = shift;
     my $val = shift if @_;
     my $key = '_GENBANK_MISC_FEAT';
-    if ( $val ) {
-	$self->data( $key => $val );
-    }
-    return $self->data( $key );
+  
+    $self->{$key} = $val if defined $val;
+
+    return $self->{$key};
+}
+
+=head2 genbank_split_gene
+=cut 
+
+sub genbank_split_gene {
+    my $self = shift;
+    my $val = shift if @_;
+    my $key = '_GENBANK_SPLIT_GENE';
+
+    push @{$self->{$key}}, $val if defined $val;
+    
+    return @{$self->{$key}};
 }
 
 =head2 locus_tag 
@@ -7819,7 +7874,7 @@ sub locus_tag {
 sub protein_id {
     my $self = shift;
     $self->throw unless $self->coding( -pseudo => 1 );    
-    return 'gnl|ScannellUnaffiliated|'.$self->locus_id;
+    return 'gnl|ScannellUnaffiliated|'.$self->locus_tag;
 }
 
 =head2 transcript_id
