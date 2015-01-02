@@ -4,26 +4,27 @@ use Exporter;
 @ISA = qw(Exporter);
 
 @EXPORT = qw(
-		%FEATURES	
-		%HOMOLOGY	
-%SPECIES
-		%EVIDENCE
-@EVIDENCE
-@REGEX
-	    %CODONS
-	    %CODONS_CANDIDA
-	    %DNA
-	    $TRIPLET
-$START_CODON
-$STOP_CODON
-	    $INFINITY
-$NONZERO
-$AUTHOR
-$YEAR
-	    $TIME
-		$VERSION
-$eutils
-		);
+	     %FEATURES	
+	     %HOMOLOGY	
+             %SPECIES
+	     %EVIDENCE
+             @EVIDENCE
+             @REGEX
+	     %CODONS
+             %AMINO_ACIDS
+	     %CODONS_CANDIDA
+	     %DNA
+	     $TRIPLET
+             $START_CODON
+             $STOP_CODON
+	     $INFINITY
+             $NONZERO
+             $AUTHOR
+             $YEAR
+	     $TIME
+	     $VERSION
+             $eutils
+	     );
 
 #########################################
 #########################################
@@ -36,29 +37,54 @@ $VERSION = 2.3;
 $TIME = time;
 
 %CODONS = (
-		NNN => 'X',
-	   ###################### T ######################
-	   TTT => "F", TTC => "F", TTA => "L", TTG => "L",      # LF   # T
-	   TCT => "S", TCC => "S", TCA => "S", TCG => "S", TCN => "S", # C
-	   TAT => "Y", TAC => "Y", TAA => "*", TAG => "*",      # Y*   # A
-	   TGT => "C", TGC => "C", TGA => "*", TGG => "W",      # CW   # G
-	   ###################### C ######################
-	   CTT => "L", CTC => "L", CTA => "L", CTG => "L", CTN => "L", # T
-	   CCT => "P", CCC => "P", CCA => "P", CCG => "P", CCN => "P", # C
-	   CAT => "H", CAC => "H", CAA => "Q", CAG => "Q",      # HQ   # A
-	   CGT => "R", CGC => "R", CGA => "R", CGG => "R", CGN => "R", # G
-	   ###################### A ######################
-	   ATT => "I", ATC => "I", ATA => "I", ATG => "M",      # IM   # T
-	   ACT => "T", ACC => "T", ACA => "T", ACG => "T", ACN => "T", # C
-	   AAT => "N", AAC => "N", AAA => "K", AAG => "K",      # NK   # A
-	   AGT => "S", AGC => "S", AGA => "R", AGG => "R",      # SR   # G
-	   ###################### G ######################
-	   GTT => "V", GTC => "V", GTA => "V", GTG => "V", GTN => "V", # T
-	   GCT => "A", GCC => "A", GCA => "A", GCG => "A", GCN => "A", # C
-	   GAT => "D", GAC => "D", GAA => "E", GAG => "E",      # DE   # A
-	   GGT => "G", GGC => "G", GGA => "G", GGG => "G", GGN => "G"  # G
-	   ### T ######### C ######### A ######### G #####
-	   );
+    NNN => 'X',
+    ###################### T ######################
+    TTT => "F", TTC => "F", TTA => "L", TTG => "L",      # LF   # T
+    TCT => "S", TCC => "S", TCA => "S", TCG => "S", TCN => "S", # C
+    TAT => "Y", TAC => "Y", TAA => "*", TAG => "*",      # Y*   # A
+    TGT => "C", TGC => "C", TGA => "*", TGG => "W",      # CW   # G
+    ###################### C ######################
+    CTT => "L", CTC => "L", CTA => "L", CTG => "L", CTN => "L", # T
+    CCT => "P", CCC => "P", CCA => "P", CCG => "P", CCN => "P", # C
+    CAT => "H", CAC => "H", CAA => "Q", CAG => "Q",      # HQ   # A
+    CGT => "R", CGC => "R", CGA => "R", CGG => "R", CGN => "R", # G
+    ###################### A ######################
+    ATT => "I", ATC => "I", ATA => "I", ATG => "M",      # IM   # T
+    ACT => "T", ACC => "T", ACA => "T", ACG => "T", ACN => "T", # C
+    AAT => "N", AAC => "N", AAA => "K", AAG => "K",      # NK   # A
+    AGT => "S", AGC => "S", AGA => "R", AGG => "R",      # SR   # G
+    ###################### G ######################
+    GTT => "V", GTC => "V", GTA => "V", GTG => "V", GTN => "V", # T
+    GCT => "A", GCC => "A", GCA => "A", GCG => "A", GCN => "A", # C
+    GAT => "D", GAC => "D", GAA => "E", GAG => "E",      # DE   # A
+    GGT => "G", GGC => "G", GGA => "G", GGG => "G", GGN => "G"  # G
+    ### T ######### C ######### A ######### G #####
+    );
+
+%AMINO_ACIDS = (
+    ALA=>'A',
+    TYR=>'Y',
+    MET=>'M',
+    LEU=>'L',
+    CYS=>'C',
+    GLY=>'G',
+    ARG=>'R',
+    ASN=>'N',
+    ASP=>'D',
+    GLN=>'Q',
+    GLU=>'E',
+    HIS=>'H',
+    TRP=>'W',
+    LYS=>'K',
+    PHE=>'F',
+    PRO=>'P',
+    SER=>'S',
+    THR=>'T',
+    ILE=>'I',
+    VAL=>'V'
+    );
+
+map { $AMINO_ACIDS{$_} = $_ } keys %AMINO_ACIDS;
 
 %CODONS_CANDIDA = %CODONS;
 $CODONS_CANDIDA{'CTG'} = 'S';
