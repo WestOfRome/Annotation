@@ -8205,7 +8205,7 @@ sub genbank_tbl {
 
     foreach my $scaf ( sort {$a->id <=> $b->id} $self->stream ) {
 	next unless !  $args->{'-debug'} || $scaf->id == $args->{'-debug'};
-
+	
 	my $root = $self->organism.$scaf->id;	
 	open(my $fh, '>'.$root.'.tbl') || die($root.'.tbl');
 	$args->{'-fh'} = $fh;
@@ -8217,8 +8217,6 @@ sub genbank_tbl {
 	    $scaf->fasta( %{$args} );
 	}
     }
-    
-    exit;
     
     return 1;
 }
@@ -8241,34 +8239,35 @@ sub _make_genbank_compatible {
     $self->throw unless my $index = $args->{'-index'};
 
     my $fh = \*STDERR;
+    my $verb = 0;
     
-    foreach my $scaf ( $self->stream ) {
+    foreach my $scaf ( sort {$a->id <=> $b->id} $self->stream ) {
 	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
-	
-	#goto JUMP if $args->{'-debug'};	
+
 	#print {$fh} $scaf->id;
 	#next if $scaf->id > 16;
 
 	# A. gross asssembly issues ....
 
-	$scaf->_validate_assembly_gaps( -verbose => 0 );
+	$scaf->_validate_assembly_gaps( -verbose => $verb );
 
 	# B. relationships among features 
 
-	$scaf->_validate_overlapping_features(-index => $index, -verbose => 0);
+	$scaf->_validate_overlapping_features(-index => $index, -verbose => $verb );
 
-	$scaf->merge( -index => $index, -verbose => 0 );
+	$scaf->merge( -index => $index, -verbose =>  $verb  );
 
 	# C. apply rules for gaps 
 	
-	$scaf->_genbank_gap_overlaps(-index => $index, -verbose => 0 ); #  $args->{'-debug'}
+	$scaf->_genbank_gap_overlaps(-index => $index, -verbose => $verb  ); 
 	
 	# D. individual gene details 
 	
-	$scaf->_genbank_gene_terminii(-index => $index, -verbose => 0 ); #  $args->{'-debug'}		
+	$scaf->_genbank_gene_terminii(-index => $index, -verbose => $verb  );
+
 	# E. toss rubbish genes ... 
 	
-	$scaf->_genbank_quality_filter(-index => $index, -verbose => 0); # $args->{'-debug'} );
+	$scaf->_genbank_quality_filter(-index => $index, -verbose => $verb ); 
     }
     
     return $self;
