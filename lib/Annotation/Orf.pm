@@ -3202,7 +3202,7 @@ sub fission {
     $right->exons( -query => 'first' )->start( -R => 1, -adjust => +1 ) until $right->length%3==0;
      
     map { $self->throw unless $_->translatable } ($left,$right);
-
+    
     #############################
     # 2. Data hash, ohnologs and other annotations 
     #############################
@@ -4125,8 +4125,8 @@ sub coding {
     $args->{'-pseudo'}=0 unless exists $args->{'-pseudo'};
 
     return 1 if $self->evidence =~ /HCNF/;
-    return 1 if $self->ygob eq 'Anc_1.380' && $self->hypergob >=5; # HAP1 exception. this is crazy...
-
+    return 1 if $self->ygob eq 'Anc_1.380' && $self->evalue('ygob') <= 1e-10; # HAP1 exception. this is crazy...
+    
     my @non=qw(FEATURE GAP TELOMERE CENTROMERE RNA REPEAT);
     push @non, 'PSEUDO' unless $args->{'-pseudo'};
     my $regex = join('|', @non);
@@ -7644,9 +7644,11 @@ sub genbank_tbl {
 	
     } elsif ( $asn eq 'assembly_gap' ) {
 
-	print {$fh} @bump, 'estimated_length','unknown';
+	print {$fh} @bump, 'estimated_length', 
+	($self->length == 100 ? 'unknown' : $self->length);
 	print {$fh} @bump, 'gap_type','within_scaffold';
-	print {$fh} @bump, 'linkage_evidence','align genus'; # unspecified 
+	print {$fh} @bump, 'linkage_evidence', 
+	($self->length == 100 ? 'align genus' : 'paired-ends'); # unspecified 
 
     } elsif ( $asn eq 'tRNA' ) {
 	
@@ -7654,7 +7656,7 @@ sub genbank_tbl {
 	if ( $self->gene =~ /pseudo/i ) {
 	    my ($ps,$cdn) = split/:/, $self->gene;
 	    my $one = $CODONS{$cdn};
-	    my $three = $one; # TO BE COMPLETED
+	    my $three = $AMINO_ACIDS{$one};
 	    $prod = $three.":".$cdn;
 	} else { $prod = $self->gene; }
 
