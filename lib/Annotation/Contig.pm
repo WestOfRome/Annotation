@@ -319,7 +319,7 @@ sub contains {
 =head2 merge(-gap => 500, -tandem => .5)
 
     Walk along contig and merge neighbouring objetcs which look like 
-    parts of same gene. 
+    parts of same gene. Designed for coding genes only. 
     
     Do not merge genes if distnace >= gap.
     Treat as tandems if >= tandem of seqs align.
@@ -358,6 +358,7 @@ sub merge {
 	    -cluster => $args->{'-cluster'},   # by homology ?
 	    -param => $args->{'-param'},       # how much homology. be lax. we recehck later.   
 	    -distance => $args->{'-distance'}, # max distance (features except gaps)
+	    -strand => 1,	    
 	    -frame => 0 # do not enforce frame criterion 
 	)
 	);
@@ -1278,17 +1279,17 @@ sub _genbank_gap_overlaps {
     my %path;
   GAP: foreach my $gap ( grep { $_->assign eq 'GAP' } $self->stream ) {
       my @nei =  $gap->context( -distance => 10, -all => 1, -trna => 0, -feature => 0, -self => -1 );
-      
+
       foreach my $nei ( @nei ) {
 	  next GAP if $gap->genbank_exclude;
 	  next if $nei->genbank_exclude;
-	  
+
 	  ################################
 	  # identify overlaps we need to deal with  
 	  ################################
 
 	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
-	  
+
 	  if ( $args->{'-verbose'} )  {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
 	      map { $_->output(
@@ -1386,11 +1387,11 @@ sub _genbank_gap_overlaps {
 	      ) if $args->{'-verbose'};
       }
   }
+    $self->index;
 
     #print { $fh } '>', ( map { $_.":".($path{$_} || 0) } keys %path ); 
-    map { $_->output(-fh => $fh) and  $_->throw unless $_->translatable } 
-    grep { $_->coding } $self->stream;  
-    
+    map { $_->output(-fh => $fh) and  $_->throw unless $_->translatable } grep { $_->coding } $self->stream;
+
     $self->index;
     return $self;
 }
