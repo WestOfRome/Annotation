@@ -4031,6 +4031,21 @@ sub linked {
     return $self;
 }
 
+=head2 coords() 
+
+    Return exon start and stop coordinates as an 
+    array of array references: ( [start, stop], [start, stop] )
+
+    Everythign is realitivized so the exons are in 5' -> 3'order
+    and the start > stop for the -ve strand features. 
+
+=cut 
+
+sub coords {
+    my $self = shift;
+    return map { [$_->start(-R => 1), $_->stop(-R => 1)] } $self->stream;
+}
+
 #########################################
 #########################################
 
