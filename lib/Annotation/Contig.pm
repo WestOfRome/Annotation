@@ -1202,7 +1202,7 @@ sub _validate_overlapping_features {
 	    # choose best seq...
 	    
 	    my ($best,$scr) = $pop->choose( -object => \@others, -verbose => $args->{'-verbose'} );
-
+	    
 	    # ouptut 
 
 	    if ( $args->{'-verbose'} >= 2 ) {
@@ -1217,10 +1217,31 @@ sub _validate_overlapping_features {
 
 	    if ( $other_og ) {
 		if  ( $best->ogid ) {
-		    $self->throw unless my $og_king = shift @{$index->{ $other_og->ogid }};
-		    $og_king->_dissolve_orthogroup( -verbose => 1 );
+		    
+		    # 1. Both are in OGs
+		    
+		    foreach my $x ($best,$other_og) {
+			$self->throw unless my $ogk = shift @{$index->{ $x->ogid }};
+			if ( 1 || $args->{'-verbose'}) {
+			    map { $_->output(
+				      -fh => $fh, -debug=>1, -recurse => 0,
+				      -append => [$_->score('global'), 
+						  ($_->organism eq $x->organism ? '**' : '')], 
+				      -prepend => [ ($x eq $best ? 'KEEP' : 'KILL'), $_->ogid ]
+				      ) } ($ogk->_orthogroup);
+			}
+			$ogk->_dissolve_orthogroup( -verbose => 1 ) if $x eq $other_og;
+		    }
+		    
 		} elsif ( ! $best->ogid ) {
-		    $best->integrate( -object => $other_og, @_ );
+
+		    # 2. $best is not in an OG. Either use other_og or port over OG relationships
+		    
+		    if ( ! $scr ) { # $scr=0 indicates a random choice by choose. just swap.  
+			$best = $other_og;
+		    } else {
+			$best->integrate( -object => $other_og, @_ );
+		    }
 		}
 	    }
 
@@ -1776,7 +1797,7 @@ sub _genbank_quality_filter {
     # print summary 
     #################################
     
-    print { $fh } '>'.$self->id, 
+    print { $fh } '>'.$self->organism.$self->id, 
     ( map { $_.":".($path{$_} || 0) } qw(delete og-delete hide hide-small) ) ;    
     
     $self->index;
