@@ -3817,6 +3817,7 @@ sub choose {
     $args->{'-object'} = [$args->{'-object'}] unless ref($args->{'-object'}) eq 'ARRAY';
     $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
     $args->{'-reference'} = 0 unless exists $args->{'-reference'};
+    $args->{'-strict'} = 1 unless exists $args->{'-strict'};
 
     ############################################
     # set up vars 
@@ -3828,6 +3829,7 @@ sub choose {
     my $key = 'global';
     my @all = ($self, @{$args->{'-object'}}); # useful... 
     my @ref=();
+    my $fh = *STDERR;
 
     ############################################
     # basic QC 
@@ -3836,7 +3838,8 @@ sub choose {
     foreach my $obj ( @{$args->{'-object'}} ) {
 	$self->throw unless $self->isa(ref($obj));
 	$self->throw if $self eq $obj;
-	$self->throw unless $self->commoncodon(-object => $obj);
+	$obj->output(-fh => $fh) and $self->throw( -output => 1) 
+	    unless ( (! $args->{'-strict'}) || $self->commoncodon(-object => $obj));
     }
     map { $_->evaluate; $self->throw if $_->rank < -1 } @all;
     
