@@ -1391,8 +1391,9 @@ sub _genbank_gap_overlaps {
 	      my @left = grep { $_->stop <= $gap->start } $nei->stream;
 	      my @right = grep { $_->start >= $gap->stop } $nei->stream;
 	      #print { STDERR } $self->_method, __LINE__, @left+0, @right+0, $nei->exons;
-	      $self->throw unless @left+@right == scalar($nei->stream);
-	      $self->throw unless scalar(keys %{{ map { $_ => 1 } (@left,@right) }}) == scalar($nei->stream);
+	      $nei->throw(-output => 1) unless @left+@right == scalar($nei->stream);
+	      $nei->throw(-output => 1) unless 
+		  scalar(keys %{{ map { $_ => 1 } (@left,@right) }}) == scalar($nei->stream);
 	      
 	      # the longer (presumably better supported) fragment keeps OG etc. 
 	      # the other exons become the $new ORF object. 
