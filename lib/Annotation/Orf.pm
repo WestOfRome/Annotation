@@ -3501,6 +3501,7 @@ sub excise_gaps {
 	    
 	    my $post_adj = $gap_offset + $gap_len + ($gap_len%3==0 ? 0 : 3 - ($gap_len%3) );
 	    $ex->start( -R =>1, -adjust => +$post_adj );
+	    $ex->start( -R =>1, -adjust => +$TRIPLET ) unless $self->translatable; # STOP @ junction
 	    $self->index; # needs to happen _before_ calling start(-adjust => +1)
 	    #$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
 	    $ex->intron( -direction => 'right', -new => $INFINITY );
@@ -3799,7 +3800,7 @@ sub _eliminate_frameshifts {
     (assuming protein coding genes with homology criterion met) but the 
     second return value (delta) may be undef, signifying a random choice. 
     
-    Return choice and delta to next model. All scores are on ->data('_TMP').
+    Return choice and delta to next model. All scores are on ->score('global').
     Alternatives are neither removed from contig nor destroyed. 
 
 =cut 
