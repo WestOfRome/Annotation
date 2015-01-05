@@ -3501,10 +3501,12 @@ sub excise_gaps {
 	    
 	    my $post_adj = $gap_offset + $gap_len + ($gap_len%3==0 ? 0 : 3 - ($gap_len%3) );
 	    $ex->start( -R =>1, -adjust => +$post_adj );
-	    $ex->start( -R =>1, -adjust => +$TRIPLET ) unless $self->translatable; # STOP @ junction
 	    $self->index; # needs to happen _before_ calling start(-adjust => +1)
 	    #$ex->start( -R =>1, -adjust => +1 ) until $self->length%3==0;
 	    $ex->intron( -direction => 'right', -new => $INFINITY );
+
+	    $new->stop( -R =>1, -adjust => -$TRIPLET ) until $self->translatable; # STOP @ junction
+	    #$ex->start( -R =>1, -adjust => +$TRIPLET ) unless $self->translatable; # STOP @ junction
 	}
 	$self->history( $self->_method.':'.$path );
     }
