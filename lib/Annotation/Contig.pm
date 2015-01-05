@@ -810,7 +810,8 @@ sub cluster {
     # 4. additional constraints :: off by default 
     $args->{'-distance'} = $INFINITY unless exists $args->{'-distance'};
     $args->{'-bases'} = $INFINITY unless exists $args->{'-bases'};
-    $args->{'-frame'} = 0 unless exists $args->{'-frame'};
+    $args->{'-frame'} = ($args->{'-cluster'} eq 'commoncodon' ? 1 : 0) unless exists $args->{'-frame'};
+
     # 5. additional constrains :: on by default 
     $args->{'-stranded'} = 1 unless exists $args->{'-stranded'};
     # 6. technical parameters  
@@ -929,8 +930,8 @@ sub cluster {
 
 	    # commoncodon is slow so we try avoid.. do last.
 
-	    next unless ! $args->{'-frame'} || $x->commoncodon($orf);
-	    
+	    next unless ( (! $args->{'-frame'}) || $x->commoncodon($orf) );
+
 	    ######################################
 	    # CONSTRAINT 3 : distance 	    
 	    ######################################
@@ -1195,16 +1196,20 @@ sub _validate_overlapping_features {
 	);
     
     foreach my $cl ( values %{$clref} ) {
-	my ($pop, @others) = @{ $cl };
-	
-	if ( @others) {
+	my ($pop, @others) = @{ $cl };       
 
+	if ( @others) {
+	    
 	    # choose best seq...
 	    
-	    my ($best,$scr) = $pop->choose( -object => \@others, -verbose => $args->{'-verbose'} );
-	    
-	    # ouptut 
+	    my ($best,$scr) = $pop->choose( 
+		-object => \@others, 
+		-verbose => $args->{'-verbose'},
+		-strict => 0
+		);
 
+	    # ouptut 
+	    
 	    if ( $args->{'-verbose'} >= 2 ) {
 		map { $_->output(-prepend => ['CODON'], -fh => $fh, -debug=>1, -og =>1) } @{$cl}; 
 		$best->output(-prepend => ['BEST'], -fh => $fh, -debug=>1, -og =>1 );
@@ -1222,7 +1227,7 @@ sub _validate_overlapping_features {
 		    
 		    foreach my $x ($best,$other_og) {
 			$self->throw unless my $ogk = shift @{$index->{ $x->ogid }};
-			if ( 1 || $args->{'-verbose'}) {
+			if ($args->{'-verbose'}) {
 			    map { $_->output(
 				      -fh => $fh, -debug=>1, -recurse => 0,
 				      -append => [$_->score('global'), 
@@ -1256,6 +1261,7 @@ sub _validate_overlapping_features {
 	}
     }
 
+    return $self;
     ################################
     # 2. Handle any other overlapping features 
     # Note: Overlaps not expressly forbidden 
