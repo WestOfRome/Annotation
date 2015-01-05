@@ -7754,6 +7754,27 @@ sub _guide_mode {
     return $self;
 }
 
+=head2 remember()
+
+    Store current gene name and sequence for every ORF object
+    so we can compare at a later stage. 
+
+=cut 
+
+sub remember {
+    my $self = shift;
+    my $args = { @_ };
+
+    foreach my $c ( $self->stream ) {
+	foreach my $o ( $c->stream ) {
+	    $o->data( '_REMEMBER_NAME' => $self->name );
+	    $o->data( '_REMEMBER_COORDS' => [$self->coords] );
+	    $o->data( '_REMEMBER_TIME' => $TIME );
+	}
+    }
+
+    return $self;
+}
 
 sub _allObjectStream {
     my $self = shift;
