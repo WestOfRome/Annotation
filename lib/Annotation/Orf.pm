@@ -3228,9 +3228,10 @@ sub fission {
     # 4. _GENBANK_* attributes 
     #############################
     
-    map { $new->genbank_split_gene($_) } $self->genbank_split_gene();
-    $new->genbank_split_gene($self);
-    $self->genbank_split_gene($new);
+    foreach my $split ( $self,$self->genbank_split_gene() ) { 
+	$split->genbank_split_gene( $new );
+	$new->genbank_split_gene( $split );
+    }
     
     #############################
     # Pretty, pretty 
