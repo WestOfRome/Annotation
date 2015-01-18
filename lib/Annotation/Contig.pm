@@ -1764,7 +1764,8 @@ sub _genbank_quality_filter {
 		$path='hide';
 
 		$orf->genbank_misc_feature( $self->_method );
-		
+		$orf->genbank_note('Could not find start codon');
+
 	    } elsif ( $orf->ogid ) { # break OGs -- no synteny anyway. 
 		$path='og-delete';
 		
