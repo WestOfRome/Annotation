@@ -7954,19 +7954,20 @@ sub transcript_id {
 # Simple REMEMBER Get/Set-ers 
 ###############################################
 
-=head2 remember( -arg => val )
+=head2 _remember( arg => val )
 =cut 
 
 sub _remember {
     my $self = shift;
     $self->throw unless @_ && $#_ == 1;
 
-    my $key = '_'.uc($self->_method).'_'.( map {uc($_); $_} map {s/\-//; $_} shift);
-    $self->throw unless $key =~ /NAME|COORDS|TIME/;
-
-    my $val = shift if @_;
-    $self->data( $key => $val ) if defined $val;
+    $self->throw unless my $keyX = shift;
+    my $key = (map {uc($_)} $self->_method)[0].'_'.( map {uc($_)} map {s/\-//; $_} ($keyX) )[0];
+    $self->throw($key) unless $key =~ /NAME|COORDS|TIME/;
     
+    $self->throw unless my $val = shift;
+    $self->data( $key => $val );
+
     return $self->data($key);
 }
 
@@ -7977,8 +7978,9 @@ sub remember {
     my $self = shift;
     $self->throw unless @_ && $#_ == 0;
 
-    my $key = '_'.uc($self->_method).'_'.( map {uc($_); $_} map {s/\-//; $_} shift);
-    $self->throw unless $key =~ /NAME|COORDS|TIME/;
+    $self->throw unless my $keyX = shift;
+    my $key = '_'.(map {uc($_)} $self->_method)[0].'_'.( map {uc($_)} map {s/\-//; $_} ($keyX) )[0];
+    $self->throw($key) unless $key =~ /NAME|COORDS|TIME/;
     
     return $self->data($key);
 }
