@@ -7768,9 +7768,9 @@ sub remember {
     foreach my $c ( $self->stream ) {
 	foreach my $o ( $c->stream ) {
 	    $o->throw() if  $o->remember( 'name' );
-	    $o->remember( 'name' => $self->name ); # can extract Chr
-	    $o->remember( 'coords' => [$self->coords] );
-	    $o->remember( 'time' => $TIME );
+	    $o->_remember( 'name' => $self->name ); # can extract Chr
+	    $o->_remember( 'coords' => $self->coords(-string => 1) );
+	    $o->_remember( 'time' => $TIME );
 	}
     }
 
