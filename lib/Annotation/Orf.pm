@@ -7687,6 +7687,7 @@ sub genbank_tbl {
 	
     } elsif ( $asn eq 'misc_feature' ) {	
 
+	print {$fh} @bump, 'note', $self->genbank_note if $self->genbank_note;
 	if ( $self->assign =~ /FEATURE/ ) {
 	    print {$fh} @bump, 'note', $self->description if $self->description;
 	    print {$fh} @bump, 'note', 'Centromere location identified from synteny and sequence';
@@ -7828,6 +7829,20 @@ sub genbank_exclude {
     my $self = shift;
     my $val = shift if @_;
     my $key = '_GENBANK_EXCLUDE';
+
+    $self->{$key} = $val if defined $val;
+
+    return $self->{$key};
+}
+
+
+=head2 genbank_note
+=cut
+
+sub genbank_note {
+    my $self = shift;
+    my $val = shift if @_;
+    my $key = '_GENBANK_NOTE';
 
     $self->{$key} = $val if defined $val;
 
