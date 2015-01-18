@@ -4032,9 +4032,9 @@ sub linked {
     return $self;
 }
 
-=head2 coords() 
+=head2 coords( -string => 0|1 ) 
 
-    Return exon start and stop coordinates as an 
+    Return exon start and stop coordinates as a string or an 
     array of array references: ( [start, stop], [start, stop] )
 
     Everythign is realitivized so the exons are in 5' -> 3'order
@@ -4044,7 +4044,13 @@ sub linked {
 
 sub coords {
     my $self = shift;
-    return map { [$_->start(-R => 1), $_->stop(-R => 1)] } $self->stream;
+    my $args = {@_};
+
+    if ( $args->{'-string'}==1 ) {
+	return join('|', (map { join(':',$_->start(-R => 1), $_->stop(-R => 1) ) } $self->stream) );    
+    } else {
+	return map { [$_->start(-R => 1), $_->stop(-R => 1)] } $self->stream;
+    }
 }
 
 #########################################
@@ -7948,17 +7954,31 @@ sub transcript_id {
 # Simple REMEMBER Get/Set-ers 
 ###############################################
 
+=head2 remember( -arg => val )
+=cut 
 
-=head2 remember( -arg => val ) || (arg)
+sub _remember {
+    my $self = shift;
+    $self->throw unless @_ && $#_ == 1;
+
+    my $key = '_'.uc($self->_method).'_'.( map {uc($_); $_} map {s/\-//; $_} shift);
+    $self->throw unless $key =~ /NAME|COORDS|TIME/;
+
+    my $val = shift if @_;
+    $self->data( $key => $val ) if defined $val;
+    
+    return $self->data($key);
+}
+
+=head2 remember(arg)
 =cut 
 
 sub remember {
     my $self = shift;
+    $self->throw unless @_ && $#_ == 0;
+
     my $key = '_'.uc($self->_method).'_'.( map {uc($_); $_} map {s/\-//; $_} shift);
     $self->throw unless $key =~ /NAME|COORDS|TIME/;
-    my $val = shift if @_;
-
-    $self->data( $key => $val ) if defined $val;
     
     return $self->data($key);
 }
