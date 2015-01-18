@@ -7822,6 +7822,14 @@ sub genbank_feature_key {
     return($sofa,$subsofa);
 }
 
+###############################################
+# Simple Genbank Get/Set-ers 
+###############################################
+
+# consider replacing with a single genbank( -exclude => 'value' ) method 
+# can be basically the same under the hood 
+# $key = '_GENBANK_'.uc($val);
+
 =head2 genbank_exclude
 =cut
 
@@ -7935,6 +7943,26 @@ sub transcript_id {
     $parts[-1] = 'mrna.'.$parts[-1];
     return join('|', @parts);
 }
+
+###############################################
+# Simple REMEMBER Get/Set-ers 
+###############################################
+
+
+=head2 remember( -arg => val ) || (arg)
+=cut 
+
+sub remember {
+    my $self = shift;
+    my $key = '_'.uc($self->_method).'_'.( map {uc($_); $_} map {s/\-//; $_} shift);
+    $self->throw unless $key =~ /NAME|COORDS|TIME/;
+    my $val = shift if @_;
+
+    $self->data( $key => $val ) if defined $val;
+    
+    return $self->data($key);
+}
+
 
 ##################################################################
 ##################################################################
