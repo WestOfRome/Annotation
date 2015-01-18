@@ -1564,6 +1564,7 @@ sub _genbank_gene_terminii {
 		
 		##############################################################
 		# Merging is not appropriate action in _genbank_gene_trminii() 
+		# This functionality has been moved 
 		if ( 1==0 ) { 
 		    # YBL027W? YDR188W 
 		    $path = ( 
@@ -1661,7 +1662,7 @@ sub _genbank_gene_terminii {
 		}
 	    } else { $self->throw( $orf->first_codon ); } 
 
-	    #$orf->update(); # TEMP / DEBUG 
+	    $orf->update(); # TEMP / DEBUG 
 	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
 	    $orf->history( $self->_method.':'.$path );
 	}
