@@ -1002,7 +1002,7 @@ sub _validate_assembly_gaps {
     my $self = shift;
     my $args = {@_};
 
-    $args->{'-gap_len'} = 20 unless $args->{'-gap_len'}; # what is NCBI number? 
+    $args->{'-gap_len'} = 10 unless $args->{'-gap_len'}; # what is NCBI number? 
 
     ######################################
     # 0. vars 
@@ -1261,7 +1261,6 @@ sub _validate_overlapping_features {
 	}
     }
 
-    return $self;
     ################################
     # 2. Handle any other overlapping features 
     # Note: Overlaps not expressly forbidden 
@@ -1316,6 +1315,8 @@ sub _genbank_gap_overlaps {
 	  ################################
 
 	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
+	  my @X = grep {/X/i} split//, $nei->sequence( -molecule => 'aa' );
+	  my $bad_trans_ratio = ( (scalar(@x)/$nei->length)*3 > 0.5 ? 1 : 0);
 
 	  if ( $args->{'-verbose'} )  {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
@@ -1330,7 +1331,7 @@ sub _genbank_gap_overlaps {
 	  # Not worth fighting for Celine's centromeres 
 	  $nei->genbank_exclude( $self->_method ) and next if 
 	      $nei->evidence eq 'MANUAL';
-
+	  
 	  ################################
 	  # There are three options here : 
 	  ################################
@@ -1379,8 +1380,11 @@ sub _genbank_gap_overlaps {
 	      map { print {$fh} $_->sequence(); }  ($nei,$gap);
 	      $self->throw("Gap encompasses feature");
 	      
-	  } else { 
+	  } elsif ( $gap->length==100 || $bad_trans_ratio ) { 
 	      $path='internal'; # complete overlap of gap in coding 
+
+	      # cannot cross unknown GAP or >50% in known GAP 
+	      # http://www.ncbi.nlm.nih.gov/genbank/wgs_gapped#both
 
 	      # eliminate all Ns from coding gene 
 
@@ -1403,6 +1407,9 @@ sub _genbank_gap_overlaps {
 	      map { $right += $_->length } @right;
 	      my ($new) = $nei->fission( -exons => [ ($left < $right ? @left : @right) ] );
 	      $self->index;
+	  } else { 
+	      $path='tolerate'; 
+	      $nei->genbank_note('gap found within coding sequence');
 	  }
 	  
 	  $path{ $path }++;
