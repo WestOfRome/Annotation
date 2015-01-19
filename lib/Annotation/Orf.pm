@@ -73,7 +73,21 @@ sub DESTROY {
 	#$self->_linked_pair_generic_get_set(-attribute => '_DEBUG', -object => undef);
 	delete $self->{'_DEBUG'};
 	delete $debug->{'_DEBUG'};
-	$debug->DESTROY;
+	
+	# SPECIAL CASE : WE HAVE ATTACHED FAKE OBJECTS TO RUN QC METHODS
+	# These ORFs are not connected into a proper Object hierarchy
+	# They can access a Contig via up() (for sequence) and have 
+	# neighbour relations (left/right) but the Contig object is a 
+	# shell that cannot access an ORF stream etc. 	
+
+	$self->throw if $debug->up->down; # check thesis.. 
+	my $left = $debug->left;
+	my $right = $debug->right;
+	$left->right($right) if $left;
+	$right->left($left) if $right;
+	map { $_->DESTROY } grep {defined} ($debug->stream, $debug->_down);        
+	map { $debug->$_( undef ) } qw(left right up down);
+	#$debug->DESTROY;
     } 
     
     # 1. ohnologs 
@@ -3135,6 +3149,7 @@ sub integrate {
 	my @og = @{$args->{'-index'}->{ $og2 }};
 	delete $args->{'-index'}->{ $og2 };
 	my $master = shift(@og);
+	print {STDERR} $obj->name, $og2, $master->name, $master->ogid;
 	$master->_dissolve_orthogroup(-verbose => $verb );
 	
 	if ( ! $og1 ) {
@@ -7693,7 +7708,6 @@ sub genbank_tbl {
 	
     } elsif ( $asn eq 'misc_feature' ) {	
 
-	print {$fh} @bump, 'note', $self->genbank_note if $self->genbank_note;
 	if ( $self->assign =~ /FEATURE/ ) {
 	    print {$fh} @bump, 'note', $self->description if $self->description;
 	    print {$fh} @bump, 'note', 'Centromere location identified from synteny and sequence';
@@ -7714,6 +7728,9 @@ sub genbank_tbl {
     } elsif ( $asn eq 'LTR' ) {
 
     } else { $self->throw( $asn ); }
+
+    # used for CDS with no START (misc_feat) or internal GAP 
+    print {$fh} @bump, 'note', $self->genbank_note if $self->genbank_note;
 
     ##################################################################
     # include exon and 'intron' features 
