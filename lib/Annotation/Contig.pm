@@ -1315,8 +1315,7 @@ sub _genbank_gap_overlaps {
 	  ################################
 
 	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
-	  my @X = grep {/X/i} split//, $nei->sequence( -molecule => 'aa' );
-	  my $bad_trans_ratio = ( (scalar(@x)/$nei->length)*3 > 0.5 ? 1 : 0);
+	  my $bad_trans_ratio = ( $nei->composition( -aa => 'X' ) > 0.5 ? 1 : 0);
 
 	  if ( $args->{'-verbose'} )  {
 	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
@@ -1475,7 +1474,10 @@ sub _genbank_gene_terminii {
     # By contrast it is fairly trivial to always find a STOP codon .. 
 
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
-	next unless $orf->up; #this may arise due to merging genes out of sequence (below) .. 
+	# next unless $orf->up; # fixed below. No longer needed. 	
+
+	next unless $orf->ygob eq 'Anc_8.270';
+	$orf->output();
 
 	#################################	    
 	# Useful test cases 
@@ -1651,7 +1653,7 @@ sub _genbank_gene_terminii {
 			$force_reoptimise=0;
 			my @removed_exons = ( $orf->prune_fiveprime_exon() );
 			$force_reoptimise=1 unless @removed_exons;
-
+			
 			# what do we do if we messed up? restore exons? 
 		    }		    
 		    $orf->structure();
@@ -1678,7 +1680,7 @@ sub _genbank_gene_terminii {
 	
 	$orf->output(
 	    -prepend => [$self->_method, __LINE__, $orf->_top_tail], 
-	    -recurse => 0, -fh => $fh ) if $args->{'-verbose'};
+	    -recurse => 1, -fh => $fh ) if $args->{'-verbose'};
 
 	################################# 
 	# Last codon 
@@ -1693,6 +1695,11 @@ sub _genbank_gene_terminii {
 	    );
 	$self->throw if $gap && $gap->assign ne 'GAP';
 
+
+	$gap->output(
+	    -prepend => [$self->_method, __LINE__, $orf->_top_tail], 
+	    -recurse => 1, -fh => $fh ) if $args->{'-verbose'};
+	
 	# 
 
 	my $lex = $orf->exons( -query => 'last' );
@@ -1703,8 +1710,16 @@ sub _genbank_gene_terminii {
 	    $lex->stop( -adjust => +$TRIPLET, -R => 1 ) until 
 		( $orf->last_codon =~ $STOP_CODON ||            # OK outcome 
 		  $orf->_terminal_dist2( $orf->strand ) < 3 ||  # almost OK outcome (must be exact) 
-		  ($gap && $orf->overlap( -object => $gap )));  # NOT OK 
-		  #$orf->last_codon =~ /N$/);                   # NOT OK 		  	   
+		  ($gap && $gap->length==100 && $orf->overlap( -object => $gap )) || # NOT OK by Genbank 
+		  # ^ need to replace this gap test with a proper test for 'am I a scaffold join' per Genbank reqs
+		  ($gap && $orf->overlap( -object => $gap ) && $orf->composition( -aa => 'X' ) > 0.5 ) # NOT OK by Gbk
+		  # ^ need to fix this below as cannot have stop in gap region 
+		);
+	    #$orf->last_codon =~ /N$/);                   # NOT OK 		  	   
+	    
+	$orf->output(
+	    -prepend => [$self->_method, __LINE__, $orf->_top_tail], 
+	    -recurse => 1, -fh => $fh ) if $args->{'-verbose'};
 
 	    # Further adjust coords if no STOP to satisfy Genbank conventions 
 	    
@@ -1715,7 +1730,14 @@ sub _genbank_gene_terminii {
 
 	    } elsif ( $gap && $orf->overlap(-object => $gap) ) { 
 		# we are missing a test for $lex->length < 0
-		$lex->stop( -adjust => -1, -R => 1) until ! $orf->overlap(-object => $gap);
+		if ( $gap->spans( $lex ) ) {
+		    $self->throw;
+		} elsif ( $lex->spans( $gap ) ) {
+		    # do nothing will catch + fix below 
+		} elsif ($gap->spans( $lex->stop(-R => 1) ) ) {
+		    $lex->stop( -adjust => -1, -R => 1) until ! $orf->overlap(-object => $gap);
+		} else {} # start(-R=>1) is in gap but stop() not. 
+
 	        $stop_gbk = $lex->stop( -R => 1 );
 		$lex->stop( -adjust => -1, -R => 1) until $orf->length % $TRIPLET == 0;
 		$path='gap';
@@ -1733,8 +1755,8 @@ sub _genbank_gene_terminii {
 	    
 	    $orf->output( 
 		-prepend => [$self->_method, __LINE__, $orf->_top_tail], 
-		#-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
-		-fh => $fh,-recurse => 0) if $args->{'-verbose'}; 
+		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
+		-fh => $fh,-recurse => 1) if $args->{'-verbose'}; 
 	    # && $lex->stop(-R => 1) != $stop_gbk;
 	}
 
