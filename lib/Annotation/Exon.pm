@@ -328,6 +328,24 @@ sub spans {
     $self->throw();
 }
 
+=head2 spans( position|object )
+=cut 
+
+sub spans {
+    my $self = shift;
+    my $target = shift;
+    
+    $self->throw unless $target;
+
+    if ( ref($target) ) { # scalar not a reference 
+	return ( $self->start <= $target->start && $self->stop >= $target->stop ? 1 : 0 );
+    } else { 
+	return ( $self->start <= $target && $self->stop >= $target ? 1 : 0 );
+    }
+    
+    $self->throw();
+}
+
 =head2 frame(-nucleotide => i, -distance => 1, -first => 1, -last => 1)
 
     Return the frame of the specified nt in the exon relative to the 
