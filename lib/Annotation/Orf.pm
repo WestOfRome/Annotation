@@ -3447,7 +3447,7 @@ sub composition {
 	my $aa = uc( $args->{'-aa'} );
 	$self->throw unless exists $AMINO_ACIDS{ $aa } || $aa eq 'X';
 	my @X = grep {/$aa/i} split//, $self->sequence( -molecule => 'aa' );
-	$ratio = (scalar(@x)/$nei->length)*3;
+	$ratio = (scalar(@x)/$self->length)*3;
     } 
 
     return $ratio;
@@ -3565,6 +3565,25 @@ sub excise_gaps {
 
     return $self;
 }
+
+=head2 spans( position|object )
+=cut 
+
+sub spans {
+    my $self = shift;
+    my $target = shift;
+    
+    $self->throw unless $target;
+
+    if ( ref($target) ) { # scalar not a reference 
+	return ( $self->start <= $target->start && $self->stop >= $target->stop ? 1 : 0 );
+    } else { 
+	return ( $self->start <= $target && $self->stop >= $target ? 1 : 0 );
+    }
+    
+    $self->throw();
+}
+
 
 =head2 adjust(adjustment)
 
