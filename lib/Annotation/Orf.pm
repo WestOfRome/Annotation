@@ -3429,6 +3429,31 @@ sub prune_fiveprime_exon {
     return @exons;
 }
 
+=head2 composition() 
+=cut 
+
+sub composition {
+    my $self = shift;
+    my $args = {@_}; 
+
+    $args->{'-base'} = undef unless $args->{'-base'};
+    $args->{'-aa'} = undef unless $args->{'-aa'};
+    
+    $self->throw unless $args->{'-base'} || $args->{'-aa'}; # TEMP
+    $self->throw if $args->{'-base'}; # TEMP 
+
+    my $ratio;
+    if ( $args->{'-aa'} ) {
+	my $aa = uc( $args->{'-aa'} );
+	$self->throw unless exists $AMINO_ACIDS{ $aa } || $aa eq 'X';
+	my @X = grep {/$aa/i} split//, $self->sequence( -molecule => 'aa' );
+	$ratio = (scalar(@x)/$nei->length)*3;
+    } 
+
+    return $ratio;
+}
+
+
 =head2 excise_gaps( -override => f )
     
     Exmaine and then edit coding sequence to remove any Ns. 
@@ -5435,7 +5460,7 @@ sub evaluate {
 
     unless ( $self->rank < -1 ) {
 	$self->structure unless $args->{'-structure'} == 0;
-	($self->output && $self->throw( join("\n", 'Bad structure', $self->debug, $self->aa ) ))
+	($self->output && $self->throw( join("\n", 'Bad structure', $self->debug, $self->aax ) ))
 	    unless $args->{'-validate'} == 0 || $self->translatable;
     }
 
