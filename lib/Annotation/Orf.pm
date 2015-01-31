@@ -7241,7 +7241,7 @@ sub _dissolve_orthogroup {
    
     $args->{'-verbose'}=1 unless exists  $args->{'-verbose'};
 
-    $self->throw unless $self->orthogroup && $self->ogid;
+    $self->throw( -output =>1 ) unless $self->orthogroup && $self->ogid;
     my @meth = map { uc($_) } $self->up->up->bound;
     map { $self->throw unless $self->isa(ref( $self->$_ )) } @meth;
 
