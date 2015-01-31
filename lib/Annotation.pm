@@ -670,7 +670,7 @@ sub warn {
 sub throw {
     my $self = shift;
     my $args = {@_};
-    my $string = shift;
+    my $string = ($#_ == 0 ? shift(@_) : $args->{'-string'});
 
     if ( $args->{'-output'} && (caller(1))[3] !~ /output/i ) {
 	$self->output( -fh => \*STDERR );
