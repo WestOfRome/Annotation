@@ -8275,8 +8275,8 @@ sub _make_genbank_compatible {
 
 	# B. relationships among features 
 
-	$scaf->_validate_overlapping_features(-index => $index, -verbose => $verb );
-
+	$scaf->_validate_overlapping_features(-index => $index, -verbose => $verb); #$verb );
+	
 	$scaf->merge( -index => $index, -verbose =>  $verb  );
 
 	# C. apply rules for gaps 
