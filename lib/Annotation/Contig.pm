@@ -1276,7 +1276,8 @@ sub _validate_overlapping_features {
 
 	    # delete redundant genes
 	    
-	    foreach my $del (  grep { $_ ne $best } @{$cl} ) {
+	    foreach my $del ( grep { $_->up } # we may have already delelted in the call to collide() above 
+			      grep { $_ ne $best } @{$cl} ) {
 		$del->output( -fh => $fh, -debug=>1, -og =>1, -prepend => ['DEL'])
 		    if $args->{'-verbose'} >= 2;
 		$self->remove( -object => $del );
