@@ -1221,12 +1221,13 @@ sub _validate_overlapping_features {
 	    $self->throw if @ogid;
 
 	    if ( $other_og ) {
+		
 		if  ( $best->ogid ) {
 		    
 		    # 1. Both are in OGs
-		    
+
 		    foreach my $x ($best,$other_og) {
-			$self->throw unless my $ogk = shift @{$index->{ $x->ogid }};
+			$self->throw unless my $ogk = $index->{ $x->ogid }->[0];
 			if ($args->{'-verbose'}) {
 			    map { $_->output(
 				      -fh => $fh, -debug=>1, -recurse => 0,
@@ -1234,8 +1235,31 @@ sub _validate_overlapping_features {
 						  ($_->organism eq $x->organism ? '**' : '')], 
 				      -prepend => [ ($x eq $best ? 'KEEP' : 'KILL'), $_->ogid ]
 				      ) } ($ogk->_orthogroup);
-			}
-			$ogk->_dissolve_orthogroup( -verbose => 1 ) if $x eq $other_og;
+			}			
+		    }
+		    
+		    # Distinguish between two important possibilities.
+		    # 1: In one species only, we have alternative models 
+		    # that have gotten - sloppily - placed into two unrelated OGs. 
+		    # 2: We have fully duplicated and parallel OGs. 
+		    # In this case we want to process through the whole OG and simplify
+		    # by removing the weaker of each pair.
+		    
+		    my $og1 = $index->{ $best->ogid }->[0];
+		    my $og2 = $index->{ $other_og->ogid }->[0];
+		    my ($res, $audit) = $og1->audit( -object => $og2 );
+		    
+		    if ( $res == scalar( map {$_} $og1->_orthogroup) ) { # map {} call here is required. black magic. 
+			
+			# should we insert a test here for extent of overlaps?
+			# already seems fairly daming if we have 5/5 with shared codons? 
+			# A decouple() method to remove shared codons would be nice 
+			# but we would have to justify where the breaks are... 
+			
+			$best = $og1->collide( -object => $og2, -cleanup => 1 );
+			
+		    } else {
+		    	$og2->_dissolve_orthogroup( -verbose => 1 );
 		    }
 		    
 		} elsif ( ! $best->ogid ) {
