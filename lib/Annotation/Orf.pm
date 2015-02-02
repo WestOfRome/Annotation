@@ -7227,10 +7227,8 @@ sub audit {
     $args->{'-verbose'}=1 unless exists  $args->{'-verbose'};
     
     $self->throw unless my $obj = $args->{'-object'};
-    $self->throw unless $self->isa( ref($obj) );
-    
-
-    map { $_->output( -fh => \*STDERR, -og => 1, -prepend => [$self->_method, __LINE__] ) } ( $self, $obj );
+    $self->throw unless $self->isa( ref($obj) );    
+    #map { $_->output( -fh => \*STDERR, -og => 1, -prepend => [$self->_method, __LINE__] ) } ( $self, $obj );
     map { $_->throw( -output => 1 ) unless $_->ogid && $_->_orthogroup } ( $self, $obj );
 
     my $scr;
@@ -7245,6 +7243,41 @@ sub audit {
 
     return (wantarray ? ($scr, \%res) : $scr );
 }
+
+=head2 collide() 
+
+    Smash two orthogroups together and return the single best orthogroup
+    by choosing between the two options for each species. 
+
+=cut 
+
+sub collide {
+    my $self = shift;
+    my $args = {@_};
+   
+    $args->{'-verbose'}=0 unless exists  $args->{'-verbose'};
+
+    $self->throw unless my $obj = $args->{'-object'};
+    $self->throw unless $self->isa( ref($obj) );    
+    #map { $_->output( -fh => \*STDERR, -og => 1, -prepend => [$self->_method, __LINE__] ) } ( $self, $obj );
+    map { $_->throw( -output => 1 ) unless $_->ogid && $_->_orthogroup } ( $self, $obj );
+
+    my (@new,@other);
+    foreach my $meth ( $self->_orthogroup ) {
+	#print {STDERR} $au, @{$audit->{$au}};
+	my ($sp1,$sp2) = map { $_->$meth } ($self,$obj);
+	my ($best_sp,$scr) = $sp1->choose( -object => $sp2, -strict => 0 );
+	push @new, $best_sp;
+	push @other, ( $best_sp eq $sp1 ? $sp2 : $sp1);
+    }
+    map { $_->_dissolve_orthogroup( -verbose => 1 ) } ($self,$obj);
+
+    my $lead = shift( @new );
+    $lead->_define_orthogroup( @new );
+
+    return (wantarray ? ($lead, \@other) : $lead);
+}
+
 
 =head2 _dissolve_ohnolog
 =cut 
@@ -7429,7 +7462,6 @@ sub _set_ogid {
     $self->{OGID} = shift;
     return $self->{OGID};
 }
-
 
 =head2 structure_conserved
 
