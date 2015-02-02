@@ -7235,7 +7235,7 @@ sub audit {
     my %res;
     foreach my $o ( $self->_orthogroup ) {
 	my $meth = $o->organism;
-	$self->throw unless my $o2 = $obj->$meth;
+	$self->throw unless my $o2 = ($meth eq $self->organism ? $obj : $obj->$meth);
 	$self->throw unless $o->organism eq $o2->organism;
 	$res{ $meth } = [$o->commoncodon( $o2 ), $o->overlap( -object => $o2)];
 	$scr++ if $res{ $meth }->[0];
@@ -7256,6 +7256,7 @@ sub collide {
     my $args = {@_};
    
     $args->{'-verbose'}=0 unless exists  $args->{'-verbose'};
+    $args->{'-cleanup'}=0 unless exists  $args->{'-cleanup'};
 
     $self->throw unless my $obj = $args->{'-object'};
     $self->throw unless $self->isa( ref($obj) );    
@@ -7263,9 +7264,10 @@ sub collide {
     map { $_->throw( -output => 1 ) unless $_->ogid && $_->_orthogroup } ( $self, $obj );
 
     my (@new,@other);
-    foreach my $meth ( $self->_orthogroup ) {
+    foreach my $sp1 ( $self->_orthogroup ) {
 	#print {STDERR} $au, @{$audit->{$au}};
-	my ($sp1,$sp2) = map { $_->$meth } ($self,$obj);
+	my $meth = $sp1->organism;
+	my $sp2 = ($meth eq $self->organism ? $obj : $obj->$meth );
 	my ($best_sp,$scr) = $sp1->choose( -object => $sp2, -strict => 0 );
 	push @new, $best_sp;
 	push @other, ( $best_sp eq $sp1 ? $sp2 : $sp1);
@@ -7274,6 +7276,10 @@ sub collide {
 
     my $lead = shift( @new );
     $lead->_define_orthogroup( @new );
+
+    if ( $args->{'-cleanup'} ) {
+	map { $_->DESTROY; } map { $_->up->remove( -object => $_ ); $_ } @other;
+    }
 
     return (wantarray ? ($lead, \@other) : $lead);
 }
