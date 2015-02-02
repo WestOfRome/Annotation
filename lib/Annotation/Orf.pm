@@ -7214,6 +7214,38 @@ sub output {
     return $self;
 }
 
+=head2 audit()
+
+    Compare two orthogroups for redundnacy. 
+
+=cut 
+
+sub audit {
+    my $self = shift;
+    my $args = {@_};
+   
+    $args->{'-verbose'}=1 unless exists  $args->{'-verbose'};
+    
+    $self->throw unless my $obj = $args->{'-object'};
+    $self->throw unless $self->isa( ref($obj) );
+    
+
+    map { $_->output( -fh => \*STDERR, -og => 1, -prepend => [$self->_method, __LINE__] ) } ( $self, $obj );
+    map { $_->throw( -output => 1 ) unless $_->ogid && $_->_orthogroup } ( $self, $obj );
+
+    my $scr;
+    my %res;
+    foreach my $o ( $self->_orthogroup ) {
+	my $meth = $o->organism;
+	$self->throw unless my $o2 = $obj->$meth;
+	$self->throw unless $o->organism eq $o2->organism;
+	$res{ $meth } = [$o->commoncodon( $o2 ), $o->overlap( -object => $o2)];
+	$scr++ if $res{ $meth }->[0];
+    }
+
+    return (wantarray ? ($scr, \%res) : $scr );
+}
+
 =head2 _dissolve_ohnolog
 =cut 
 
