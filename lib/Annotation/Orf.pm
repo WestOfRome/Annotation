@@ -7218,6 +7218,8 @@ sub output {
 
     Compare two orthogroups for redundnacy. 
 
+    Returns number of shared objects only or 
+
 =cut 
 
 sub audit {
@@ -7237,17 +7239,20 @@ sub audit {
 	my $meth = $o->organism;
 	$self->throw unless my $o2 = ($meth eq $self->organism ? $obj : $obj->$meth);
 	$self->throw unless $o->organism eq $o2->organism;
-	$res{ $meth } = [$o->commoncodon( $o2 ), $o->overlap( -object => $o2)];
+	$res{ $meth } = [$o eq $o2 ? (1,1) : ($o->commoncodon( $o2 ), $o->overlap( -object => $o2)) ];
 	$scr++ if $res{ $meth }->[0];
     }
-
+    
     return (wantarray ? ($scr, \%res) : $scr );
 }
 
 =head2 collide() 
 
-    Smash two orthogroups together and return the single best orthogroup
+    Compare two orthogroups and return the single best orthogroup
     by choosing between the two options for each species. 
+
+    Choice uses orf->choose() (i.e., based on protein level comparison only) 
+    The caller is responsible for synteny considerations. 
 
 =cut 
 
