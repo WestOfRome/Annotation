@@ -70,10 +70,7 @@ sub DESTROY {
     # 0. debugging.. 
 
     if ( my $debug = $self->_debug ) {
-	#$self->_linked_pair_generic_get_set(-attribute => '_DEBUG', -object => undef);
-	delete $self->{'_DEBUG'};
-	delete $debug->{'_DEBUG'};
-	
+
 	# SPECIAL CASE : WE HAVE ATTACHED FAKE OBJECTS TO RUN QC METHODS
 	# These ORFs are not connected into a proper Object hierarchy
 	# They can access a Contig via up() (for sequence) and have 
@@ -81,10 +78,21 @@ sub DESTROY {
 	# shell that cannot access an ORF stream etc. 	
 
 	$self->throw if $debug->up->down; # check thesis.. 
+
+	# Break reciprocal links between Orf and QC Orf 
+
+	#$self->_linked_pair_generic_get_set(-attribute => '_DEBUG', -object => undef);
+	delete $self->{'_DEBUG'};
+	delete $debug->{'_DEBUG'};
+	
+	# Break links to from neighbours 
+
 	my $left = $debug->left;
 	my $right = $debug->right;
 	$left->right($right) if $left;
 	$right->left($left) if $right;
+	
+	# Exons 
 	map { $_->DESTROY } grep {defined} ($debug->stream, $debug->_down);        
 	map { $debug->$_( undef ) } qw(left right up down);
 	#$debug->DESTROY;
@@ -99,7 +107,7 @@ sub DESTROY {
     
     # 2. orthogroups 
 
-    $self->throw("Must call _dissolve_orthogroup first.") if $self->ogid;
+    #$self->throw("Must call _dissolve_orthogroup first.") if $self->ogid;
 
     # 3. Genbank split genes 
 
