@@ -71,31 +71,17 @@ sub DESTROY {
 
     if ( my $debug = $self->_debug ) {
 
-	# SPECIAL CASE : WE HAVE ATTACHED FAKE OBJECTS TO RUN QC METHODS
-	# These ORFs are not connected into a proper Object hierarchy
-	# They can access a Contig via up() (for sequence) and have 
-	# neighbour relations (left/right) but the Contig object is a 
-	# shell that cannot access an ORF stream etc. 	
-
-	$self->throw if $debug->up->down; # check thesis.. 
-
-	# Break reciprocal links between Orf and QC Orf 
-
+	# Break reciprocal links between Orf and QC Orf.
+	# Why not use _linked_pair_generic_get_set?
+	
 	#$self->_linked_pair_generic_get_set(-attribute => '_DEBUG', -object => undef);
 	delete $self->{'_DEBUG'};
 	delete $debug->{'_DEBUG'};
 	
-	# Break links to from neighbours 
-
-	my $left = $debug->left;
-	my $right = $debug->right;
-	$left->right($right) if $left;
-	$right->left($left) if $right;
-	
-	# Exons 
-	map { $_->DESTROY } grep {defined} ($debug->stream, $debug->_down);        
-	map { $debug->$_( undef ) } qw(left right up down);
-	#$debug->DESTROY;
+	# We do not DESTROY as this is a separate decision.
+	# The ORFS are unlinked and allowed to persist. 
+	# The are DESTROYed if the entire genome is DESTROYed.	
+	# At this time the Genome::DESTROY method takes responsibility. 
     } 
     
     # 1. ohnologs 
@@ -106,9 +92,9 @@ sub DESTROY {
     } 
     
     # 2. orthogroups 
-
+    
     #$self->throw("Must call _dissolve_orthogroup first.") if $self->ogid;
-
+    
     # 3. Genbank split genes 
 
     while ( my $part = pop @{ $self->{'_GENBANK_SPLIT_GENE'} } ) {
@@ -119,8 +105,13 @@ sub DESTROY {
 	}
     }
 
-    # 4. Neighbours / Up / Down 
-    
+    # 4. Remove exons     
+    # The up() code here is to supress a bug. Unfortunate to say the least. 
+    map { $_->up->remove( -object => $_, -warn => 0) } $self->stream;
+    map { $_->SUPER::DESTROY } map { $_->up($self); $_ } $self->_stream;
+
+    # remove all other relationships 
+
     return $self->SUPER::DESTROY;
 }
 
@@ -8201,7 +8192,9 @@ sub _upgrade_orf_structure {
 
 	if ( $key eq 'OG' || $key eq 'GAP' || 
 	     $key eq 'TMP' ||  $key eq 'TEMP' || 
-	     $key eq 'SGD_GENE' || $key eq 'OHNOLOG' ) {
+	     $key eq 'SGD_GENE' || $key eq 'OHNOLOG' ||
+	     $key eq 'REMEMBER_TIME' || $key eq 'REMEMBER_NAME' 
+	     || $key eq 'REMEMBER_COORDS' ) {
 	    next;
 	} elsif ( $suffix ) {
 	    $self->throw( $key_bkp ) unless exists $HOMOLOGY{ $key }; 
