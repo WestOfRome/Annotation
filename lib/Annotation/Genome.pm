@@ -67,6 +67,69 @@ sub AUTOLOAD {
 
 my $STORE = 0;
 
+# There is only one peculiartiy about genome destruction. 
+# The standard Annotation::DESTROY typically works correctly. 
+# The execption is if there is a QC genome object attachd to the real genome. 
+
+sub DESTROY {
+    my $self = shift;
+
+    # Is there a QC object attached to this genome? 
+    # If so, we proceed in 2 steps: 
+    # 1- Break all the links between the two objects 
+    # 2- Find and destroy all QC objects. 
+    # Do not have proper struture - and bugs in S3 Genbank data - so requires some fucking around. 
+    
+    if ( my $qc = (grep { $_->_debug } $self->orfs)[0] ) {
+
+	my %get_all_chr;
+	foreach my $debug ( grep { $_->_debug } map { $_->stream } $self->stream ) {
+	    my $counter_party = $debug->_debug;
+	    delete $counter_party->{'_DEBUG'};
+	    delete $debug->{'_DEBUG'};
+	    $get_all_chr{ $counter_party->up->id } = $counter_party 
+		unless exists $get_all_chr{ $counter_party->up->id };
+	}
+
+	foreach my $chr (keys %get_all_chr) {
+	    my $index = $get_all_chr{ $chr };
+	    my $genome = $index->up->up;
+	    my $contig = $index->up;
+
+	    #################################
+	    # Orfs
+	    #################################
+
+	    # 1. gather 
+	    # this shit is ugly but calling traverse x2 picksup $index x2 ....
+	    my @orfs = values %{{ map {$_->unique_id => $_} 
+				  (map { $index->traverse( -direction => $_ ) } qw(left right)) }};
+
+	    # 2. repair -- Embarassingly, Done in Annotation::DESTROY() 
+	    # Problem (believed to be) specific to S3 Genbank submission.
+	    # Suppress bug where some exons on QC genomes don't know parent	    
+	    # due corrupted object links in QC object
+	    #foreach my $o (@orfs) { 
+		#map { $_->up($o) } grep {defined} ($o->stream, $o->_down);		
+	    #}
+
+	    # 3. destroy 
+	    # we invoke override because of asymmetric linking
+	    map { $_->SUPER::DESTROY } map { $_->up->remove( -object => $_, -override => 1, -warn => 0) } @orfs;
+
+	    #################################
+	    # Contigs / Genomes 
+	    #################################
+	    
+	    $contig->SUPER::DESTROY;
+	    $genome->SUPER::DESTROY unless $genome eq $self; # True for S3 Genbank object but not new Code
+	}
+    }
+    
+    $self->SUPER::DESTROY;
+}
+
+
 #########################################
 #########################################
  
@@ -324,7 +387,7 @@ sub dumpOrthogroups {
 	push @og, ( (undef) x scalar($self->bound) ) unless $#og == scalar($self->bound);
 
 	my ($sgd_name,$ygob_name) = $orf->identify;
-	my $sgd = ( $orf->_debug ? $orf->_debug : undef );
+    my $args = {@_};	my $sgd = ( $orf->_debug ? $orf->_debug : undef );
 	my ($official, $class)=( $sgd  ?  ($sgd->gene, $sgd->data('CLASS')) : ('NA','NA') );
 
 	print $fh 
@@ -7395,7 +7458,7 @@ sub _validate_data_structures {
 =head2 gff2genome()
 
     Read in a gff file (only tested for SGD format) and 
-    port annotations to a cloned chromosomes. These are 
+    port annotations to cloned chromosomes. These are 
     asymmetrically attached to the existing genome object
     -- the new orfs/contigs can access their organism etc 
     but the cloned contigs are not returned when stream
