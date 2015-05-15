@@ -139,11 +139,12 @@ sub DESTROY {
 	my $self = shift;
 
 	# recurse through daughter objects
-
-	map { $_->DESTROY } grep {defined} 
-	($self->stream, $self->_down); # base must be last
-	$self->throw if $self->_down || $self->down;
-
+	
+	map { $_->DESTROY } grep {defined} ($self->_stream);	
+	#my $debug = join(" / ", ($self->is_base(-text => 1), 
+	#($self->_down || undef), ($self->down || undef) ));
+	$self->throw("Failed recursion on $self: $debug" ) if $self->_down || $self->down;
+	
 	# what do I need to deal with ?
 	
 	my $up = $self->up;
@@ -176,7 +177,10 @@ sub DESTROY {
 	    # but have no siblings. 
 	    
 	} elsif ($left || $right) {
-	    $self->throw("Objects MUST know parent");			
+	    $self->throw( 
+		"Objects MUST know parent: "
+		.join(' / ', ($self->is_base(-text => 1), $self->organism) ) 
+		); 
 	} else {}  # no up, no left, no right == genome
 	
 	# destroy
@@ -274,8 +278,35 @@ sub stream {
 
 sub _stream {
     my $self = shift;
+
+    #my $args = {@_};    
+    #$args->{'-base'}='first' unless exists $args->{'-base'};
+    #$self->throw unless $args->{'-base'} =~ /first|last/;
+
     return () unless $self->_down;     # Features || Exons
-    return($self->_down, $self->_down->traverse(@_));
+    return grep {defined} ($self->_down->traverse(@_), $self->_down);
+
+    #return(
+    #$args->{'-base'} eq 'first' 
+    #? ($self->_down, $self->_down->traverse(@_))
+    #: ($self->_down->traverse(@_), $self->_down)
+    #);
+}
+
+=head2 is_base 
+=cut 
+
+sub is_base {
+    my $self = shift;
+    my $args = {@_};
+    
+    $args->{'-text'}=undef unless exists $args->{'-text'};
+
+    return ( 
+	$self->id == 0 
+	? ($args->{'-text'} ? 'Base' : 1 ) 
+	: ($args->{'-text'} ? 'NotBase' : 0 )
+	);
 }
 
 =head2 index(-method => 'start')
@@ -288,7 +319,7 @@ sub _stream {
 =cut
 
 sub index {
-    my $self = shift;             
+    my $self = shift;
     my $args = {@_};
     return $self unless my $base = $self->_down;
     
@@ -409,21 +440,25 @@ sub remove {
     my $args = {@_};
     my $obj = $args->{'-object'};
 
+    $args->{'-override'} = undef unless exists $args->{'-override'};
+
     # 
 
-    $self->throw("Must supply an object!: $obj ($self)")
-	unless ref($obj) eq ref($self->_down) || ref($obj) =~ /Feature/;
-    $self->throw("$obj not attached to $self")
-    	unless $obj->up eq $self;			
-    $self->throw("Not attached to self") 
-	unless $self->_down eq $obj || $self->contains($obj);
+    unless ( $args->{'-override'} ) { # provided for _DEBUG objects used for QC 
+	$self->throw("Must supply an object!: $obj ($self / ".$self->organism.")")
+	    unless ref($obj) eq ref($self->_down) || ref($obj) =~ /Feature/;
+	$self->throw("Not attached to self") 
+	    unless $self->_down eq $obj || $self->contains($obj); 
+    }
+    $self->throw("$obj not attached to $self / ".$obj->up.' }')
+    	unless $obj->up eq $self; 
     $self->throw("Cannot remove base from an object")
     	if $obj->id == 0;
-
+    
     # defaults 
     
     $args->{'-warn'} = $args->{'-force'} if exists $args->{'-force'};
-    $args->{'-warn'} = 1 unless exists $args->{'-warn'};
+    $args->{'-warn'} = 0 unless exists $args->{'-warn'};
     
     # get base and  neighbours 
 
@@ -672,11 +707,12 @@ sub throw {
     my $args = {@_};
     my $string = ($#_ == 0 ? shift(@_) : $args->{'-string'});
 
-    if ( $args->{'-output'} && (caller(1))[3] !~ /output/i ) {
+    my $caller = (caller(1))[3];
+    if ( $args->{'-output'} && $caller !~ /output/i ) {
 	$self->output( -fh => \*STDERR );
     }
-
-    confess($string);
+    
+    confess($string || 'No error message provided:'.$caller );
 }
 
 #########################################
