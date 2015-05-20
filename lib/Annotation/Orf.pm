@@ -246,6 +246,7 @@ sub update {
     my $self=shift;
     my $args = {@_};
     
+    return $self if $Annotation::GLOBAL_DEBUG_SPEEDUP; # TEMP / DEBUG /DEVIN 
     return $self if $self->assign =~ /GAP|FEATURE|RNA/;
 
     # RUN by default 
@@ -3498,7 +3499,11 @@ sub gap_type {
 	    $self->throw("Gap borders not properly defined");	    
 	}
 
-	$type = ( $self->length == $args->{'-false_gap_length'} ? 2 : 1 );
+	if ( ref($self) =~ /GAP/i ) { # anticiapte proper GAP object 
+	    $self->throw("Will be implemented by gap_type() override method in GAP object.");
+	} else {
+	    $type = ( $self->length == $args->{'-false_gap_length'} ? 2 : 1 );
+	}
     }
     
     return ($args->{'-text'} ? $text{$type} : $type);
