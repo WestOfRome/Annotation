@@ -3452,6 +3452,57 @@ sub composition {
     return $ratio;
 }
 
+=head2 gap_type
+
+    Return a numeric code (or optionally text description) that 
+    defines the type of GAP feature. We also do GAP integrity checking. 
+
+    0 : Not Gap 
+    1 : Gap - Mate pairs [Estimated length; any length except 100bp; created by SOAP]
+    2 : Gap - Homology [Unknown length; represented as 100bp; created based on aligns]
+
+    This method essentially implements an assumption - 100bp gaps are NOT crated by 
+    SOAP but by reference to genus alignments - that is true for the stricto but may 
+    not be in general.
+
+=cut 
+
+sub gap_type {    
+    my $self = shift;
+    my $args = {@_}; 
+    
+    $args->{'-strict'} = 0 unless defined $args->{'-strict'};
+    $args->{'-text'} = 0 unless defined $args->{'-text'};
+    $args->{'-false_gap_length'} = 100 unless defined $args->{'-false_gap_length'};
+
+    my %text = (
+	0 => 'Not Gap',
+	1 => 'Gap - Mate pairs', 
+	2 => 'Gap - Homology'
+	);
+
+    my $type;
+    if ( $self->assign ne 'GAP' ) {
+	if ( $args->{'-strict'} ) {
+	    $self->throw("Overlaps gap (strict)") if $self->sequence =~ /N/;
+	} else {
+	    $self->throw("Undocumented gap") if $self->sequence =~ /^N+$/;
+	}
+	$type=0;
+
+    } else {
+	
+	if ( $self->start == 1 || $self->stop == $self->up->length ) {
+	    $self->throw("Gap at contig end not permitted");
+	} elsif ( $self->_border_bases =~ /N/ || $self->sequence =~ /[^N]/ ) {
+	    $self->throw("Gap borders not properly defined");	    
+	}
+
+	$type = ( $self->length == $args->{'-false_gap_length'} ? 2 : 1 );
+    }
+    
+    return ($args->{'-text'} ? $text{$type} : $type);
+}
 
 =head2 excise_gaps( -override => f )
     
@@ -8129,7 +8180,7 @@ sub remember {
 
 =head2 _upgrade_orf_structure() 
 
-    Method to change the modify the Orf structure used for 
+    Method to modify the Orf structure used for 
     the 2011 paper to the one expected by the current code base. 
     Almost all changes are to the data attribute ($Orf->data())
     but a few key elements are now stored on the main object
@@ -8697,6 +8748,27 @@ sub _top_tail {
     my $ftop = substr( $seq, 0, 3);
     my $ltail = substr( $seq, length($seq)-3, 3);
     return ($ftop, $ltail);
+}
+
+sub _border_bases {
+    my $self = shift;
+    my $args = {@_};
+    
+    my $start;
+    if ( $self->start == 1 ) {
+	$start=undef;
+    } else {
+	$start = substr($self->up->sequence, $self->start-2, 1);
+    }
+
+    my $stop;
+    if ( $self->stop == $self->up->length ) {
+	$stop=undef;
+    } else {
+	$stop = substr($self->up->sequence, $self->stop, 1);
+    }
+
+    return wantarray ? ( $start, $stop ) : $start.$stop;
 }
 
 sub _terminal_dist2 {
