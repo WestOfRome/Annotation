@@ -996,6 +996,13 @@ sub _common_codon_cluster {
 
 =head2 _validate_assembly_gaps()
 
+    Examine all GAP objects and ensure they are properly documented
+    and their borders are true. We do ab initio GAP detection to 
+    guarantee complete detection. 
+
+    To ensure GAPs have correct properties, we correct any issues with 
+    strand (0 for GAPs) and GAP type. 
+
 =cut 
 
 sub _validate_assembly_gaps {
@@ -1020,8 +1027,18 @@ sub _validate_assembly_gaps {
     # Is the order right here? 
 
     foreach my $gap ( grep { $_->assign ne 'GAP' }  $self->stream ) { 
-	if ( $gap->sequence =~ /^N{100}$/) {
-	    $gap->output(-prepend => [ $self->_method, __LINE__, 'MISLABEL' ], -fh => $fh );
+	my $gap_type;
+	if ( $gap->sequence =~ /^N{100}$/ ) {
+	    $gap_type='Unknown';
+	} elsif ( $gap->sequence =~ /^N+$/ ) {
+	    $gap_type='Estimated';
+	}
+	
+	# 
+	
+	if ( $gap_type ) {
+	    $gap->output(-prepend => [ $self->_method, __LINE__, $gap_type ], 
+			 -fh => $fh );
 	    $gap->throw;
 	}
     }
@@ -1101,6 +1118,8 @@ sub _validate_assembly_gaps {
 		$fake_gap->data('NNNN' => $INFINITY);
 		$fake_gap->evidence('NNNN');
 		$fake_gap->evaluate(-structure => 0, -validate => 0);
+		$self->throw( $fake_gap->assign ) unless $fake_gap->assign eq 'GAP';
+		
 		$self->add( -object => $fake_gap );		
 		$fake_gap->output( 
 		    -prepend => [ $self->_method, __LINE__, 'FOUND' ], 
@@ -1145,7 +1164,7 @@ sub _validate_assembly_gaps {
       $gap->start( $start );
       $gap->stop( $stop );
       map { $self->remove( -object => $_ ) }  @{ $cl };
-      map { $_->DELETE() }  @{ $cl };
+      map { $_->DESTROY() }  @{ $cl };
   }
     $self->index;
 
