@@ -24,9 +24,12 @@ use Exporter;
 	     $TIME
 	     $VERSION
              $eutils
+             $GLOBAL_DEBUG_SPEEDUP
 	     );
 
 # DEVIN -DROPBOX + GIT VERSION CONTROL TEST 
+
+$GLOBAL_DEBUG_SPEEDUP=1;
 
 #########################################
 #########################################
