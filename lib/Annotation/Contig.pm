@@ -1029,9 +1029,9 @@ sub _validate_assembly_gaps {
     foreach my $gap ( grep { $_->assign ne 'GAP' }  $self->stream ) { 
 	my $gap_type;
 	if ( $gap->sequence =~ /^N{100}$/ ) {
-	    $gap_type='Unknown';
+	    $gap_type='Homology - Unknown length';
 	} elsif ( $gap->sequence =~ /^N+$/ ) {
-	    $gap_type='Estimated';
+	    $gap_type='Mate pairs - Estimated length';
 	}
 	
 	# 
@@ -1084,7 +1084,7 @@ sub _validate_assembly_gaps {
     }
     map { $self->remove( -object => $_ ) } @remove;
     $self->index;
-
+    
     ######################################
     # 3. look for gaps that were missed completely 
     # -- by reannotating all gaps above size x..
@@ -1096,7 +1096,7 @@ sub _validate_assembly_gaps {
     my $seq;
     my $changepoint=1;
     for my $i (0..$#seq) {
-
+	
 	if ( ! $seq ) { #initialize 
 	    # set the change point to 1 and sequence to $seq[0] (below)
 
@@ -1187,6 +1187,10 @@ sub _validate_assembly_gaps {
 
 =head2 _validate_overlapping_features()
 
+    Run two procedues to ensure overlaps are consistent with expectations: 
+    1. Find and reconcile REDUNDANT *coding* features 
+    2. Cluster all overlapping features and attempt to merge 
+
 =cut 
 
 sub _validate_overlapping_features {
@@ -1194,6 +1198,8 @@ sub _validate_overlapping_features {
     my $args = {@_};
     
     my $fh = *STDERR;
+
+    my @out = ('-fh' => $fh, '-debug' => 1, '-og' => 1, '-recurse' => 0);
 
     ################################
     # 
@@ -1203,7 +1209,7 @@ sub _validate_overlapping_features {
     $self->throw unless ref($index) =~ /HASH/;
 
     ################################
-    # 1. Find and remove redundant CODING features 
+    # 1. Find and remove REDUNDANT CODING features 
     # Based on commoncodon test so should be identical (+ errors) for the most part 
     ################################
 
@@ -1216,94 +1222,91 @@ sub _validate_overlapping_features {
     
     foreach my $cl ( values %{$clref} ) {
 	my ($pop, @others) = @{ $cl };       
-
-	if ( @others) {
+	next unless @others; 
 	    
-	    # choose best seq...
+	# choose best seq...
+	
+	my ($best,$scr) = $pop->choose( 
+	    -object => \@others, 
+	    -verbose => $args->{'-verbose'},
+	    -strict => 0
+	    );
+	
+	# ouptut 
+	
+	if ( $args->{'-verbose'} >= 2 ) {
+	    print {$fh} "\n--------------------------\n";
+	    map { $_->output(-prepend => ['OPTION'], @out, 
+			     -append => [$best->overlap(-object => $_) ] ) } @{$cl}; 
+	    $best->output(-prepend => ['BEST'], @out);	    
+	    print {$fh} undef;
+	}    
+	
+	# manage orthogroups 
+	
+	my ($other_og, @ogid) = grep { $_->ogid } grep { $_ ne $best} @{ $cl };
+	$self->throw if @ogid;
+	
+	my $path='Best?/Other-';
+	if ( $other_og ) {
 	    
-	    my ($best,$scr) = $pop->choose( 
-		-object => \@others, 
-		-verbose => $args->{'-verbose'},
-		-strict => 0
-		);
-
-	    # ouptut 
-	    
-	    if ( $args->{'-verbose'} >= 2 ) {
-		map { $_->output(-prepend => ['CODON'], -fh => $fh, -debug=>1, -og =>1) } @{$cl}; 
-		$best->output(-prepend => ['BEST'], -fh => $fh, -debug=>1, -og =>1 );
-	    }	    
-	    
-	    # manage orthogroups 
-
-	    my ($other_og, @ogid) = grep { $_->ogid } grep { $_ ne $best} @{ $cl };
-	    $self->throw if @ogid;
-
-	    if ( $other_og ) {
+	    if ( $best->ogid ) {
+		$path='Best+/Other+ > collide()';
 		
-		if  ( $best->ogid ) {
-		    
-		    # 1. Both are in OGs
+		# 1. Both are in OGs
+		
+		my $og1 = $index->{ $best->ogid };
+		my $og2 = $index->{ $other_og->ogid }; 
+		map { $self->throw unless $best->isa( ref($_->[0]) ) } ( $og1, $og2 );
+		
+		# Iterate through species / OGs and show relationships between models
+		# Shit's ugly. 
 
-		    foreach my $x ($best,$other_og) {
-			$self->throw unless my $ogk = $index->{ $x->ogid }->[0];
-			if ($args->{'-verbose'}) {
-			    map { $_->output(
-				      -fh => $fh, -debug=>1, -recurse => 0,
-				      -append => [$_->score('global'), 
-						  ($_->organism eq $x->organism ? '**' : '')], 
-				      -prepend => [ ($x eq $best ? 'KEEP' : 'KILL'), $_->ogid ]
-				      ) } ($ogk->_orthogroup);
-			}			
-		    }
-		    
-		    # Distinguish between two important possibilities.
-		    # 1: In one species only, we have alternative models 
-		    # that have gotten - sloppily - placed into two unrelated OGs. 
-		    # 2: We have fully duplicated and parallel OGs. 
-		    # In this case we want to process through the whole OG and simplify
-		    # by removing the weaker of each pair.
-		    
-		    my $og1 = $index->{ $best->ogid }->[0];
-		    my $og2 = $index->{ $other_og->ogid }->[0];
-		    my ($res, $audit) = $og1->audit( -object => $og2 );
-		    
-		    if ( $res == scalar( map {$_} $og1->_orthogroup) ) { # map {} call here is required. black magic. 
-			
-			# should we insert a test here for extent of overlaps?
-			# already seems fairly daming if we have 5/5 with shared codons? 
-			# A decouple() method to remove shared codons would be nice 
-			# but we would have to justify where the breaks are... 
-			
-			$best = $og1->collide( -object => $og2, -cleanup => 1 );
-			
-		    } else {
-		    	$og2->_dissolve_orthogroup( -verbose => 1 );
-		    }
-		    
-		} elsif ( ! $best->ogid ) {
-
-		    # 2. $best is not in an OG. Either use other_og or port over OG relationships
-		    
-		    if ( ! $scr ) { # $scr=0 indicates a random choice by choose. just swap.  
-			$best = $other_og;
-		    } else {
-			$best->integrate( -object => $other_og, @_ );
+		if ($args->{'-verbose'}) {		
+		    foreach my $pos ( 0..$#{$og1} ) {
+			map { $_->[$pos]->output(
+				  -prepend => [ $_->[$pos]->organism ], @out,
+				  -append => [ ($_->[0] eq $best ? '**' : '') ] )
+			} ( $og1, $og2 );
+			print { $fh } (
+			    $og1->[$pos] eq $og2->[$pos] 
+			    ? ('Same','Same') 
+			    : ($og1->[$pos]->commoncodon( $og2->[$pos] ), 
+			       $og1->[$pos]->overlap( -object => $og2->[$pos] )) 
+			),"\n";
 		    }
 		}
+		
+		# Use collide to build best OG 
+		
+		$og1->[0]->collide( -object => $og2->[0], -cleanup => 1 );
+		
+	    } elsif ( ! $best->ogid ) {
+		
+		# 2. $best is not in an OG. Either use other_og or port over OG relationships
+		
+		if ( ! $scr ) { # $scr=0 indicates a random choice by choose. just swap.  
+		    $path="Best-/Other+ (other by OG) > swap";
+		    $best = $other_og;
+		} else {
+		    $path="Best-/Other+ (best by score: $scr) > integrate()";
+		    $best->integrate( -object => $other_og, @_ );
+		}
 	    }
-
-	    # delete redundant genes
-	    
-	    foreach my $del ( grep { $_->up } # we may have already delelted in the call to collide() above 
-			      grep { $_ ne $best } @{$cl} ) {
-		$del->output( -fh => $fh, -debug=>1, -og =>1, -prepend => ['DEL'])
-		    if $args->{'-verbose'} >= 2;
-		$self->remove( -object => $del );
-		$del->DESTROY;
-	    }
+	}#other_og 
+	
+	# delete redundant genes
+	
+	foreach my $del ( grep { $_->up } # may have delelted in the call to collide() above 
+			  grep { $_ ne $best } @{$cl} ) {
+	    $del->output(@out, -recurse => 0, -prepend => ['DEL']) 
+		if $args->{'-verbose'} >= 2;		
+	    $self->remove( -object => $del );
+	    $del->DESTROY;
 	}
-    }
+
+	print {$fh} "\n$path" if $args->{'-verbose'};	
+    }# cluster loop
 
     ################################
     # 2. Handle any other overlapping features 
@@ -1334,6 +1337,12 @@ sub _validate_overlapping_features {
     $self->index;
     return $self;
 }
+
+=head2 _genbank_gap_overlaps
+
+
+
+=cut 
 
 sub _genbank_gap_overlaps { 
     my $self = shift;
@@ -1423,18 +1432,19 @@ sub _genbank_gap_overlaps {
 	      map { print {$fh} $_->sequence(); }  ($nei,$gap);
 	      $self->throw("Gap encompasses feature");
 	      
-	  } elsif ( $gap->length==100 || $bad_trans_ratio ) { 
+	  } elsif ( $gap->gap_type == 2 || $bad_trans_ratio ) { 
 	      $path='internal'; # complete overlap of gap in coding 
-
-	      # cannot cross unknown GAP or >50% in known GAP 
+	      
+	      # cannot cross GAP of unknown length or have >50% in GAP of known length 
 	      # http://www.ncbi.nlm.nih.gov/genbank/wgs_gapped#both
-
+	      
 	      # eliminate all Ns from coding gene 
 
 	      $nei->excise_gaps( -override => 1 ); # ugly hardcode but OK 
 	      
-	      # colllect all the exons on either side of the gap 
-	      
+	      # collect all the exons on either side of the gap 
+	      # and split gene into to separate fragments 
+
 	      my @left = grep { $_->stop <= $gap->start } $nei->stream;
 	      my @right = grep { $_->start >= $gap->stop } $nei->stream;
 	      #print { STDERR } $self->_method, __LINE__, @left+0, @right+0, $nei->exons;
@@ -1452,7 +1462,7 @@ sub _genbank_gap_overlaps {
 	      $self->index;
 	  } else { 
 	      $path='tolerate'; 
-	      $nei->genbank_note('gap found within coding sequence');
+	      $nei->genbank_note('Coding sequence crosses assembly gap');
 	  }
 	  
 	  $path{ $path }++;
@@ -1520,7 +1530,7 @@ sub _genbank_gene_terminii {
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
 	# next unless $orf->up; # fixed below. No longer needed. 	
 
-	next unless $orf->ygob eq 'Anc_8.270';
+	#next unless $orf->ygob eq 'Anc_8.270';
 	$orf->output();
 
 	#################################	    
@@ -1715,7 +1725,7 @@ sub _genbank_gene_terminii {
 		}
 	    } else { $self->throw( $orf->first_codon ); } 
 
-	    $orf->update(); # TEMP / DEBUG 
+	    $orf->update();
 	    $fex->genbank_coords( -mode => 'start', -R => 1, -set => $start_gbk ) if $start_gbk;
 	    $orf->history( $self->_method.':'.$path );
 	}
