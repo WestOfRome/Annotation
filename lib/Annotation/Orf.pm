@@ -246,7 +246,7 @@ sub update {
     my $self=shift;
     my $args = {@_};
     
-    return $self if $Annotation::GLOBAL_DEBUG_SPEEDUP; # TEMP / DEBUG /DEVIN 
+    return $self if $GLOBAL_DEBUG_SPEEDUP; # TEMP / DEBUG /DEVIN 
     return $self if $self->assign =~ /GAP|FEATURE|RNA/;
 
     # RUN by default 
@@ -2360,11 +2360,13 @@ sub context {
     $args->{'-trna'} = -1 unless exists  $args->{'-trna'};
     $args->{'-gap'} = -1 unless exists  $args->{'-gap'};
 
-    # 
+    # should be $restrict{ 'REAL' } not $restrict{ '-real' }
+    # we do arg checking - repair - in ->neighbour()
     
     my %restrict = map { $_ => $args->{$_} } grep {!/distance|window|self|direction|all/} keys %{$args};
-    map { $restrict{$_}=0 } keys %restrict if $args->{'-all'};
-
+    map { $restrict{$_}=0 } ( map { '-'.uc($_) } map { $_->{INFER} } values %EVIDENCE) 
+	if $args->{'-all'};    
+    
     #
     
     my @left;
@@ -3149,7 +3151,8 @@ sub integrate {
 	my @og = @{$args->{'-index'}->{ $og2 }};
 	delete $args->{'-index'}->{ $og2 };
 	my $master = shift(@og);
-	print {STDERR} $obj->name, $og2, $master->name, $master->ogid;
+
+	#print {STDERR} $obj->name, $og2, $master->name, $master->ogid if $verb;
 	$master->_dissolve_orthogroup(-verbose => $verb );
 	
 	if ( ! $og1 ) {
@@ -3629,6 +3632,7 @@ sub spans {
     my $target = shift;
     
     $self->throw unless $target;
+    $self->throw unless $target =~ /^\d+$/ || $target->start =~ /^\d+$/;
 
     if ( ref($target) ) { # scalar not a reference 
 	return ( $self->start <= $target->start && $self->stop >= $target->stop ? 1 : 0 );
@@ -3949,7 +3953,7 @@ sub choose {
     ############################################
     # basic QC 
     ############################################
-
+    
     foreach my $obj ( @{$args->{'-object'}} ) {
 	$self->throw unless $self->isa(ref($obj));
 	$self->throw if $self eq $obj;
@@ -7273,10 +7277,13 @@ sub output {
 
     Compare two orthogroups for redundnacy. 
 
-    Returns number of shared objects only or 
+    Returns count of objects that are shared or
+    or species with a common codon.
 
+    With wantarray returns additional detial on extent of overlap.
+    
 =cut 
-
+    
 sub audit {
     my $self = shift;
     my $args = {@_};
@@ -7301,7 +7308,7 @@ sub audit {
     return (wantarray ? ($scr, \%res) : $scr );
 }
 
-=head2 collide() 
+=head2 collide( -object => $og, -cleanup => 0) 
 
     Compare two orthogroups and return the single best orthogroup
     by choosing between the two options for each species. 
@@ -7309,19 +7316,27 @@ sub audit {
     Choice uses orf->choose() (i.e., based on protein level comparison only) 
     The caller is responsible for synteny considerations. 
 
+    With -cleanup =>TRUE, genes that do not make it into new OG are 
+    removed and DESTROYed. 
+
 =cut 
 
 sub collide {
     my $self = shift;
     my $args = {@_};
-   
+
+    # arguments 
+
     $args->{'-verbose'}=0 unless exists  $args->{'-verbose'};
     $args->{'-cleanup'}=0 unless exists  $args->{'-cleanup'};
+    
+    # checking 
 
     $self->throw unless my $obj = $args->{'-object'};
     $self->throw unless $self->isa( ref($obj) );    
-    #map { $_->output( -fh => \*STDERR, -og => 1, -prepend => [$self->_method, __LINE__] ) } ( $self, $obj );
     map { $_->throw( -output => 1 ) unless $_->ogid && $_->_orthogroup } ( $self, $obj );
+    
+    # iterate to find best orthogroup 
 
     my (@new,@other);
     foreach my $sp1 ( $self->_orthogroup ) {
@@ -7330,17 +7345,26 @@ sub collide {
 	my $sp2 = ($meth eq $self->organism ? $obj : $obj->$meth );
 	my ($best_sp,$scr) = $sp1->choose( -object => $sp2, -strict => 0 );
 	push @new, $best_sp;
-	push @other, ( $best_sp eq $sp1 ? $sp2 : $sp1);
-    }
-    map { $_->_dissolve_orthogroup( -verbose => 1 ) } ($self,$obj);
 
+	# if they gene models are redundant, we have option to 
+	# gather and destroy (-cleanup => 1)
+	if ( $sp1->commoncodon($sp2) || $sp1->overlap( -object => $sp2 ) ) {
+	    push @other, ( $best_sp eq $sp1 ? $sp2 : $sp1);
+	}
+    }
+
+    # destroy old OGs and build new OG 
+    
+    map { $_->_dissolve_orthogroup( -verbose => 1 ) } ($self,$obj);
     my $lead = shift( @new );
     $lead->_define_orthogroup( @new );
+
+    # destruction as requested 
 
     if ( $args->{'-cleanup'} ) {
 	map { $_->DESTROY; } map { $_->up->remove( -object => $_ ); $_ } @other;
     }
-
+    
     return (wantarray ? ($lead, \@other) : $lead);
 }
 
@@ -7379,8 +7403,8 @@ sub _dissolve_orthogroup {
     if ( $args->{'-verbose'} ) {
 	my $fh = \*STDERR;
 	print {$fh} ">".$self->ogid, caller();
-	map { $_->oliver(-fh => $fh, -prepend => ['DISSOLVE', $_->ogid]), 
-	      -append => [$_->ogid] } ($self->_orthogroup);
+	map { $_->oliver(-fh => $fh, -prepend => ['DISSOLVE', $_->ogid], 
+			 -creator => 1) } ($self->_orthogroup);
     }
     
     foreach my $m ( @meth ) {
