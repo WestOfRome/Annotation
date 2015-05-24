@@ -3,6 +3,10 @@ package GlobalVars;
 use Exporter;
 @ISA = qw(Exporter);
 
+#########################################
+# Vars to share 
+#########################################
+
 @EXPORT = qw(
 	     %FEATURES	
 	     %HOMOLOGY	
@@ -25,21 +29,28 @@ use Exporter;
 	     $VERSION
              $eutils
              $GLOBAL_DEBUG_SPEEDUP
+             $GENBANK_GAP_LIMIT
 	     );
 
-# DEVIN -DROPBOX + GIT VERSION CONTROL TEST 
+
+#########################################
+# Debugging 
+#########################################
 
 $GLOBAL_DEBUG_SPEEDUP=1;
 
 #########################################
+# Generic 
 #########################################
-
-# used by all objects 
 
 $AUTHOR = 'Devin Scannell';
 $YEAR = 2012;
 $VERSION = 2.3;
 $TIME = time;
+
+#########################################
+# Sequence 
+#########################################
 
 %CODONS = (
     NNN => 'X',
@@ -107,12 +118,23 @@ $TRIPLET = 3;
 $START_CODON='ATG';
 $STOP_CODON=qr/^TAG|TGA|TAA$/;
 
+#########################################
+# Numeric constants 
+#########################################
+
 $INFINITY = 1e100;
 $NONZERO = 1e-20;
 
+#########################################
+# NCBI related 
+#########################################
+
 $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&rettype=gb&id=";
 
+$GENBANK_GAP_LIMIT = 0.5;
+
 #########################################
+# 
 #########################################
 
 # used by Genome objects 
@@ -526,6 +548,10 @@ $eutils = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=protein&r
     ); 
 
 @EVIDENCE = grep {!/NONE/} sort { $EVIDENCE{$a}->{ORDER} <=> $EVIDENCE{$b}->{ORDER} } keys %EVIDENCE;
+
+#########################################
+# Actual methods!  
+#########################################
 
 sub _evidence {
     my $self = shift;
