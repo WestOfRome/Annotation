@@ -1510,7 +1510,7 @@ sub _genbank_gap_overlaps {
 
     #print { $fh } '>', ( map { $_.":".($path{$_} || 0) } keys %path ); 
     map { $_->output(-fh => $fh) and  $_->throw unless $_->translatable } grep { $_->coding } $self->stream;
-
+    
     $self->index;
     return $self;
 }
@@ -1779,8 +1779,9 @@ sub _genbank_gene_terminii {
 
 	    $self->throw if $gap->assign ne 'GAP';
 	    $self->throw if $gap->spans( $orf ); 
-	    $self->throw if $orf->spans( $gap ) && # should be clean ( e.g., excise_gaps() ) 
-		$orf->overlap( -object => $gap, -bases => 1 ) > 6; # but allow messy borders
+	    #$gap->output( -fh => $fh ) and $orf->throw( -output => 1 ) if 
+	    #	$orf->spans( $gap ) && # should be clean ( e.g., excise_gaps() ) 
+	    #	$orf->overlap( -object => $gap, -bases => 1 ) > 6; # but allow messy borders
 	    
 	    $gap->output(
 		-prepend => [$self->_method, __LINE__, $gap->_top_tail], 
@@ -1818,10 +1819,6 @@ sub _genbank_gene_terminii {
 		    $path .= '0';
 		    $self->throw( $path );
 
-		} elsif ($gap->spans( $lex->stop(-R => 1) ) ) { # stop in a gap 
-		    $lex->stop( -adjust => -1, -R => 1) until ! $orf->overlap(-object => $gap);
-		    $path .= '1';
-
 		} elsif ( $lex->spans( $gap ) ) { # went _through_ a gap. probably found STOP. 
 		    
 		    # Criteria to this point means that _orf_ can span gap if 
@@ -1831,10 +1828,24 @@ sub _genbank_gene_terminii {
 		    
 		    if ( $orf->composition( -aa => 'X' ) >= $GENBANK_GAP_LIMIT ) {
 			$lex->stop( -adjust => -1, -R => 1) until ! $orf->overlap(-object => $gap);
-			$path .= '3';
+			$path .= '1';
 		    } else { $path .= '2'; }
 
-		} else { $self->throw; } # start(-R=>1) in gap but stop() not. have not though about this.. 
+		} elsif ($gap->spans( $lex->stop(-R => 1) ) ) { # stop in a gap 
+		    $lex->stop( -adjust => -1, -R => 1) until ! $orf->overlap(-object => $gap);
+		    $path .= '3';
+
+		} elsif ($gap->spans( $lex->start(-R => 1) ) ) { # stop in a gap 
+		    $lex->start( -adjust => +1, -R => 1) until 
+			! $orf->overlap(-object => $gap) && $orf->length % $TRIPLET == 0;
+		    $path .= '4';
+		    
+		} else { # diff exon overlaps 
+		    $orf->excise_gaps();
+		    $path .= '5';
+		    #map { $_->output( -debug => 1, -fh => $fh,-recurse => 1) } ( $gap, $orf);
+		    #$self->throw; 
+		}
 		
 	        $stop_gbk = $lex->stop( -R => 1 );
 		$lex->stop( -adjust => -1, -R => 1) until $orf->length % $TRIPLET == 0;
@@ -1857,7 +1868,7 @@ sub _genbank_gene_terminii {
 	    
 	    $orf->output( 
 		-prepend => [$self->_method, __LINE__, $orf->_top_tail], 
-		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk, $orf->composition( -aa => 'X' ) ], 
+		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
 		-fh => $fh,-recurse => 1) if $args->{'-verbose'}; 
 	} # STOP 
 
