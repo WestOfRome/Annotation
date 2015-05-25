@@ -1348,37 +1348,52 @@ sub _genbank_gap_overlaps {
     my $self = shift;
     my $args = { @_ };
 
+    #################################	        
+    # Basic QC 
+    #################################	    
+
     $self->throw unless my $index = $args->{'-index'};
     $self->throw unless ref($index) =~ /HASH/;
 
+    #################################	        
+    # Some vars. 
+    #################################	    
+
     my $fh = *STDERR;
-    
-    # set up comparisons: GAPS vs all else 
-    
+    my $loop=1;
     my %path;
+    my $old_path_internal = $path{ 'internal' };
+
+    #################################	        
+    # Set up comparisons: GAPS vs all else 
+    #################################	    
+
   GAP: foreach my $gap ( grep { $_->assign eq 'GAP' } $self->stream ) {
-      my @nei =  $gap->context( -distance => 10, -all => 1, -trna => 0, -feature => 0, -self => -1 );
-
-      foreach my $nei ( @nei ) {
-	  next GAP if $gap->genbank_exclude;
+      #next GAP if $gap->genbank_exclude;
+      
+      $gap->output(
+	  -debug => 1, 
+	  -prepend => [$self->_method, __LINE__, "GAP", $gap->_top_tail], 
+	  -fh => $fh, -recurse => 0, 
+	  -append => [$gap->genbank_exclude]
+	  ) if $args->{'-verbose'}; #=1;
+      
+      foreach my $nei ( $gap->context( -distance => 10, -all => 1, -self => -1 ) ) {
 	  next if $nei->genbank_exclude;
-
+	  
 	  ################################
 	  # identify overlaps we need to deal with  
 	  ################################
 
 	  next unless my $olap = $gap->overlap( -object => $nei, -compare => 'gross' );
-	  my $bad_trans_ratio = ( $nei->composition( -aa => 'X' ) > 0.5 ? 1 : 0);
+	  my $bad_trans_ratio = ( $nei->composition( -aa => 'X' ) >= $GENBANK_GAP_LIMIT ? 1 : 0);
 
-	  if ( $args->{'-verbose'} )  {
-	      print {$fh} "\n>>$olap", join(',',@{$self->scaffold});	      
-	      map { $_->output(
-			-debug => 1, 
-			-prepend => [$_->_top_tail], 
-			-fh => $fh, -recurse => 1
-			) } ($gap,$nei); # gap
-	      #$nei->glyph( -print => 'SGD', -tag => 'pre'.++$rando );
-	  }
+	  $nei->output(
+	      -debug => 1, 
+	      -prepend => [$self->_method, __LINE__, "TEST", $nei->_top_tail], 
+	      -fh => $fh, -recurse => 0,
+	      -append => [$olap, $bad_trans_ratio]
+	      ) if $args->{'-verbose'};
 	  
 	  # Not worth fighting for Celine's centromeres 
 	  $nei->genbank_exclude( $self->_method ) and next if 
@@ -1387,16 +1402,14 @@ sub _genbank_gap_overlaps {
 	  ################################
 	  # There are three options here : 
 	  ################################
-	  # 1. it is a partial overlap -->try tweak gene coordaintes 
+	  # 1. It is a partial overlap -->try tweak gene coordaintes 
 	  # -- We are not careful about how much we trim 
 	  # -- The only guarnatee is that you get something translateable
 	  # -- We assume that _make_genbank_gene_terminii() cleans up the mess. 
-	  # 2. Complete overlap of GAP in gene consisting of shitty frameshift exons. 
-	  # -- In this case we toss all exons except the best one, 
-	  # -- if we can turn it into a TYPE 1 problem. 
-	  # 3. Complete overlap that does not fit type 2. 
-	  # -- We do not try to fix. Just make a decision about whether we hide the 
-	  # -- GAP or the gene. Latter if shitty otherwise former. 
+	  # 2. Full overlap that fails Genbank criteria for GAP overlap 
+	  # -- We adjust coords or split gene as required 
+	  # 3. Full overlap that passes Genbank criteria for GAP overlap 
+	  # -- We do not try to change. Just add a note.
 
 	  my $path;
 	  if ( $olap < 1 ) {
@@ -1469,13 +1482,31 @@ sub _genbank_gap_overlaps {
 	  $nei->history( $self->_method.':'.$path );
 
 	  $nei->output(
-	      -prepend => [$self->_method, __LINE__, $path, $nei->_top_tail], 
-	      -append => [$nei->genbank_exclude || 0, $nei->sequence],
-	      -recurse => 1, -fh => $fh 
+	      -prepend => [$self->_method, __LINE__, $path.$loop, $nei->_top_tail], 
+	      #-append => [$nei->genbank_exclude || 0, $nei->sequence],
+	      -recurse => 0, -fh => $fh 
 	      ) if $args->{'-verbose'};
       }
+      print { $fh } "\n===========================" if $args->{'-verbose'}
   }
     $self->index;
+
+    ################################################
+    # Iternate as needed 
+    ################################################
+
+    # we need to run until steady state as new genes are created by fission 
+    # and will not be in initial test array. 
+    
+    if ( $path{ 'internal' } > $old_path_internal ) {
+	$old_path_internal =  $path{ 'internal' };
+	$loop++;
+	goto GAP;
+    }
+
+    ################################################
+    # Wrap up 
+    ################################################
 
     #print { $fh } '>', ( map { $_.":".($path{$_} || 0) } keys %path ); 
     map { $_->output(-fh => $fh) and  $_->throw unless $_->translatable } grep { $_->coding } $self->stream;
@@ -1530,13 +1561,20 @@ sub _genbank_gene_terminii {
     foreach my $orf ( grep { $_->coding( -pseudo => 1 ) } $self->stream) {	
 	# next unless $orf->up; # fixed below. No longer needed. 	
 
-	#next unless $orf->ygob eq 'Anc_8.270';
-	$orf->output();
+	#################################	    
+	# Debug nonsense 
+	#################################
 
+	#next unless $orf->ygob eq 'Anc_8.270';
+	#$orf->output();
+	# $args->{'-verbose'} = ( $orf->start > 260000 && $orf->stop < 280000 ? 2 : 0);
+
+	my ($start_mem, $stop_mem) = ($orf->start, $orf->stop);
+	
 	#################################	    
 	# Useful test cases 
 	#################################
-
+	
 	# 5' degraded in Sbay -- we find good ORF 
 	# next unless $orf->gene eq 'YOL053W'; 	
 	# Fully degraded in Sbay -- we shrink to absurdity 
@@ -1593,7 +1631,7 @@ sub _genbank_gene_terminii {
 	    $fex->start( -adjust => $TRIPLET, -R => 1) until 
 		( $orf->first_codon eq $START_CODON || $fex->length < 4 );
 
-	    if ($orf->first_codon eq $START_CODON ) {		
+	    if ($orf->first_codon eq $START_CODON ) { 
 		$path='move';
 		$orf->history( $self->_method.':'.$path );
 		goto FINDSTOP;
@@ -1626,21 +1664,8 @@ sub _genbank_gene_terminii {
 		$fex->start( -adjust => $TRIPLET, -R => 1);		
 		
 		##############################################################
-		# Merging is not appropriate action in _genbank_gene_trminii() 
-		# This functionality has been moved 
-		if ( 1==0 ) { 
-		    # YBL027W? YDR188W 
-		    $path = ( 
-			($upstream && 
-			 $upstream->coding(-pseudo => 1) && 
-			 $orf->homology(-object => $upstream) && 
-			 ($orf->fragment + $upstream->fragment) < 1) ? 'merge' : 'stop'
-			);
-		    
-		    if ( $path eq 'merge' ) {
-			$orf->merge( -object => $upstream, @_ ); # OGID index hash 
-		    }
-		}
+		# Merge possible here but not appropriate in _genbank_gene_trminii() 
+		# Functionality has been moved. 
 		##############################################################
 
 		$path='stop';
@@ -1747,75 +1772,97 @@ sub _genbank_gene_terminii {
 	    -direction => ( $orf->strand==-1 ? 'left' : 'right'),
 	    -gap => +1 # require 
 	    );
-	$self->throw if $gap && $gap->assign ne 'GAP';
-
-
-	$gap->output(
-	    -prepend => [$self->_method, __LINE__, $orf->_top_tail], 
-	    -recurse => 1, -fh => $fh ) if $args->{'-verbose'};
 	
-	# 
+	if ( $gap ) {
 
+	    # hygiene criteria. 
+
+	    $self->throw if $gap->assign ne 'GAP';
+	    $self->throw if $gap->spans( $orf ); 
+	    $self->throw if $orf->spans( $gap ) && # should be clean ( e.g., excise_gaps() ) 
+		$orf->overlap( -object => $gap, -bases => 1 ) > 6; # but allow messy borders
+	    
+	    $gap->output(
+		-prepend => [$self->_method, __LINE__, $gap->_top_tail], 
+		-recurse => 1, -fh => $fh ) if $args->{'-verbose'};
+	}
+
+	# OK. get into loop and start expansion  
+	
 	my $lex = $orf->exons( -query => 'last' );
 	unless ( $orf->last_codon =~ $STOP_CODON ) {	    
 	    
 	    # adjust last codon to downstream STOP (or other stopping condition)
-
+	    
 	    $lex->stop( -adjust => +$TRIPLET, -R => 1 ) until 
 		( $orf->last_codon =~ $STOP_CODON ||            # OK outcome 
 		  $orf->_terminal_dist2( $orf->strand ) < 3 ||  # almost OK outcome (must be exact) 
-		  ($gap && $gap->length==100 && $orf->overlap( -object => $gap )) || # NOT OK by Genbank 
-		  # ^ need to replace this gap test with a proper test for 'am I a scaffold join' per Genbank reqs
-		  ($gap && $orf->overlap( -object => $gap ) && $orf->composition( -aa => 'X' ) > 0.5 ) # NOT OK by Gbk
+		  ($gap && $gap->gap_type==2 && # Gap of N=100
+		   $orf->overlap( -object => $gap )) || # NOT OK by Genbank 
+		  ($gap && $gap->gap_type==1 && # Other gap
+		   $orf->overlap( -object => $gap ) && $orf->composition( -aa => 'X' ) >= 0.5 ) # NOT OK by Gbk
 		  # ^ need to fix this below as cannot have stop in gap region 
 		);
-	    #$orf->last_codon =~ /N$/);                   # NOT OK 		  	   
 	    
-	$orf->output(
-	    -prepend => [$self->_method, __LINE__, $orf->_top_tail], 
-	    -recurse => 1, -fh => $fh ) if $args->{'-verbose'};
-
+	    $orf->output(
+		-prepend => [$self->_method, __LINE__, $orf->_top_tail], 
+		-recurse => 1, -fh => $fh ) if $args->{'-verbose'};
+	    
 	    # Further adjust coords if no STOP to satisfy Genbank conventions 
 	    
-	    my ($stop_gbk, $path)=(undef, 'contig_end');
-	    if ( $orf->last_codon =~ $STOP_CODON ) {
+	    my ($stop_gbk, $path)=(undef, 'contig_end');	    
+	    if ( $gap && $orf->overlap(-object => $gap) ) { 
+		$path='gap';
+
+		if ( $gap->spans( $lex ) ) { # should pop last exon in this case. not throw. 
+		    $path .= '0';
+		    $self->throw( $path );
+
+		} elsif ($gap->spans( $lex->stop(-R => 1) ) ) { # stop in a gap 
+		    $lex->stop( -adjust => -1, -R => 1) until ! $orf->overlap(-object => $gap);
+		    $path .= '1';
+
+		} elsif ( $lex->spans( $gap ) ) { # went _through_ a gap. probably found STOP. 
+		    
+		    # Criteria to this point means that _orf_ can span gap if 
+		    # minimal sequence overlap (see hygiene criteria above). 
+		    # Last exon could not span gap. Until iterator above.  
+		    # If lex has gone clean through a gap, we need to spool back. 
+		    
+		    if ( $orf->composition( -aa => 'X' ) >= $GENBANK_GAP_LIMIT ) {
+			$lex->stop( -adjust => -1, -R => 1) until ! $orf->overlap(-object => $gap);
+			$path .= '3';
+		    } else { $path .= '2'; }
+
+		} else { $self->throw; } # start(-R=>1) in gap but stop() not. have not though about this.. 
+		
+	        $stop_gbk = $lex->stop( -R => 1 );
+		$lex->stop( -adjust => -1, -R => 1) until $orf->length % $TRIPLET == 0;
+		$self->throw if $lex->length < 1; # can do better than this surely.. 
+		
+	    } elsif ( $orf->last_codon =~ $STOP_CODON ) {
 	        $stop_gbk = $lex->stop( -R => 1 ); # do nothing 
 		$path='stop';
 
-	    } elsif ( $gap && $orf->overlap(-object => $gap) ) { 
-		# we are missing a test for $lex->length < 0
-		if ( $gap->spans( $lex ) ) {
-		    $self->throw;
-		} elsif ( $lex->spans( $gap ) ) {
-		    # do nothing will catch + fix below 
-		} elsif ($gap->spans( $lex->stop(-R => 1) ) ) {
-		    $lex->stop( -adjust => -1, -R => 1) until ! $orf->overlap(-object => $gap);
-		} else {} # start(-R=>1) is in gap but stop() not. 
-
-	        $stop_gbk = $lex->stop( -R => 1 );
-		$lex->stop( -adjust => -1, -R => 1) until $orf->length % $TRIPLET == 0;
-		$path='gap';
-
 	    } elsif ( $orf->_terminal_dist2( $orf->strand ) < 3 ) {
 		$stop_gbk = ($orf->strand == 1 ? $self->length : 1);
-
+		
 	    } elsif ( $orf->_terminal_dist2( $orf->strand ) == 0 ) {
 		$stop_gbk = $lex->stop( -R => 1 ); # do nothing 
 		
 	    } else { $self->throw(); }	    
-
+	    
 	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
 	    $orf->history( $self->_method.':'.$path );
 	    
 	    $orf->output( 
 		-prepend => [$self->_method, __LINE__, $orf->_top_tail], 
-		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
+		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk, $orf->composition( -aa => 'X' ) ], 
 		-fh => $fh,-recurse => 1) if $args->{'-verbose'}; 
-	    # && $lex->stop(-R => 1) != $stop_gbk;
-	}
+	} # STOP 
 
 	$orf->evaluate( -force => 1 );
-    }
+    } # orf loop 
 
     map { $_->structure } $self->stream;
 
