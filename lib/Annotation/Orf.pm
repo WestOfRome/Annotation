@@ -3281,18 +3281,36 @@ sub fission {
 sub overlap {
     my $self = shift;             
     my $args = {@_};	
+
+    ############################################
+    # Basic param checking 
+    ############################################
     
     $args->{'-contig'} = 1 unless exists $args->{'-contig'};
     $args->{'-compare'} = 'coords' unless exists $args->{'-compare'};
     $args->{'-evalue'} = 1e-10 unless exists $args->{'-evalue'};
+    $args->{'-bases'} = undef unless exists $args->{'-bases'};
+
     my $other = $args->{'-object'};
+
+    ############################################
+    # Basic QC 
+    ############################################
 
     $self->throw unless $self->isa(ref($other)) || -e $other;
     return undef unless ! $args->{'-contig'} || $self->up eq $other->up; # correct behaviour?
 
-    ######################
+    ############################################
+    # Jump to reference homolog alignment method 
+    # --> Overlap in protein space. Genomic overlap not tested.
+    ############################################
 
     goto HOMOLOG unless $args->{'-compare'} =~ /coords|gross|seq/;
+
+    ############################################
+    # Compare features based on genomic DNA coordinates. 
+    # --> Test overlap in genomic DNA space. 
+    ############################################
 
     # get shorty
     
@@ -3336,16 +3354,19 @@ sub overlap {
 	    );
     }
     
-    return 0 unless $bar;
-    $overlap /= $bar;
-    return $overlap;
+    $self->throw unless $bar;
+    return $overlap if $args->{'-bases'};
+    return $overlap / $bar;
 
-    ######################
-
+    ############################################
+    # Jump to reference homolog alignment method 
+    # --> Overlap in protein space. Genomic overlap not tested.
+    ############################################
+    
   HOMOLOG: 
 
     # get a homolog unless one supplied 
-
+    
     my ($file);
     if ( $args->{'-compare'} =~ /^hom/i ) {
 	return unless my @r = $self->homolog(-object => $other);
@@ -3363,7 +3384,11 @@ sub overlap {
 	return undef unless $o1 >= .5 && $o2 >= .5; # weird hard coding .. 
     }
 
-    # 
+    # Use exonerate to calcualte the overlap.
+    # @res = (\@caller, \@other, \@comparison)
+    # @comparison = ( $fractional_overlap, $overlap_score )
+    # $overlap_score: -1..1 
+    # We return $res[2]->[0]  
     
     my @res = $self->exonerate2(
 	-object => $other, 
@@ -3450,7 +3475,7 @@ sub composition {
 	my $aa = uc( $args->{'-aa'} );
 	$self->throw unless exists $AMINO_ACIDS{ $aa } || $aa eq 'X';
 	my @X = grep {/$aa/i} split//, $self->sequence( -molecule => 'aa' );
-	$ratio = (scalar(@x)/$self->length)*3;
+	$ratio = (scalar(@X)/$self->length)*3;
     } 
 
     return $ratio;
