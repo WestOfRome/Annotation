@@ -1057,7 +1057,8 @@ sub _validate_assembly_gaps {
 
 	} else {
 	    $path='border';
-	    
+	    my ($start,$stop)=($gap->start, $gap->stop);
+
 	    # greedy expand -- end with one base excess 
 	    
 	    $gap->down->start( -adjust => -1 )
@@ -1072,14 +1073,19 @@ sub _validate_assembly_gaps {
 	    $gap->down->stop( -adjust => -1 )
 		until $gap->last_base eq 'N';
 	    $self->throw if $gap->sequence =~ /[^N]/;
+
+	    # logging 
+
+	    if ( $gap->start != $start || $$gap->stop != $stop ) {
+		$gap->history( $self->_method.':'.$path );
+	    }
 	}
 	
 	# pretty pretty 
 	
 	$gap->output(
 	    -prepend => [ $self->_method, __LINE__, 'CURRENT' ], 
-	    -fh => $fh, 
-	    -append => [$path, "\n".$gap->sequence]#, "\n$seq"] 
+	    -fh => $fh, -append => [$path, $gap->_top_tail] 	    
 	    ) if $args->{'-verbose'};
     }
     map { $self->remove( -object => $_ ) } @remove;
@@ -1161,6 +1167,15 @@ sub _validate_assembly_gaps {
       my ($start) = map { $_->start } sort { $a->start <=> $b->start } @{ $cl };
       my ($stop) = map { $_->stop } sort { $b->stop <=> $a->stop } @{ $cl };
       my $gap = shift( @{ $cl } );
+
+      # logging 
+
+      if ( $gap->start != $start || $$gap->stop != $stop ) {
+	  $gap->history( $self->_method.':merge' );
+      }
+
+      # execution 
+
       $gap->start( $start );
       $gap->stop( $stop );
       map { $self->remove( -object => $_ ) }  @{ $cl };
@@ -1247,11 +1262,11 @@ sub _validate_overlapping_features {
 	my ($other_og, @ogid) = grep { $_->ogid } grep { $_ ne $best} @{ $cl };
 	$self->throw if @ogid;
 	
-	my $path='Best?/Other-';
+	my $path; # ='Best?/Other-';
 	if ( $other_og ) {
 	    
 	    if ( $best->ogid ) {
-		$path='Best+/Other+ > collide()';
+		$path='collide'; #Best+/Other+
 		
 		# 1. Both are in OGs
 		
@@ -1286,13 +1301,14 @@ sub _validate_overlapping_features {
 		# 2. $best is not in an OG. Either use other_og or port over OG relationships
 		
 		if ( ! $scr ) { # $scr=0 indicates a random choice by choose. just swap.  
-		    $path="Best-/Other+ (other by OG) > swap";
+		    $path='swap'; #"Best-/Other+ (other by OG) > swap";
 		    $best = $other_og;
 		} else {
-		    $path="Best-/Other+ (best by score: $scr) > integrate()";
+		    $path='integrate'; # "Best-/Other+ (best by score: $scr) > integrate()";
 		    $best->integrate( -object => $other_og, @_ );
 		}
-	    }
+	    } else { $self->throw; }
+
 	}#other_og 
 	
 	# delete redundant genes
@@ -1305,7 +1321,11 @@ sub _validate_overlapping_features {
 	    $del->DESTROY;
 	}
 
+	# logging 
+
+	$best->history( $self->_method.':'.$path ) if $path;
 	print {$fh} "\n$path" if $args->{'-verbose'};	
+
     }# cluster loop
 
     ################################
@@ -1323,9 +1343,8 @@ sub _validate_overlapping_features {
     
     my $clx;
     foreach my $cl ( grep { $#{$_} >0 } values %{$clref} ) {
-	if ( $args->{'-verbose'} >= 2 ) {
-	    map { $_->output( -fh => $fh, -debug => 1 ) } @{$cl}; 
-	}
+	map { $_->output( -fh => $fh, -debug => 1 ) } @{$cl}
+	if $args->{'-verbose'} >= 2
 	
 	$self->merge(
 	    -cluster => $cl,
@@ -1341,7 +1360,6 @@ sub _validate_overlapping_features {
 =head2 _genbank_gap_overlaps
 
 
-
 =cut 
 
 sub _genbank_gap_overlaps { 
@@ -1354,7 +1372,7 @@ sub _genbank_gap_overlaps {
 
     $self->throw unless my $index = $args->{'-index'};
     $self->throw unless ref($index) =~ /HASH/;
-
+    
     #################################	        
     # Some vars. 
     #################################	    
@@ -1374,8 +1392,7 @@ sub _genbank_gap_overlaps {
       $gap->output(
 	  -debug => 1, 
 	  -prepend => [$self->_method, __LINE__, "GAP", $gap->_top_tail], 
-	  -fh => $fh, -recurse => 0, 
-	  -append => [$gap->genbank_exclude]
+	  -fh => $fh, -recurse => 0, -append => [$gap->genbank_exclude]	  
 	  ) if $args->{'-verbose'}; #=1;
       
       foreach my $nei ( $gap->context( -distance => 10, -all => 1, -self => -1 ) ) {
@@ -1746,7 +1763,10 @@ sub _genbank_gene_terminii {
 			    -recurse => 0, -fh => $fh);
 		    }
 
-		    goto FINDSTART if $orf->first_codon ne $START_CODON && $poison<=1;
+		    if ($orf->first_codon ne $START_CODON && $poison<=1) {
+			$orf->history( $self->_method.':'.$path );
+			goto FINDSTART;
+		    }
 		}
 	    } else { $self->throw( $orf->first_codon ); } 
 
@@ -1862,19 +1882,21 @@ sub _genbank_gene_terminii {
 		$stop_gbk = $lex->stop( -R => 1 ); # do nothing 
 		
 	    } else { $self->throw(); }	    
-	    
+
+	    # wrap up 
+
 	    $lex->genbank_coords( -mode => 'stop', -R => 1, -set => $stop_gbk );
-	    $orf->history( $self->_method.':'.$path );
-	    
+	    $orf->history( $self->_method.':'.$path );	    
 	    $orf->output( 
 		-prepend => [$self->_method, __LINE__, $orf->_top_tail], 
 		-append => [ $path.':'.$lex->stop(-R => 1).' -> '.$stop_gbk ], 
 		-fh => $fh,-recurse => 1) if $args->{'-verbose'}; 
+
 	} # STOP 
 
 	$orf->evaluate( -force => 1 );
     } # orf loop 
-
+    
     map { $_->structure } $self->stream;
 
     return $self;
@@ -1889,9 +1911,18 @@ sub _genbank_quality_filter {
     my $args = {@_};
 
     $args->{'-orf_min'} = 15 unless exists $args->{'-orf_min'};
+
+    #################################	
+    # make sure it looks like a pseudogene 
+    #################################
     
     my $fh = \*STDERR;
-    
+    open(my $fhide, ">>".$self->up->organism.".hide");
+
+    #################################	
+    # make sure it looks like a pseudogene 
+    #################################
+
     my %path;
     foreach my $orf ( grep { $_->coding } $self->stream ) {	
 	
@@ -1932,11 +1963,17 @@ sub _genbank_quality_filter {
 	#################################
 	# finish up 
 	#################################
+
+	# logging etc
 	
 	$path{ $path }++;
+	$orf->history( $self->_method.':'.$path );
+	$orf->output(-prepend => [$self->_method, $path, $orf->_top_tail], -fh => $fhide, -recurse => 1);
 	$orf->output(-prepend => [$self->_method, $path, $orf->_top_tail], -fh => $fh, -recurse => 0)
 	    if $args->{'-verbose'};
-	
+
+	# clean up 
+
 	if ( $path =~ /delete/ ) {
 	    $self->remove( -object => $orf );
 	    $orf->DESTROY();
