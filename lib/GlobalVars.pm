@@ -37,7 +37,7 @@ use Exporter;
 # Debugging 
 #########################################
 
-$GLOBAL_DEBUG_SPEEDUP=1;
+$GLOBAL_DEBUG_SPEEDUP=0;
 
 #########################################
 # Generic 
