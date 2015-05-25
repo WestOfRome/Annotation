@@ -157,7 +157,9 @@ sub DESTROY {
 	    # we can only remove base from an object as 
 	    # part of ultimate destruction. all other 
 	    # dependent objects must be removed first
-	    $self->throw if $left || $right; 
+	    if ( $left || $right ) { # these should not exist at all ..
+		$self->throw unless ($left eq $self) && ($right eq $self);  
+	    }
 	    $up->{'DOWN'}=undef;
 	    
 	} elsif ( $up && ! ($self->left || $self->right) &&
