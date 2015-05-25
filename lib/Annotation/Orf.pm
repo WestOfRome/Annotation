@@ -5563,7 +5563,7 @@ sub evaluate {
 
     unless ( $self->rank < -1 ) {
 	$self->structure unless $args->{'-structure'} == 0;
-	($self->output && $self->throw( join("\n", 'Bad structure', $self->debug, $self->aax ) ))
+	($self->output && $self->throw( join("\n", 'Bad structure', $self->debug, $self->aa ) ))
 	    unless $args->{'-validate'} == 0 || $self->translatable;
     }
 
