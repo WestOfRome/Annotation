@@ -8358,6 +8358,42 @@ sub _make_genbank_compatible {
     return $self;
 }
 
+sub introspect {
+    my $self = shift;
+    my $args = {@_};
+    
+    $args->{'-fh'} = undef unless exists $args->{'-fh'};
+
+    ##################################
+    # 
+    ##################################
+
+    my $fh;
+    if ( $args->{'-fh'} ) {
+	$fh = $args->{'-fh'};
+    } else {
+	open($fh, ">".$self->organism.'.changes');
+    }
+
+    ##################################
+    # 
+    ##################################
+
+    foreach my $o ( map {$_->stream} $self->stream ) {
+
+	my $c1 = $o->coords( -string => 1);
+	my $c2 = $o->remember('coords');
+	my $XX = ( $c1 eq $c2 ? '' : '***');
+	
+	print {$fh}	
+	$o->remember('time'), 
+	$o->name, $o->remember('name'), $XX, 
+	$o->coords( -string => 1), $o->remember('coords'),
+	$o->_creator(), $o->history().'';
+    }
+
+    return $self;
+}
 
 #########################################
 # subroutines : private/experimental methods 
