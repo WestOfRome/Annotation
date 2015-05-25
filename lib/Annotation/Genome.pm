@@ -8338,17 +8338,17 @@ sub _make_genbank_compatible {
 
 	# B. relationships among features 
 
-	$scaf->_validate_overlapping_features(-index => $index, -verbose => $verb); #$verb );
-	
+	$scaf->_validate_overlapping_features(-index => $index, -verbose => $verb );
 	$scaf->merge( -index => $index, -verbose =>  $verb  );
 
 	# C. apply rules for gaps 
-	
+
 	$scaf->_genbank_gap_overlaps(-index => $index, -verbose => $verb  ); 
 	
 	# D. individual gene details 
 	
 	$scaf->_genbank_gene_terminii(-index => $index, -verbose => $verb  );
+	$scaf->_validate_overlapping_features(-index => $index, -verbose => $verb );
 
 	# E. toss rubbish genes ... 
 	
