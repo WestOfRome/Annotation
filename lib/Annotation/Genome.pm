@@ -7852,11 +7852,9 @@ sub log {
     if ( $args->{'-fh'} ) {
 	push @fh, $args->{'-fh'};
     } else {
-	my $stamp = $TIME; $self->history(0)->{STAMP}; # current run id 
-	#print $stamp;
-	open(my $fh, '>>'.$self->organism.'.'.$stamp.'.log') || $self->throw;
+	#my $stamp = $TIME; $self->history(0)->{STAMP}; # current run id 
+	my $fh = $self->_out_file_handle( -fh => 1, -suffix => 'log', -tag => undef );	    
 	$self->{'_LOG'} = $fh;
-	$args->{'-fh'} = $fh;
 	push @fh, $fh;
     }
 
@@ -8056,16 +8054,22 @@ sub summarize {
     my $self = shift;
     my $args = {@_};
 
+    ##################################
+    # 
+    ##################################
+
     $args->{'-nosynteny'} = undef unless exists $args->{'-nosynteny'};
     $args->{'-fast'} = undef unless exists $args->{'-fast'};
     $args->{'-fh'} = undef unless exists $args->{'-fh'};
+    $args->{'-screen'} = undef unless exists  $args->{'-screen'};
 
-    my $fh;
-    if (  $args->{'-fh'} ) {
-	$fh =  $args->{'-fh'};
-    } else {
-	$fh = *STDOUT;
-    }
+    my $fh = $args->{'-fh'} || 
+	$self->_out_file_handle( -fh => 1, -suffix => 'summary', -tag => undef );
+    close( $fh ) and $fh = *STDOUT if $args->{'-screen'};
+
+    ##################################
+    # Basic assembly stats 
+    ##################################
 
     print $fh '';
     print $fh $self->organism;
@@ -8077,20 +8081,28 @@ sub summarize {
     print $fh 'G50', $self->g50;
     print $fh '';
 
+    ##################################
+    # 
+    ##################################
+
     my %hash;
     my %syn;
     my %ygob;
+    my %mother;
+
     foreach my $contig ( $self->stream ) {
 	foreach my $orf ( $contig->stream ) {
 	    $orf->evaluate unless $args->{'-fast'};
 	    $hash{ $orf->assign }{ $orf->evidence }++;
+	    $mother{ $orf->assign }{ $orf->_creator }++;
+	    
 	    next if $args->{'-nosynteny'};
 
 	    $syn{ $orf->data('SYNT') }++;
 
 	    if ( $orf->ygob =~ /_(\d+)\.(\d+)/ ) {
 		my ($anc,$ord) = ($1, $2);
-
+		
 		my $syn2 = $orf->querysynteny(
 		    -distance => 2,
 		    -difference => 5,
@@ -8116,7 +8128,9 @@ sub summarize {
 	}
     }
     
-    # inference by evidence 
+    ##################################
+    # inference by evidence  
+    ##################################
 
     my %order;
     foreach my $q ( sort {$EVIDENCE{$a}->{'RANK'} <=>
@@ -8129,9 +8143,16 @@ sub summarize {
     }
     print $fh '';
 
+    foreach my $k (sort {$order{$a} <=> $order{$b}} keys %mother) {                             
+	print $fh $k, map { "$_:$mother{$k}{$_}" } keys %{$mother{$k}};
+    }
+    print $fh '';
+    
     return $self if $args->{'-nosynteny'};
 
+    ##################################
     # synteny by YGOB chromosome 
+    ##################################
 
     print $fh 'Synteny (# syntenic neighbours):';
 
@@ -8152,6 +8173,10 @@ sub summarize {
 	print $fh $chr, map { "$_:$maxsyn{$_}" } sort {$a <=> $b} keys %maxsyn ;
     }
 
+    ##################################
+    # OG sizes 
+    ##################################
+
     print $fh '';
     print $fh 'Ancestral Orthogroup Size:';
     map { print $fh "$_:$count{$_}" } sort {$a <=> $b} keys %count;
@@ -8159,6 +8184,62 @@ sub summarize {
 
     return $self;
 }
+
+=head2 file_dump
+=cut 
+
+sub file_dump {
+    my $self = shift;
+    my $args = {@_};
+
+    ########################
+    # 
+    ########################
+
+    my $tab = $self->_out_file_handle( -fh => 1, -tag => undef, -suffix => 'tab');    
+    my $gff = $self->_out_file_handle( -fh => 1, -tag => undef, -suffix => 'gff');
+    my $fsa = $self->_out_file_handle( -fh => 1, -tag => undef, -suffix => 'fsa');    
+    my $aa = $self->_out_file_handle( -fh => 1, -tag => undef, -suffix => 'aa');
+    my $ultra = $self->_out_file_handle( -fh => 1, -tag => undef, -suffix => 'ultrascaf');    
+    my $unplaced = $self->_out_file_handle( -fh => 1, -tag => undef, -suffix => 'unplaced');
+
+    ########################
+    # Summary files in machine-readable formats 
+    ########################
+
+    $self->output(-fh => $tab);
+    # $self->gff(-fh => $gff, -label => 'TBD', -notes =>'TBD');	
+    #-label => 'SSS June 2012 release. http://www.SaccharomycesSensuStricto.org/.'
+    #-notes => 'Various minor revisions from April 2011 release.'
+    
+    ########################
+    # Fasta sequence files 
+    ########################
+
+    foreach my $contig (sort {$a->id <=> $b->id} $self->stream) {	
+	$contig->fasta( -fh => ($contig->id <= 16 ? $ultra : $unplaced) );
+	
+	my @args = ('-format' => 'fasta', '-decorate' => 1);
+        foreach my $o ($contig->stream) {
+            print {$fsa} $o->sequence( @args, -molecule => 'dna') unless $o->assign eq 'GAP';
+	    print {$aa} $o->sequence( @args, -molecule => 'aa') if $o->coding;
+	}
+    }
+    
+    ########################
+    # 
+    ########################
+    
+    # ohnologs 
+    # tRNAs
+    # YGOB 
+    # introns 
+
+    return $self;
+}
+
+
+
 
 =head2 gff(-file => file.name, -exons => 1, -ygob => 1)
 
@@ -8178,6 +8259,8 @@ sub gff {
     if (exists $args->{'-file'}) {
 	$args->{'-file'} = '>'.$args->{'-file'} unless $args->{'-file'} =~ /^\>/;
         open($fh, $args->{'-file'}) || die($args->{'-file'});
+    } elsif (exists $args->{'-fh'}) {
+	$fh = $args->{'-fh'};	  
     } else {
         $fh = STDOUT;
     }

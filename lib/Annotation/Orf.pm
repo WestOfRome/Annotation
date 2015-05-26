@@ -67,6 +67,17 @@ sub AUTOLOAD {
 sub DESTROY {
     my $self=shift;
 
+
+    # -1. Logging 
+    # already removed()... 
+
+    #$self->up->up->log( 
+    #	-object => $self, 
+    # 	-prepend => ['DESTROY'], 
+    #	-debug => 1, 
+    #	-append => [$self->_top_and_tail]
+    #	);
+
     # 0. debugging.. 
 
     if ( my $debug = $self->_debug ) {
@@ -93,7 +104,7 @@ sub DESTROY {
     
     # 2. orthogroups 
     
-    #$self->throw("Must call _dissolve_orthogroup first.") if $self->ogid;
+    $self->throw("Must call _dissolve_orthogroup first.") if $self->ogid;
     
     # 3. Genbank split genes 
 
@@ -8222,9 +8233,10 @@ sub remember {
     my $key = '_'.(map {uc($_)} $self->_method)[0].'_'.( map {uc($_)} map {s/\-//; $_} ($keyX) )[0];
     $self->throw($key) unless $key =~ /NAME|COORDS|TIME|LENGTH/;
     
-    if ( $key eq 'LENGTH' ) {
+    if ( $key =~ /LENGTH/i ) {
 	my $len;
-	foreach my $ex ( split/\|/, $self->data($key) ) {
+	$key =~ s/LENGTH/COORDS/;
+	foreach my $ex ( split/\|/, $self->data( $key ) ) {
 	    my ($x,$y) = split/\:/, $ex;
 	    $len += abs( $x - $y)+1;
 	}
@@ -8661,11 +8673,23 @@ sub stop {
 
 sub history {
     my $self = shift;
-    my $new = shift;
+    my $args = {@_};
+    my $new = ($#_ == 0 ? shift(@_) : $args->{'-message'} );
     
-    push @{ $self->{'_HISTORY'} }, $new if $new;
-
-    return (wantarray ? @{$self->{'_HISTORY'}} : join( ' >> ', @{$self->{'_HISTORY'}} ));
+    if ( $new ) {
+	my ($method, $path) = split/\:/, $new;
+	push @{ $self->{'_HISTORY'} }, {
+	    'RUN' => $TIME,
+	    'METHOD' => $method,
+	    'ACTION' => $path
+	};
+    }
+    
+    return (
+	wantarray ? 
+	@{$self->{'_HISTORY'}} : 
+	join( ' >> ', map { $_.":".$_->{'METHOD'} } @{$self->{'_HISTORY'}} )
+	);
 }
 
 #########################################

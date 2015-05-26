@@ -1076,7 +1076,7 @@ sub _validate_assembly_gaps {
 
 	    # logging 
 
-	    if ( $gap->start != $start || $$gap->stop != $stop ) {
+	    if ( $gap->start != $start || $gap->stop != $stop ) {
 		$gap->history( $self->_method.':'.$path );
 	    }
 	}
@@ -1170,7 +1170,7 @@ sub _validate_assembly_gaps {
 
       # logging 
 
-      if ( $gap->start != $start || $$gap->stop != $stop ) {
+      if ( $gap->start != $start || $gap->stop != $stop ) {
 	  $gap->history( $self->_method.':merge' );
       }
 
@@ -1344,7 +1344,7 @@ sub _validate_overlapping_features {
     my $clx;
     foreach my $cl ( grep { $#{$_} >0 } values %{$clref} ) {
 	map { $_->output( -fh => $fh, -debug => 1 ) } @{$cl}
-	if $args->{'-verbose'} >= 2
+	if $args->{'-verbose'} >= 2;
 	
 	$self->merge(
 	    -cluster => $cl,
@@ -2414,9 +2414,8 @@ sub remove {
 
     unless ( $args->{'-log'} == 0 ) { # not a real part of annotation 
 	$args->{'-creator'}=1;
-	$args->{'-internal'}=1;
-	$args->{'-ohnolog'}=1;
-	$args->{'-append'}=[(caller(1))[0..4]];
+	$args->{'-debug'}=1;
+	#$args->{'-append'}=[ top and tail ];
 	$args->{'-prepend'}=['REMOVE'];
 	$self->up->log(%{$args}); # passed to orf->output
     }
