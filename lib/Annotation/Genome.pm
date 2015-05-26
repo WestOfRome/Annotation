@@ -5122,144 +5122,14 @@ sub syntenic_significance {
     return ($pval,$percentile,\@scores);
 }
 
-=head2 report()
 
-    Write various reports.
+################################################################
+################################################################
+# SECTION: Scaffolding 
+################################################################
+################################################################
 
-=cut 
-
-sub report {
-    my $self = shift;
-    my $args = {@_};
-
-    my @species = qw(Scer Spar Smik Skud Sbay);
-
-    #open(my $ty, ">".$TIME."_repeats.fsa"); # fasta repeat files. for BLASTIng.  
-    #open(my $hgt, ">".$TIME."_hgt.tab");    # HGT candidates 
-    #open(my $deep, ">".$TIME."_nosgd.tab"); # no SGD hit. no YGOB hit. interesting? 
-
-    my $ob = $self->ontology;
-    
-    ######################################
-    # tRNAs
-    ######################################
-    
-    my (%trna, %ygob);
-    foreach my $g ( $self->iterate ) {
-	foreach my $c ( $g->stream ) {
-	    foreach my $o ( $c->stream ) {
-		
-		if ( $o->assign =~ /RNA/ && $o->gene =~ /\:/) {
-		    push @{$trna{$o->gene}{$g->organism}}, $o->name;
-
-		} elsif ( $o->assign =~ /REPEAT/ ) {
-		    #print {$ty} $o->sequence(-molecule => 'dna', -format => 'fasta', -decorate => 1) ;
-		    
-		} elsif ( $o->evidence eq 'NCBI' && $o->data('NCBI') <= 1e-5 ) {
-		    #$o->oliver(-fh => $hgt, -append =>[$o->data('NCBI')] );
-
-		} elsif ( $o->assign eq 'REAL' && $o->evalue('ygob') <= 1e-5 ) {
-		    push @{$ygob{$o->ygob}{$g->organism}}, $o;
-		    push @{$names{$o->ygob}{$g->organism}}, ($o->ohnolog ? '*' : undef).$o->name;
-		    
-		} elsif ( $o->assign eq 'REAL' && $o->evidence ne 'YGOB' && 
-			  $o->sgd !~ /^Y[A-P][LR]\d{3}/ && $o->gene !~ /^Y[A-P][LR]\d{3}/ ) {
-		    #$o->oliver(-fh => $deep, -append => [$o->logscore('gene'), $o->gene] );
-		}            
-	    }
-	}
-    }
-    
-    ######################################
-    # tRNAs
-    ######################################
-
-    my $name = $TIME."_tRNA.tab";
-    print STDERR $name;
-    open(my $fh, ">$name" );
-
-    foreach my $tr ( keys %trna ) {
-	print {$fh} ">$tr [".
-	    join("|", ( map { scalar(@{$trna{$tr}{$_}}) || 0 } @species ) )
-	    ."]"; 
-	map { print {$fh} $_, (sort @{$trna{$tr}{$_}}) } @species;
-    }
-    
-    ######################################
-    # YGOB
-    ######################################
-
-    my $name = $TIME."_ygob.tab";
-    print STDERR $name;
-    open(my $fh, ">$name" );
-
-    foreach my $yg ( grep {/\w/} keys %names ) {
-	my @go = @{ $ob->{$yg}->{'P'} };
-	my $go = join(';', @go);
-	print {$fh} ">$yg [".
-	    join("|", ( map { scalar(@{$names{$yg}{$_}}) || 0 } @species ) )
-	    ."] $go"; 
-	map { print {$fh} $_, (sort @{$names{$yg}{$_}}) } @species;
-    }
-
-    ######################################
-    # Ohnologs
-    ######################################
-
-    my $name = $TIME."_ohnologs.tab";
-    print STDERR $name;
-    open(my $fh, ">$name" );
-    print $fh qw(#count SGD YGOB Gene ExonsSGD Exons ExonsDelta Critique SGD);
-
-    foreach my $yg ( keys %ygob ) {	
-	next unless my @x = grep { $_->ohnolog } map { @{$ygob{$yg}{$_}} } @species;
-	
-	my @go = @{ $ob->{$yg}->{'P'} };
-	my $go = join(';', @go);
-	print {$fh} ">$yg [".
-	    join("|", ( map { scalar(@{$ygob{$yg}{$_}}) || 0 } @species ) )
-	    ."] $go"; 
-        
-	foreach my $sp ( @species ) {
-	    print {$fh} $sp, 
-	    map { ($_->ohnolog ? '*' : undef).$_->name.'/'.$_->gene } (sort { $a->up->id <=> $b->up->id } @{$ygob{$yg}{$sp}});
-	}
-    }
-
-    ######################################
-    # INTRONS
-    ######################################
-    
-    my $name = $TIME."_introns.tab";
-    print STDERR $name;
-    open(my $fh, ">$name" );
-    print $fh qw(#count SGD YGOB Gene ExonsSGD Exons ExonsDelta Critique SGD);
-
-    foreach my $o ( grep {$_->orthogroup || $_->_debug} $self->orfs ) {    
-        my @int = grep { $_->data('INTRONS')>0 } ($o,$o->orthogroup);
-        my $sgd = $o->_debug;
-        my $sgd_ex = ($sgd ? $sgd->stream : 1);
-        next unless @int || $sgd_ex>1;
-	
-        my @intx = sort {$a <=> $b} map { $_->stream+0 } ($o,$o->orthogroup);
-        my $m = $intx[ ($#intx%2==0 ? $#intx : ($#intx+1))/2 ];
-        
-	my $exons='NA';
-	if( my $sgdx = $o->_debug ) {
-	    $exons = join('/', (map {$_->length} $sgdx->stream));
-	}
-	
-	
-	print {$fh} ++$icount, ($o->identify), $sgd_ex, $m, ($sgd_ex-$m), sprintf("%.2f",$o->critique), $exons, 
-	( map { join('/', $_->name, (map {$_->length} $_->stream) ) } ($o, $o->orthogroup) ),
-	$o->_genericlinks;
-    }
-    
-    return $self;
-}
-
-
-=head2 merge(-synteny => 2, -distance => 200, -align => .25)
+=head2 scaffold(-synteny => 2, -distance => 200, -align => .25)
     
     Goes through genome and looks for contigs that can be merged
     into super-contigs on basis of annotated genes and synteny
@@ -5949,10 +5819,11 @@ sub merge {
     return $self;
 }
 
-
-#########################################
-# subroutines : gene search 
-#########################################
+################################################################
+################################################################
+# SECTION: Gene search and analyses 
+################################################################
+################################################################
 
 =head2 recover(-intergenic => 90, -aa => [aa_db.fsa, 1e-3])
     
@@ -7322,9 +7193,11 @@ sub kaksQC {
     return \%kaks;
 }
 
-#########################################
-#  subroutines : accounting 
-#########################################
+################################################################
+################################################################
+# SECTION: Validation 
+################################################################
+################################################################
 
 =head2 _validate_data_structures
 
@@ -7453,142 +7326,6 @@ sub _validate_data_structures {
     } else { print "looks OK..."; }
     
     return $self;
-}
-
-=head2 gff2genome()
-
-    Read in a gff file (only tested for SGD format) and 
-    port annotations to cloned chromosomes. These are 
-    asymmetrically attached to the existing genome object
-    -- the new orfs/contigs can access their organism etc 
-    but the cloned contigs are not returned when stream
-    is called on the genome object. 
-
-    NB: We use the CDS field ONLY and assume the following: 
-
-    1. orf_classification\=([^;\s]+) 
-    2. Parent\=([^;\s]+) -> we use this to compose genes from exons
-
-=cut 
-
-sub gff2genome {
-    my $self = shift;
-    my $args = {@_}; 
-
-    $args->{'-source'} = 'SGD' unless exists $args->{'-source'};
-    $args->{'-restrict'} = undef unless exists $args->{'-restrict'};
-    $args->{'-dubious'} = undef unless exists $args->{'-dubious'};
-    $self->throw($args->{'-gff'}) unless $args->{'-gff'} && -e $args->{'-gff'};
-
-    my $fh = *STDERR;
-    my $attr = 'CLASS';
-
-    #########################################
-    # Read in GFF 
-    #########################################
-
-    my %chr;
-    open(GFF, $args->{'-gff'}) || $self->throw( $args->{'-gff'} );
-    while ( my $line = <GFF> ) {
-	next if $line =~ /^\#/;
-	my @r=split/\t/, $line;	
-	next unless $r[2] eq 'CDS';
-
-	########################	
-	# deal with chr format 
-	########################
-
-	$r[0] =~ s/chr//;
-	my $chr = ( $r[0] =~ /[XIV]/ ? arabic($r[0]) : $r[0]);
-	next if $chr =~ /\D/; #next if $r[0] =~ /micron|mito/i;
-
-	########################
-	# apply filters
-	########################
-
-	next if defined $args->{'-restrict'} && $args->{'-restrict'} != $chr;
-	next unless $args->{'-dubious'} || $r[8] !~ /orf_classification\=Dubious/i;
-
-	########################
-	# compose genes from exons/etc 
-	########################
-
-	$r[8] =~ /Parent\=([^;\s]+)/ || die; 
-	my $par = $1;
-	$par =~ s/_mRNA//i;
-
-	########################
-	# load up a data structure 
-	########################
-
-	push @{$chr{$chr}{$par}{'EXONS'}}, 
-	{
-	    START => $r[3],
-	    STOP => $r[4],
-	    STRAND => ($r[6].($r[6] =~ /1/ ? undef : '1'))*1,
-	    INTRON => [$INFINITY, $INFINITY]
-	};
-
-	$chr{$chr}{$par}{$attr} = ( $r[8] =~ /orf_classification\=([^;\s]+)/ ? $1 : 'OtherTE');
-    }
-    close GFF;
-
-    #########################################
-    # 
-    #########################################
-
-    my $newGenome = ref($self)->new
-	(
-	 ORGANISM => $self->organism,
-	 STRAIN => $self->strain,
-	 SAMPLE => $self->sample,
-	 # 
-	 COVERAGE => 'Unknown',
-	 SOURCE => $args->{'-source'},
-	 ANNOTATION => $args->{'-source'},
-	 # 
-	 WGD => $self->wgd
-	);
-
-    #########################################
-    # make pseudo-objects for chrs and ORFS 
-    #########################################
-    
-    foreach my $chr ( keys %chr ) {
-	$self->throw unless my $ctg = $self->find(-contig => $chr);
-	$self->throw unless my $clone = $ctg->clone;
-	$newGenome->add( -object => $clone );
-
-	# 
-
-	foreach my $gene (keys %{$chr{$chr}}) {
-	    my $orf = Annotation::Orf
-		->new(
-		START => 1,
-		STOP => 1,
-		STRAND => 1
-		);	    
-	    my $fex = $orf->down;
-	    foreach my $ex ( @{$chr{$chr}{$gene}{'EXONS'}} ) {
-		my $obj = Annotation::Exon->new( %{$ex} );
-		$orf->add(-object => $obj);
-	    }
-	    $orf->remove(-object => $fex);
-	    $fex->DESTROY;
-	    $orf->{'STRAND'} = $orf->down->strand; # fix orf str
-	    $orf->index;
-
-	    # set some vars. most notably we provide the nonstandad CLASS attribute  
-	    
-	    $orf->data($attr => ($chr{$chr}{$gene}{$attr} || 'unknown') );
-	    $orf->data('GENE' => $gene );	    
-	    $orf->_creator( $args->{'-source'} );
-	    $clone->add(-object => $orf); 
-	}
-	$clone->index;       
-    }   
-
-    return $newGenome;
 }
  
 =head2 compare(-gff => file, -object => genome, -restrict => contigid,
@@ -7817,29 +7554,6 @@ sub _guide_mode {
     return $self;
 }
 
-=head2 remember()
-
-    Store current gene name and sequence for every ORF object
-    so we can compare at a later stage. 
-
-=cut 
-
-sub remember {
-    my $self = shift;
-    my $args = { @_ };
-
-    foreach my $c ( $self->stream ) {
-	foreach my $o ( $c->stream ) {
-	    $o->throw() if  $o->remember( 'name' );
-	    $o->_remember( 'name' => $o->name ); # can extract Chr
-	    $o->_remember( 'coords' => $o->coords(-string => 1) );
-	    $o->_remember( 'time' => $TIME );
-	}
-    }
-
-    return $self;
-}
-
 sub _allObjectStream {
     my $self = shift;
     return( 
@@ -7850,10 +7564,148 @@ sub _allObjectStream {
 	);
 }
 
+################################################################
+################################################################
+# SECTION: I/O 
+################################################################
+################################################################
 
-################################################################
-# output/logging routines 
-################################################################
+=head2 gff2genome()
+
+    Read in a gff file (only tested for SGD format) and 
+    port annotations to cloned chromosomes. These are 
+    asymmetrically attached to the existing genome object
+    -- the new orfs/contigs can access their organism etc 
+    but the cloned contigs are not returned when stream
+    is called on the genome object. 
+
+    NB: We use the CDS field ONLY and assume the following: 
+
+    1. orf_classification\=([^;\s]+) 
+    2. Parent\=([^;\s]+) -> we use this to compose genes from exons
+
+=cut 
+
+sub gff2genome {
+    my $self = shift;
+    my $args = {@_}; 
+
+    $args->{'-source'} = 'SGD' unless exists $args->{'-source'};
+    $args->{'-restrict'} = undef unless exists $args->{'-restrict'};
+    $args->{'-dubious'} = undef unless exists $args->{'-dubious'};
+    $self->throw($args->{'-gff'}) unless $args->{'-gff'} && -e $args->{'-gff'};
+
+    my $fh = *STDERR;
+    my $attr = 'CLASS';
+
+    #########################################
+    # Read in GFF 
+    #########################################
+
+    my %chr;
+    open(GFF, $args->{'-gff'}) || $self->throw( $args->{'-gff'} );
+    while ( my $line = <GFF> ) {
+	next if $line =~ /^\#/;
+	my @r=split/\t/, $line;	
+	next unless $r[2] eq 'CDS';
+
+	########################	
+	# deal with chr format 
+	########################
+
+	$r[0] =~ s/chr//;
+	my $chr = ( $r[0] =~ /[XIV]/ ? arabic($r[0]) : $r[0]);
+	next if $chr =~ /\D/; #next if $r[0] =~ /micron|mito/i;
+
+	########################
+	# apply filters
+	########################
+
+	next if defined $args->{'-restrict'} && $args->{'-restrict'} != $chr;
+	next unless $args->{'-dubious'} || $r[8] !~ /orf_classification\=Dubious/i;
+
+	########################
+	# compose genes from exons/etc 
+	########################
+
+	$r[8] =~ /Parent\=([^;\s]+)/ || die; 
+	my $par = $1;
+	$par =~ s/_mRNA//i;
+
+	########################
+	# load up a data structure 
+	########################
+
+	push @{$chr{$chr}{$par}{'EXONS'}}, 
+	{
+	    START => $r[3],
+	    STOP => $r[4],
+	    STRAND => ($r[6].($r[6] =~ /1/ ? undef : '1'))*1,
+	    INTRON => [$INFINITY, $INFINITY]
+	};
+
+	$chr{$chr}{$par}{$attr} = ( $r[8] =~ /orf_classification\=([^;\s]+)/ ? $1 : 'OtherTE');
+    }
+    close GFF;
+
+    #########################################
+    # 
+    #########################################
+
+    my $newGenome = ref($self)->new
+	(
+	 ORGANISM => $self->organism,
+	 STRAIN => $self->strain,
+	 SAMPLE => $self->sample,
+	 # 
+	 COVERAGE => 'Unknown',
+	 SOURCE => $args->{'-source'},
+	 ANNOTATION => $args->{'-source'},
+	 # 
+	 WGD => $self->wgd
+	);
+
+    #########################################
+    # make pseudo-objects for chrs and ORFS 
+    #########################################
+    
+    foreach my $chr ( keys %chr ) {
+	$self->throw unless my $ctg = $self->find(-contig => $chr);
+	$self->throw unless my $clone = $ctg->clone;
+	$newGenome->add( -object => $clone );
+
+	# 
+
+	foreach my $gene (keys %{$chr{$chr}}) {
+	    my $orf = Annotation::Orf
+		->new(
+		START => 1,
+		STOP => 1,
+		STRAND => 1
+		);	    
+	    my $fex = $orf->down;
+	    foreach my $ex ( @{$chr{$chr}{$gene}{'EXONS'}} ) {
+		my $obj = Annotation::Exon->new( %{$ex} );
+		$orf->add(-object => $obj);
+	    }
+	    $orf->remove(-object => $fex);
+	    $fex->DESTROY;
+	    $orf->{'STRAND'} = $orf->down->strand; # fix orf str
+	    $orf->index;
+
+	    # set some vars. most notably we provide the nonstandad CLASS attribute  
+	    
+	    $orf->data($attr => ($chr{$chr}{$gene}{$attr} || 'unknown') );
+	    $orf->data('GENE' => $gene );	    
+	    $orf->_creator( $args->{'-source'} );
+	    $clone->add(-object => $orf); 
+	}
+	$clone->index;       
+    }   
+
+    return $newGenome;
+}
+
 
 sub store { my $self = shift; return $self->backup(@_); }
 
@@ -7862,8 +7714,8 @@ sub store { my $self = shift; return $self->backup(@_); }
     Backup object to file using Storable. We try to save object 
     at all costs and will try work around broken args, filehandles etc. 
 
-    Filename is chosen by _outfilenamehandle(), typically of form 
-    /full/path/Spec_time.tag.suffix
+    Filename is chosen by _out_file_handle(), typically of form 
+    /full/path/Spec_tag.time.suffix
     
     We automatically close and delete any open filehandles. 
     
@@ -7880,7 +7732,7 @@ sub backup {
     # the storable at all costs. And alert user to problems. 
     ########################################   
 
-    my $file = $self->_outfilenamehandle( 
+    my $file = $self->_out_file_handle( 
 	@_, -suffix => ($#{$args->{'-bind'}} >= 0) ? 'bgo' : 'sto');
 
     ########################################   
@@ -7922,59 +7774,33 @@ sub backup {
     return $self;
 }
 
-=head2 _outfilenamehandle(-path => `pwd`, -id => organism, -time => $TIME,
-    -tag => , -suffix => undef, -fh => undef, -append => undef) 
+################################################################
+################################################################
+# SECTION: Output/logging routines 
+################################################################
+################################################################
 
-    Return a filename (default) or filehandle based on supplied params:
+=head2 remember()
 
-    /full/path/Spec_time.tag.suffix
+    Store current gene name and sequence for every ORF object
+    so we can compare at a later stage. 
 
 =cut 
 
-sub _outfilenamehandle {
+sub remember {
     my $self = shift;
-    my $args = {@_};
-    
-    $args->{'-id'} = $self->organism unless exists  $args->{'-id'};
-    $args->{'-time'} = $TIME unless exists $args->{'-time'};
-    $args->{'-tag'} = ++$STORE unless exists $args->{'-tag'};
-    $args->{'-suffix'} = undef unless exists $args->{'-suffix'};
-    # 
-    $args->{'-path'} = `pwd` unless exists $args->{'-path'};
-    chomp( $args->{'-path'} );
-    # 
-    $args->{'-fh'} = undef unless exists $args->{'-fh'};
-    $args->{'-append'} = undef unless exists $args->{'-append'};
-    
-    
-    ########################################
-    # construct a file name 
-    ########################################
-    
-    my $file = $args->{'-id'}.'_'.$args->{'-time'}.'.'.$args->{'-tag'};
-    $file .= '.'.$args->{'-suffix'} if $args->{'-suffix'};
-    $file = $args->{'-path'}.'/'.$file if
-	( -d $args->{'-path'} && -w $args->{'-path'} && $file !~ /\// );
-    
-    ########################################
-    # check 
-    ########################################
-    
-    if ( -e $file ) {
-	$self->warn("$file exists!");
-	$file.='.avoid-overwrite'.int(rand(10000000));
+    my $args = { @_ };
+
+    foreach my $c ( $self->stream ) {
+	foreach my $o ( $c->stream ) {
+	    $o->throw() if  $o->remember( 'name' );
+	    $o->_remember( 'name' => $o->name ); # can extract Chr
+	    $o->_remember( 'coords' => $o->coords(-string => 1) );
+	    $o->_remember( 'time' => $TIME );
+	}
     }
-    
-    system("touch $file");
-    $self->warn("$file: bad touch!") unless -e $file && -w $file;
-    
-    if ( $args->{'-fh'} ) {
-       open(my $fh, ($args->{'-append'} ? '>>' : '>').$file) || 
-	   $self->throw("Open: $file");
-       return $fh;
-    }
-    
-    return $file;
+
+    return $self;
 }
 
 =head2 history(newhash|integer) 
@@ -8026,7 +7852,7 @@ sub log {
     if ( $args->{'-fh'} ) {
 	push @fh, $args->{'-fh'};
     } else {
-	my $stamp = $self->history(0)->{STAMP}; # current run id 
+	my $stamp = $TIME; $self->history(0)->{STAMP}; # current run id 
 	#print $stamp;
 	open(my $fh, '>>'.$self->organism.'.'.$stamp.'.log') || $self->throw;
 	$self->{'_LOG'} = $fh;
@@ -8044,6 +7870,142 @@ sub log {
 	$args->{'-object'}->output(%{$args}) if $args->{'-object'};
     }
 
+    return $self;
+}
+
+=head2 report()
+
+    Write various reports.
+
+=cut 
+
+sub report {
+    my $self = shift;
+    my $args = {@_};
+
+    my @species = qw(Scer Spar Smik Skud Sbay);
+
+    #open(my $ty, ">".$TIME."_repeats.fsa"); # fasta repeat files. for BLASTIng.  
+    #open(my $hgt, ">".$TIME."_hgt.tab");    # HGT candidates 
+    #open(my $deep, ">".$TIME."_nosgd.tab"); # no SGD hit. no YGOB hit. interesting? 
+
+    my $ob = $self->ontology;
+    
+    ######################################
+    # tRNAs
+    ######################################
+    
+    my (%trna, %ygob);
+    foreach my $g ( $self->iterate ) {
+	foreach my $c ( $g->stream ) {
+	    foreach my $o ( $c->stream ) {
+		
+		if ( $o->assign =~ /RNA/ && $o->gene =~ /\:/) {
+		    push @{$trna{$o->gene}{$g->organism}}, $o->name;
+
+		} elsif ( $o->assign =~ /REPEAT/ ) {
+		    #print {$ty} $o->sequence(-molecule => 'dna', -format => 'fasta', -decorate => 1) ;
+		    
+		} elsif ( $o->evidence eq 'NCBI' && $o->data('NCBI') <= 1e-5 ) {
+		    #$o->oliver(-fh => $hgt, -append =>[$o->data('NCBI')] );
+
+		} elsif ( $o->assign eq 'REAL' && $o->evalue('ygob') <= 1e-5 ) {
+		    push @{$ygob{$o->ygob}{$g->organism}}, $o;
+		    push @{$names{$o->ygob}{$g->organism}}, ($o->ohnolog ? '*' : undef).$o->name;
+		    
+		} elsif ( $o->assign eq 'REAL' && $o->evidence ne 'YGOB' && 
+			  $o->sgd !~ /^Y[A-P][LR]\d{3}/ && $o->gene !~ /^Y[A-P][LR]\d{3}/ ) {
+		    #$o->oliver(-fh => $deep, -append => [$o->logscore('gene'), $o->gene] );
+		}            
+	    }
+	}
+    }
+    
+    ######################################
+    # tRNAs
+    ######################################
+
+    my $name = $TIME."_tRNA.tab";
+    print STDERR $name;
+    open(my $fh, ">$name" );
+
+    foreach my $tr ( keys %trna ) {
+	print {$fh} ">$tr [".
+	    join("|", ( map { scalar(@{$trna{$tr}{$_}}) || 0 } @species ) )
+	    ."]"; 
+	map { print {$fh} $_, (sort @{$trna{$tr}{$_}}) } @species;
+    }
+    
+    ######################################
+    # YGOB
+    ######################################
+
+    my $name = $TIME."_ygob.tab";
+    print STDERR $name;
+    open(my $fh, ">$name" );
+
+    foreach my $yg ( grep {/\w/} keys %names ) {
+	my @go = @{ $ob->{$yg}->{'P'} };
+	my $go = join(';', @go);
+	print {$fh} ">$yg [".
+	    join("|", ( map { scalar(@{$names{$yg}{$_}}) || 0 } @species ) )
+	    ."] $go"; 
+	map { print {$fh} $_, (sort @{$names{$yg}{$_}}) } @species;
+    }
+
+    ######################################
+    # Ohnologs
+    ######################################
+
+    my $name = $TIME."_ohnologs.tab";
+    print STDERR $name;
+    open(my $fh, ">$name" );
+    print $fh qw(#count SGD YGOB Gene ExonsSGD Exons ExonsDelta Critique SGD);
+
+    foreach my $yg ( keys %ygob ) {	
+	next unless my @x = grep { $_->ohnolog } map { @{$ygob{$yg}{$_}} } @species;
+	
+	my @go = @{ $ob->{$yg}->{'P'} };
+	my $go = join(';', @go);
+	print {$fh} ">$yg [".
+	    join("|", ( map { scalar(@{$ygob{$yg}{$_}}) || 0 } @species ) )
+	    ."] $go"; 
+        
+	foreach my $sp ( @species ) {
+	    print {$fh} $sp, 
+	    map { ($_->ohnolog ? '*' : undef).$_->name.'/'.$_->gene } (sort { $a->up->id <=> $b->up->id } @{$ygob{$yg}{$sp}});
+	}
+    }
+
+    ######################################
+    # INTRONS
+    ######################################
+    
+    my $name = $TIME."_introns.tab";
+    print STDERR $name;
+    open(my $fh, ">$name" );
+    print $fh qw(#count SGD YGOB Gene ExonsSGD Exons ExonsDelta Critique SGD);
+
+    foreach my $o ( grep {$_->orthogroup || $_->_debug} $self->orfs ) {    
+        my @int = grep { $_->data('INTRONS')>0 } ($o,$o->orthogroup);
+        my $sgd = $o->_debug;
+        my $sgd_ex = ($sgd ? $sgd->stream : 1);
+        next unless @int || $sgd_ex>1;
+	
+        my @intx = sort {$a <=> $b} map { $_->stream+0 } ($o,$o->orthogroup);
+        my $m = $intx[ ($#intx%2==0 ? $#intx : ($#intx+1))/2 ];
+        
+	my $exons='NA';
+	if( my $sgdx = $o->_debug ) {
+	    $exons = join('/', (map {$_->length} $sgdx->stream));
+	}
+	
+	
+	print {$fh} ++$icount, ($o->identify), $sgd_ex, $m, ($sgd_ex-$m), sprintf("%.2f",$o->critique), $exons, 
+	( map { join('/', $_->name, (map {$_->length} $_->stream) ) } ($o, $o->orthogroup) ),
+	$o->_genericlinks;
+    }
+    
     return $self;
 }
 
@@ -8198,10 +8160,6 @@ sub summarize {
     return $self;
 }
 
-#########################################
-# subroutines : output 
-#########################################
-
 =head2 gff(-file => file.name, -exons => 1, -ygob => 1)
 
     Write gff file. Evidence is written an tag=value pairs.
@@ -8282,7 +8240,7 @@ sub genbank_tbl {
     # standard components 
     #################################
     
-    $self->_make_genbank_compatible( @_ );
+    $self->_make_genbank_compatible( @_ ) if $args->{'-edit_ok'};
 
     #################################
     # standard components 
@@ -8306,75 +8264,25 @@ sub genbank_tbl {
     return 1;
 }
 
-#########################################
-# subroutines : aliases
-#########################################
+=head2 introspect
 
-sub species { my $self=shift; return $self->organism(@_); }
-sub orthogroups { my $self = shift; return grep { $_->ogid } $self->orfs(-noncoding => 1); }
+    Output file that compares current annotation to the one
+    stored on the rememeber() variables so recent changes can be seen. 
 
-#########################################
-# subroutines : private/experimental methods 
-#########################################
-
-sub _make_genbank_compatible {
-    my $self = shift;
-    my $args = {@_};
-
-    $self->throw unless my $index = $args->{'-index'};
-
-    my $fh = \*STDERR;
-    my $verb = 0;
-    
-    foreach my $scaf ( sort {$a->id <=> $b->id} $self->stream ) {
-	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
-
-	#print {$fh} $scaf->id;
-	#next if $scaf->id > 16;
-
-	# A. gross asssembly issues ....
-
-	$scaf->_validate_assembly_gaps( -verbose => $verb );
-
-	# B. relationships among features 
-
-	$scaf->_validate_overlapping_features(-index => $index, -verbose => $verb );
-	$scaf->merge( -index => $index, -verbose =>  $verb  );
-
-	# C. apply rules for gaps 
-
-	$scaf->_genbank_gap_overlaps(-index => $index, -verbose => $verb  ); 
-	
-	# D. individual gene details 
-	
-	$scaf->_genbank_gene_terminii(-index => $index, -verbose => $verb  );
-	$scaf->_validate_overlapping_features(-index => $index, -verbose => $verb );
-
-	# E. toss rubbish genes ... 
-	
-	$scaf->_genbank_quality_filter(-index => $index, -verbose => $verb ); 
-    }
-    
-    return $self;
-}
+=cut 
 
 sub introspect {
     my $self = shift;
     my $args = {@_};
     
-    $args->{'-fh'} = undef unless exists $args->{'-fh'};
-
     ##################################
     # 
     ##################################
 
-    my $fh;
-    if ( $args->{'-fh'} ) {
-	$fh = $args->{'-fh'};
-    } else {
-	open($fh, ">".$self->organism.'.changes');
-    }
-
+    $args->{'-fh'} = undef unless exists $args->{'-fh'};
+    my $fh = $args->{'-fh'} || 
+	$self->_out_file_handle( -fh => 1, -suffix => 'delta', -tag => undef );
+    
     ##################################
     # 
     ##################################
@@ -8386,18 +8294,142 @@ sub introspect {
 	my $XX = ( $c1 eq $c2 ? '' : '***');
 	
 	print {$fh}	
-	$o->remember('time'), 
+	$TIME, $o->remember('time'), 
 	$o->name, $o->remember('name'), $XX, 
+	$o->first_codon, $o->last_codon,
+	$o->length, $o->remember('length'),
 	$o->coords( -string => 1), $o->remember('coords'),
 	$o->_creator(), $o->history().'';
     }
 
+    close( $fh );
+    return $self;
+}
+
+
+################################################################
+################################################################
+# SECTION: Aliases
+################################################################
+################################################################
+
+sub species { my $self=shift; return $self->organism(@_); }
+sub orthogroups { my $self = shift; return grep { $_->ogid } $self->orfs(-noncoding => 1); }
+
+
+################################################################
+################################################################
+# SECTION: Private methods 
+################################################################
+################################################################
+
+sub _make_genbank_compatible {
+    my $self = shift;
+    my $args = {@_};
+
+    ################################# 
+    # Args and vars 
+    #################################
+    
+    $self->throw unless $args->{'-index'} && ref( $args->{'-index'} ) =~ /HASH/i;
+    $args->{'-verbose'} = 0 unless exists $args->{'-verbose'};
+
+    my $fh = \*STDERR;
+
+    ################################# 
+    # Last codon 
+    #################################
+    
+    foreach my $scaf ( sort {$a->id <=> $b->id} $self->stream ) {
+	next unless ! $args->{'-debug'} || $scaf->id == $args->{'-debug'};
+	
+	# A. gross asssembly issues ....
+	
+	$scaf->_validate_assembly_gaps( %{$args} );
+
+	# B. relationships among features 
+	
+	$scaf->_validate_overlapping_features( %{$args} );
+	$scaf->merge( %{$args} );
+
+	# C. apply rules for gaps 
+
+	$scaf->_genbank_gap_overlaps( %{$args} ); 
+	
+	# D. individual gene details 
+	
+	$scaf->_genbank_gene_terminii( %{$args} ); 
+	$scaf->_validate_overlapping_features( %{$args} ); 
+
+	# E. toss rubbish genes ... 
+	
+	$scaf->_genbank_quality_filter( %{$args} );
+    }
+    
     return $self;
 }
 
 #########################################
-# subroutines : private/experimental methods 
+# Minor / supportive private methods
 #########################################
+
+=head2 _out_file_handle(-path => `pwd`, -id => organism, -time => $TIME,
+    -tag => , -suffix => undef, -fh => undef, -append => undef) 
+
+    Return a filename (default) or filehandle based on supplied params:
+
+    /full/path/Spec_time.tag.suffix
+
+=cut 
+
+sub _out_file_handle {
+    my $self = shift;
+    my $args = {@_};
+    
+    $args->{'-id'} = $self->organism unless exists  $args->{'-id'};
+    $args->{'-time'} = $TIME unless exists $args->{'-time'};
+    $args->{'-tag'} = ++$STORE unless exists $args->{'-tag'};
+    $args->{'-suffix'} = undef unless exists $args->{'-suffix'};
+    # 
+    $args->{'-path'} = `pwd` unless exists $args->{'-path'};
+    chomp( $args->{'-path'} );
+    # 
+    $args->{'-fh'} = undef unless exists $args->{'-fh'};
+    $args->{'-append'} = undef unless exists $args->{'-append'};
+    
+    
+    ########################################
+    # construct a file name 
+    ########################################
+    
+    my $file = $args->{'-id'}.
+	($args->{'-tag'} ? '_'.$args->{'-tag'} : undef).
+	'.'.$args->{'-time'}.
+	($args->{'-suffix'} ? '.'.$args->{'-suffix'} : undef);
+    
+    $file = $args->{'-path'}.'/'.$file if
+	( -d $args->{'-path'} && -w $args->{'-path'} && $file !~ /\// );
+    
+    ########################################
+    # check 
+    ########################################
+    
+    if ( -e $file && ! $args->{'-append'} ) {
+	$self->warn("$file exists!");
+	$file.='.avoid-overwrite'.int(rand(10000000));
+    }
+    
+    system("touch $file");
+    $self->warn("$file: bad touch!") unless -e $file && -w $file;
+    
+    if ( $args->{'-fh'} ) {
+       open(my $fh, ($args->{'-append'} ? '>>' : '>').$file) || 
+	   $self->throw("Open: $file");
+       return $fh;
+    }
+    
+    return $file;
+}
 
 sub _valid_file {
     my $self = shift;
