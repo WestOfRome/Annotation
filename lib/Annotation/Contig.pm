@@ -1917,7 +1917,12 @@ sub _genbank_quality_filter {
     #################################
     
     my $fh = \*STDERR;
-    open(my $fhide, ">>".$self->up->organism.".hide");
+    my $fhide = $self->up->_out_file_handle(
+	-fh => 1, 
+	-suffix => 'hide', 
+	-tag => undef, 
+	-append => 1
+	);
 
     #################################	
     # make sure it looks like a pseudogene 
@@ -1981,12 +1986,17 @@ sub _genbank_quality_filter {
     }
 
     #################################
-    # print summary 
+    # print summary and clean up 
     #################################
     
     print { $fh } '>'.$self->organism.$self->id, 
     ( map { $_.":".($path{$_} || 0) } qw(delete og-delete hide hide-small) ) ;    
-    
+    map { close($_) } ( $fh, $fhide);
+
+    #################################
+    # fin
+    #################################
+
     $self->index;
     return $self;
 }
