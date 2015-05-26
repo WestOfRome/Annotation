@@ -8220,8 +8220,17 @@ sub remember {
 
     $self->throw unless my $keyX = shift;
     my $key = '_'.(map {uc($_)} $self->_method)[0].'_'.( map {uc($_)} map {s/\-//; $_} ($keyX) )[0];
-    $self->throw($key) unless $key =~ /NAME|COORDS|TIME/;
+    $self->throw($key) unless $key =~ /NAME|COORDS|TIME|LENGTH/;
     
+    if ( $key eq 'LENGTH' ) {
+	my $len;
+	foreach my $ex ( split/\|/, $self->data($key) ) {
+	    my ($x,$y) = split/\:/, $ex;
+	    $len += abs( $x - $y)+1;
+	}
+	return $len;
+    }
+
     return $self->data($key);
 }
 
